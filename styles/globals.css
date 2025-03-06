@@ -14,6 +14,7 @@ html,
 body {
   max-width: 100vw;
   overflow-x: hidden;
+  /* background-color: #404040; */ /* Anthrazit Hintergrund */
 }
 
 body {
@@ -22,6 +23,25 @@ body {
   font-family: Arial, Helvetica, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background-color: #34495E; /* Anthrazit Hintergrund */
+  background-image: url('/assets/img/background.jpg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+
+/* Optional: Füge einen dunklen Overlay hinzu, damit der weiße Text besser lesbar ist */
+body::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.6); /* Schwarzer Overlay mit 60% Deckkraft */
+  z-index: -1;
 }
 
 * {
@@ -39,4 +59,26 @@ a {
   html {
     color-scheme: dark;
   }
+}
+
+.nav-item {
+    background-color: #000000 !important; /* Solider schwarzer Hintergrund */
+    transition: all 0.2s ease;
+    font-size: 1.1rem;
+    border: 1px solid #333333;
+}
+
+.nav-item:hover {
+    color: #ff6b00 !important;
+    border-color: #ff6b00;
+}
+
+.active-nav-item {
+    color: #ff6b00 !important;
+    border-color: #ff6b00;
+}
+
+/* Erhöhe den Abstand zwischen den Menüpunkten */
+.gap-3 {
+    gap: 1rem !important;
 }
