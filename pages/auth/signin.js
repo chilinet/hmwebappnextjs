@@ -35,7 +35,6 @@ export default function SignIn() {
                 password,
                 token: data.token,        // JWT Token
                 tbToken: data.tbToken,    // ThingsBoard Token
-                userid: data.userid,      // User ID
                 redirect: false,
             })
 

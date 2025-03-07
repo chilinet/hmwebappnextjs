@@ -10,16 +10,16 @@ export const authOptions = {
         username: { label: "Username", type: "text" },
         password: { label: "Password", type: "password" },
         token: { type: "text" },
-        tbToken: { type: "text" },
-        userid: { type: "integer" }
+        tbToken: { type: "text" }
       },
       async authorize(credentials) {
         if (!credentials.token || !credentials.tbToken) {
           throw new Error('Missing tokens')
         }
 
+        // Geben Sie beide Token zurück
         return {
-          userid: credentials.userid,
+          id: '1',
           name: credentials.username,
           token: credentials.token,
           tbToken: credentials.tbToken
@@ -30,16 +30,12 @@ export const authOptions = {
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
-        token.userid = user.userid
-        token.name = user.name
         token.token = user.token
         token.tbToken = user.tbToken
       }
       return token
     },
     async session({ session, token }) {
-      session.user.userid = token.userid
-      session.user.name = token.name
       session.token = token.token
       session.tbToken = token.tbToken
       return session
