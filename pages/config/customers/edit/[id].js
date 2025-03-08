@@ -20,7 +20,9 @@ export default function EditCustomer() {
     address: '',
     city: '',
     country: '',
-    phone: ''
+    phone: '',
+    tb_username: '',
+    tb_password: ''
   })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -33,50 +35,87 @@ export default function EditCustomer() {
   }, [id, session])
 
   const fetchCustomer = async () => {
+    console.log('+++++++++++++++++++++++++++++++++++++++++');
+    console.log('Fetching customer with ID:', id);
+    console.log('+++++++++++++++++++++++++++++++++++++++++');
     try {
-      const response = await fetch(`/api/config/customers/${id}`, {
-        headers: {
-          'Authorization': `Bearer ${session.token}`
-        }
-      })
+      const [customerResponse, settingsResponse] = await Promise.all([
+        fetch(`/api/config/customers/${id}`, {
+          headers: {
+            'Authorization': `Bearer ${session.token}`
+          }
+        }),
+        fetch(`/api/config/customers/${id}/settings`, {
+          headers: {
+            'Authorization': `Bearer ${session.token}`
+          }
+        })
+      ]);
 
-      if (!response.ok) {
-        throw new Error('Failed to fetch customer')
+      if (!customerResponse.ok || !settingsResponse.ok) {
+        throw new Error('Fehler beim Laden der Kundendaten');
       }
 
-      const data = await response.json()
-      setCustomer(data.data)
-      setLoading(false)
-    } catch (err) {
-      setError(err.message)
-      setLoading(false)
+      const customerData = await customerResponse.json();
+      const settingsData = await settingsResponse.json();
+
+      setCustomer({
+        ...customerData.data,
+        tb_username: settingsData.data.tb_username || '',
+        tb_password: settingsData.data.tb_password || ''
+      });
+    } catch (error) {
+      setError('Fehler beim Laden der Kundendaten');
+    } finally {
+      setLoading(false);
     }
-  }
+  };
 
   const handleSubmit = async (e) => {
-    e.preventDefault()
-    setSaving(true)
+    e.preventDefault();
+    setSaving(true);
+    setError('');
 
     try {
-      const response = await fetch(`/api/config/customers/${id}`, {
+      const customerResponse = await fetch(`/api/config/customers/${id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${session.token}`
         },
-        body: JSON.stringify(customer)
-      })
+        body: JSON.stringify({
+          title: customer.title,
+          email: customer.email,
+          address: customer.address,
+          city: customer.city,
+          country: customer.country,
+          phone: customer.phone
+        })
+      });
 
-      if (!response.ok) {
-        throw new Error('Failed to update customer')
+      const settingsResponse = await fetch(`/api/config/customers/${id}/settings`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.token}`
+        },
+        body: JSON.stringify({
+          tb_username: customer.tb_username,
+          tb_password: customer.tb_password
+        })
+      });
+
+      if (!customerResponse.ok || !settingsResponse.ok) {
+        throw new Error('Fehler beim Speichern');
       }
 
-      router.push('/config/customers')
-    } catch (err) {
-      setError(err.message)
-      setSaving(false)
+      router.push('/config/customers');
+    } catch (error) {
+      setError('Fehler beim Speichern der Daten');
+    } finally {
+      setSaving(false);
     }
-  }
+  };
 
   const handleChange = (e) => {
     const { name, value } = e.target
@@ -185,6 +224,40 @@ export default function EditCustomer() {
                       value={customer.phone}
                       onChange={handleChange}
                     />
+                  </div>
+                </div>
+
+                <div className="card bg-dark text-white mb-4">
+                  <div className="card-header">
+                    ThingsBoard Zugangsdaten
+                  </div>
+                  <div className="card-body">
+                    <div className="row">
+                      <div className="col-md-6">
+                        <div className="mb-3">
+                          <label className="form-label">Benutzername</label>
+                          <input
+                            type="text"
+                            className="form-control bg-dark text-white"
+                            name="tb_username"
+                            value={customer.tb_username}
+                            onChange={handleChange}
+                          />
+                        </div>
+                      </div>
+                      <div className="col-md-6">
+                        <div className="mb-3">
+                          <label className="form-label">Passwort</label>
+                          <input
+                            type="password"
+                            className="form-control bg-dark text-white"
+                            name="tb_password"
+                            value={customer.tb_password}
+                            onChange={handleChange}
+                          />
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
 

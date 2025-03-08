@@ -5,6 +5,7 @@ const TB_URL = process.env.THINGSBOARD_URL
 
 export default async function handler(req, res) {
   const { id } = req.query
+  console.log('Request req:', req.query);
 
   // Token überprüfen
   const authHeader = req.headers.authorization

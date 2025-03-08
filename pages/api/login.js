@@ -21,8 +21,9 @@ const sqlConfig = {
 }
 
 // ThingsBoard Login mit Benutzer-spezifischen Credentials
-async function getThingsboardToken(tb_username, tb_password) {
-  const response = await fetch(`${TB_URL}/api/auth/login`, {
+async function getThingsboardToken(tb_username, tb_password, tb_url) {
+  const loginUrl = tb_url || TB_URL;
+  const response = await fetch(`${loginUrl}/api/auth/login`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -47,19 +48,28 @@ export default async function handler(req, res) {
   }
 
   const { username, password } = req.body
+  let pool;
 
   try {
-    // Verbindung zur Datenbank herstellen
-    await sql.connect(sqlConfig)
+    pool = await sql.connect(sqlConfig)
     
-    // User aus der Datenbank abfragen mit ThingsBoard Credentials
-    const result = await sql.query`
-      SELECT userid, username, password, tb_username, tb_password
-      FROM hm_users
-      WHERE username = ${username}
-    `
+    // User und zugehörige Customer-Settings aus der Datenbank abfragen
+    const result = await pool.request()
+      .input('username', sql.NVarChar, username)
+      .query(`
+        SELECT 
+          u.userid,
+          u.username,
+          u.password,
+          u.customerid,
+          cs.tb_username,
+          cs.tb_password,
+          cs.tb_url
+        FROM hm_users u
+        LEFT JOIN customer_settings cs ON u.customerid = cs.customer_id
+        WHERE u.username = @username
+      `)
 
-    // Prüfen ob User gefunden wurde
     if (result.recordset.length === 0) {
       return res.status(401).json({ 
         success: false,
@@ -72,9 +82,28 @@ export default async function handler(req, res) {
     // Passwort überprüfen
     const passwordMatch = await bcrypt.compare(password, user.password)
 
-    if (passwordMatch) {
-      // ThingsBoard Token mit den Benutzer-spezifischen Credentials holen
-      const tbToken = await getThingsboardToken(user.tb_username, user.tb_password)
+    if (!passwordMatch) {
+      return res.status(401).json({ 
+        success: false,
+        error: 'Invalid credentials' 
+      })
+    }
+
+    // Prüfen ob ThingsBoard Credentials vorhanden sind
+    if (!user.tb_username || !user.tb_password) {
+      return res.status(401).json({ 
+        success: false,
+        error: 'No ThingsBoard credentials configured for this customer' 
+      })
+    }
+
+    try {
+      // ThingsBoard Token mit den Customer-spezifischen Credentials holen
+      const tbToken = await getThingsboardToken(
+        user.tb_username, 
+        user.tb_password,
+        user.tb_url
+      )
       
       // Token generieren
       const token = jwt.sign(
@@ -82,29 +111,29 @@ export default async function handler(req, res) {
           username: user.username,
           id: user.id,
           userid: user.userid,
+          customerid: user.customerid,
           time: Date.now(),
-          tbToken: tbToken // ThingsBoard Token im JWT speichern
+          tbToken: tbToken
         },
         JWT_SECRET,
         { expiresIn: '8h' }
       )
 
-      // Erfolgreiche Authentifizierung
       return res.status(200).json({ 
         success: true,
         token: token,
-        tbToken: tbToken, // Optional: ThingsBoard Token direkt zurückgeben
+        tbToken: tbToken,
         user: {
           name: user.username,
           userid: user.userid,
           email: user.email
         }
       })
-    } else {
-      // Falsches Passwort
+    } catch (tbError) {
+      console.error('ThingsBoard login error:', tbError)
       return res.status(401).json({ 
         success: false,
-        error: 'Invalid credentials' 
+        error: 'ThingsBoard authentication failed' 
       })
     }
   } catch (error) {
@@ -114,7 +143,12 @@ export default async function handler(req, res) {
       error: 'Internal server error' 
     })
   } finally {
-    // Datenbankverbindung schließen
-    await sql.close()
+    if (pool) {
+      try {
+        await pool.close()
+      } catch (err) {
+        console.error('Error closing connection:', err)
+      }
+    }
   }
 } 

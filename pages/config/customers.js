@@ -35,8 +35,8 @@ export default function Customers() {
       if (!response.ok) {
         throw new Error('Failed to fetch customers')
       }
-
       const data = await response.json()
+
       setCustomers(data.data)
       setLoading(false)
     } catch (err) {
@@ -116,39 +116,42 @@ export default function Customers() {
             </tr>
           </thead>
           <tbody>
-            {customers.map((customer) => (
-              <tr key={customer.id}>
-                <td>{customer.name}</td>
-                <td>{customer.email}</td>
-                <td>{customer.address}</td>
-                <td>{customer.city}</td>
-                <td>{customer.country}</td>
-                <td>{customer.phone}</td>
-                <td>
-                  <button
-                    className="btn btn-sm btn-outline-primary me-2"
-                    onClick={() => handleEdit(customer.id)}
-                    title="Bearbeiten"
-                  >
-                    <FontAwesomeIcon icon={faEdit} />
-                  </button>
-                  <button
-                    className="btn btn-sm btn-outline-info me-2"
-                    onClick={() => handleUsers(customer.id)}
-                    title="Benutzer"
-                  >
-                    <FontAwesomeIcon icon={faUsers} />
-                  </button>
-                  <button
-                    className="btn btn-sm btn-outline-danger"
-                    onClick={() => handleDelete(customer.id)}
-                    title="Löschen"
-                  >
-                    <FontAwesomeIcon icon={faTrash} />
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {customers.map((customer) => {
+              console.log('Customer:', customer);
+              return (
+                <tr key={customer.id.id}>
+                  <td>{customer.name}</td>
+                  <td>{customer.email}</td>
+                  <td>{customer.address}</td>
+                  <td>{customer.city}</td>
+                  <td>{customer.country}</td>
+                  <td>{customer.phone}</td>
+                  <td>
+                    <button
+                      className="btn btn-sm btn-outline-primary me-2"
+                      onClick={() => handleEdit(customer.id.id)}
+                      title="Bearbeiten"
+                    >
+                      <FontAwesomeIcon icon={faEdit} />
+                    </button>
+                    <button
+                      className="btn btn-sm btn-outline-info me-2"
+                      onClick={() => handleUsers(customer.id.id)}
+                      title="Benutzer"
+                    >
+                      <FontAwesomeIcon icon={faUsers} />
+                    </button>
+                    <button
+                      className="btn btn-sm btn-outline-danger"
+                      onClick={() => handleDelete(customer.id.id)}
+                      title="Löschen"
+                    >
+                      <FontAwesomeIcon icon={faTrash} />
+                    </button>
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>

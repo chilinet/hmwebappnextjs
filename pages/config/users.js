@@ -2,7 +2,25 @@ import { useEffect, useState } from 'react'
 import { useSession, signIn } from 'next-auth/react'
 import { useRouter } from 'next/router'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faEdit, faTrash, faPlus } from '@fortawesome/free-solid-svg-icons'
+import { faEdit, faTrash, faPlus, faLink, faCopy } from '@fortawesome/free-solid-svg-icons'
+import { v4 as uuidv4 } from 'uuid'
+
+const getStatusBadge = (status) => {
+  // Konvertiere status zu einer Nummer
+  const statusNum = parseInt(status);
+  
+  switch (statusNum) {
+    case 0:
+      return <span className="badge bg-secondary">Inaktiv</span>;
+    case 1:
+      return <span className="badge bg-success">Aktiv</span>;
+    case 99:
+      return <span className="badge bg-danger">Gesperrt</span>;
+    default:
+      console.log('Unbekannter Status:', status, typeof status); // Debug-Info
+      return <span className="badge bg-warning">Unbekannt</span>;
+  }
+};
 
 export default function Users() {
   const router = useRouter()
@@ -16,6 +34,9 @@ export default function Users() {
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [showModal, setShowModal] = useState(false);
+  const [selectedUserId, setSelectedUserId] = useState(null);
+  const [activationLink, setActivationLink] = useState('');
 
   useEffect(() => {
     if (session?.token) {
@@ -36,6 +57,7 @@ export default function Users() {
       }
 
       const data = await response.json()
+      console.log('Users data:', data.data); // Debug-Info
       setUsers(data.data)
       setLoading(false)
     } catch (error) {
@@ -75,6 +97,48 @@ export default function Users() {
     }
   }
 
+  const handleActivationLink = async (id) => {
+    try {
+      const token = uuidv4();
+      const link = `${window.location.origin}/auth/activationlink/${token}`;
+      
+      // Token in der Datenbank speichern
+      const response = await fetch(`/api/config/users/${id}/activation-link`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.token}`
+        },
+        body: JSON.stringify({ activationLink: token })
+      });
+
+      if (!response.ok) {
+        throw new Error('Fehler beim Speichern des Aktivierungslinks');
+      }
+
+      setActivationLink(link);
+      setSelectedUserId(id);
+      setShowModal(true);
+    } catch (error) {
+      console.error('Fehler:', error);
+      alert('Fehler beim Generieren des Aktivierungslinks');
+    }
+  };
+
+  const handleCopyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(activationLink);
+      alert('Link wurde in die Zwischenablage kopiert!');
+    } catch (err) {
+      console.error('Fehler beim Kopieren:', err);
+    }
+  };
+
+  const handleCloseModal = () => {
+    setShowModal(false);
+    setSelectedUserId(null);
+  };
+
   if (loading) return <div>Loading...</div>
   if (error) return <div>Error: {error}</div>
 
@@ -102,6 +166,7 @@ export default function Users() {
                   <th>Name</th>
                   <th>Rolle</th>
                   <th>Kunde</th>
+                  <th>Status</th>
                   <th>Erstellt</th>
                   <th>Aktionen</th>
                 </tr>
@@ -114,6 +179,7 @@ export default function Users() {
                     <td>{user.firstName} {user.lastName}</td>
                     <td>{user.role}</td>
                     <td>{user.customerName}</td>
+                    <td>{getStatusBadge(user.status)}</td>
                     <td>{new Date(user.createdAt).toLocaleDateString()}</td>
                     <td>
                       <button
@@ -124,12 +190,21 @@ export default function Users() {
                         <FontAwesomeIcon icon={faEdit} />
                       </button>
                       <button
-                        className="btn btn-sm btn-outline-danger"
+                        className="btn btn-sm btn-outline-danger me-2"
                         onClick={() => handleDelete(user.id)}
                         title="Löschen"
                       >
                         <FontAwesomeIcon icon={faTrash} />
                       </button>
+                      {parseInt(user.status) === 0 && (
+                        <button
+                          className="btn btn-sm btn-outline-success"
+                          onClick={() => handleActivationLink(user.id)}
+                          title="Aktivierungslink generieren"
+                        >
+                          <FontAwesomeIcon icon={faLink} />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -138,6 +213,58 @@ export default function Users() {
           </div>
         </div>
       </div>
+
+      {/* Modal */}
+      {showModal && (
+        <>
+          <div className="modal show d-block" tabIndex="-1">
+            <div className="modal-dialog">
+              <div className="modal-content bg-dark text-white">
+                <div className="modal-header border-secondary">
+                  <h5 className="modal-title">Aktivierungslink</h5>
+                  <button 
+                    type="button" 
+                    className="btn-close btn-close-white" 
+                    onClick={handleCloseModal}
+                    aria-label="Close"
+                  ></button>
+                </div>
+                <div className="modal-body">
+                  <div className="input-group">
+                    <input
+                      type="text"
+                      className="form-control bg-dark text-white"
+                      value={activationLink}
+                      readOnly
+                    />
+                    <button 
+                      className="btn btn-outline-secondary"
+                      type="button"
+                      title="Link kopieren"
+                      onClick={handleCopyLink}
+                    >
+                      <FontAwesomeIcon icon={faCopy} />
+                    </button>
+                  </div>
+                </div>
+                <div className="modal-footer border-secondary">
+                  <button 
+                    type="button" 
+                    className="btn btn-secondary" 
+                    onClick={handleCloseModal}
+                  >
+                    Schließen
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div 
+            className="modal-backdrop show" 
+            onClick={handleCloseModal}
+          ></div>
+        </>
+      )}
 
       <style jsx>{`
         .btn-warning {
@@ -165,6 +292,52 @@ export default function Users() {
         }
         .card {
           border-color: #454d55;
+        }
+        .modal {
+          background-color: transparent;
+          z-index: 1050;
+        }
+        
+        .modal-backdrop {
+          background-color: rgba(0, 0, 0, 0.5);
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          z-index: 1040;
+        }
+        
+        .form-control:read-only {
+          background-color: #343a40;
+          color: #fff;
+        }
+        
+        .form-control:read-only:focus {
+          background-color: #343a40;
+          color: #fff;
+        }
+        
+        :global(.badge) {
+          font-size: 0.875rem;
+          padding: 0.35em 0.65em;
+        }
+        
+        :global(.bg-secondary) {
+          background-color: #6c757d !important;
+        }
+        
+        :global(.bg-success) {
+          background-color: #198754 !important;
+        }
+        
+        :global(.bg-danger) {
+          background-color: #dc3545 !important;
+        }
+        
+        :global(.bg-warning) {
+          background-color: #ffc107 !important;
+          color: #000;
         }
       `}</style>
     </div>

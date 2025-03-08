@@ -59,6 +59,7 @@ export default async function handler(req, res) {
             lastname,
             role,
             customerid,
+            status,
             createdttm,
             updatedttm
           FROM hm_users
@@ -94,6 +95,7 @@ export default async function handler(req, res) {
             firstName: user.firstname,
             lastName: user.lastname,
             role: user.role,
+            status: user.status,
             customerid: user.customerid,
             customerName: user.customerName,
             createdAt: user.createdttm,
