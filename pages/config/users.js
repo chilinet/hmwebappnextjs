@@ -38,21 +38,40 @@ export default function Users() {
   const [showModal, setShowModal] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState(null);
   const [activationLink, setActivationLink] = useState('');
+  const [userRole, setUserRole] = useState(null);
 
   // Hole die User-ID aus der Session
   const currentUserId = session?.user?.userid;
-  console.log('Current User ID:', currentUserId);
-  console.log('**************************************************')
-  console.log('Session:', session);
-  console.log('**************************************************')
   useEffect(() => {
     if (session?.token) {
-      Promise.all([
-        fetchUsers(),
-        fetchRoles()
-      ]).finally(() => setLoading(false));
+      // Zuerst die Rolle des aktuellen Benutzers laden
+      fetchUserRole().then(() => {
+        Promise.all([
+          fetchUsers(),
+          fetchRoles()
+        ]).finally(() => setLoading(false));
+      });
     }
   }, [session])
+
+  const fetchUserRole = async () => {
+    try {
+      const response = await fetch('/api/config/users/me', {
+        headers: {
+          'Authorization': `Bearer ${session.token}`
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch user role');
+      }
+
+      const data = await response.json();
+      setUserRole(data.role);
+    } catch (error) {
+      console.error('Error fetching user role:', error);
+    }
+  };
 
   const fetchUsers = async () => {
     try {
@@ -60,20 +79,19 @@ export default function Users() {
         headers: {
           'Authorization': `Bearer ${session.token}`
         }
-      })
+      });
 
       if (!response.ok) {
-        throw new Error('Failed to fetch users')
+        throw new Error('Failed to fetch users');
       }
 
-      const data = await response.json()
-      console.log('Users data:', data.data); // Debug-Info
-      setUsers(data.data)
+      const data = await response.json();
+      setUsers(data.data);
     } catch (error) {
-      setError('Error loading users')
-      console.error(error)
+      setError('Error loading users');
+      console.error(error);
     }
-  }
+  };
 
   const fetchRoles = async () => {
     try {
@@ -178,6 +196,8 @@ export default function Users() {
     setSelectedUserId(null);
   };
 
+  const isSuperAdmin = userRole === 1;
+
   if (loading) return <div>Loading...</div>
   if (error) return <div>Error: {error}</div>
 
@@ -204,7 +224,7 @@ export default function Users() {
                   <th>Email</th>
                   <th>Name</th>
                   <th>Rolle</th>
-                  <th>Kunde</th>
+                  {isSuperAdmin && <th>Kunde</th>}
                   <th>Status</th>
                   <th>Erstellt</th>
                   <th>Aktionen</th>
@@ -226,7 +246,7 @@ export default function Users() {
                         }
                       })()}
                     </td>
-                    <td>{user.customerName}</td>
+                    {isSuperAdmin && <td>{user.customerName}</td>}
                     <td>{getStatusBadge(user.status)}</td>
                     <td>{new Date(user.createdAt).toLocaleDateString()}</td>
                     <td>
@@ -238,7 +258,6 @@ export default function Users() {
                         <FontAwesomeIcon icon={faEdit} />
                       </button>
                       
-                      {/* Lösch-Button nur anzeigen, wenn es nicht der aktuelle User ist */}
                       {user.id !== currentUserId && (
                         <button
                           className="btn btn-sm btn-outline-danger me-2"

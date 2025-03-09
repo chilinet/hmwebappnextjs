@@ -27,21 +27,52 @@ export default function EditUser() {
   const [error, setError] = useState(null)
   const [saving, setSaving] = useState(false)
   const [roles, setRoles] = useState([])
+  const [userRole, setUserRole] = useState(null);
 
   useEffect(() => {
     if (session?.token && id) {
-      Promise.all([
-        fetchUser(),
-        fetchCustomers(),
-        fetchRoles()
-      ]).then(() => setLoading(false))
-      .catch(err => {
-        console.error('Loading error:', err)
-        setError('Error loading data')
-        setLoading(false)
-      })
+      // Sequentielle Ausführung der Fetch-Operationen
+      fetchUserRole()
+        .then((roleValue) => {
+          // Verwende den zurückgegebenen roleValue direkt
+          return fetchRoles(roleValue);
+        })
+        .then(() => Promise.all([
+          fetchUser(),
+          fetchCustomers()
+        ]))
+        .then(() => setLoading(false))
+        .catch(err => {
+          console.error('Loading error:', err)
+          setError('Error loading data')
+          setLoading(false)
+        })
     }
   }, [session, id])
+
+  const fetchUserRole = async () => {
+    try {
+      const response = await fetch('/api/config/users/me', {
+        headers: {
+          'Authorization': `Bearer ${session.token}`
+        }
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch user role')
+      }
+
+      const data = await response.json()
+      console.log('Received user role data:', data)
+      const roleValue = parseInt(data.role, 10) // Stellen sicher, dass role als Nummer gespeichert wird
+      setUserRole(roleValue)
+      console.log('Setting userRole to:', roleValue) // Neuer Debug-Log
+      return roleValue // Rückgabewert hinzugefügt
+    } catch (error) {
+      console.error('Error fetching user role:', error)
+      return null
+    }
+  }
 
   const fetchUser = async () => {
     try {
@@ -53,16 +84,16 @@ export default function EditUser() {
       if (!response.ok) throw new Error('Failed to fetch user')
       const data = await response.json()
       
-      console.log('Raw API response:', data)
-      console.log('Customer ID from API:', data.data.customerid, typeof data.data.customerid)
+      //console.log('Raw API response:', data)
+      //console.log('Customer ID from API:', data.data.customerid, typeof data.data.customerid)
       
       const userData = {
         ...data.data,
         customerid: data.data.customerid ? data.data.customerid.toLowerCase() : ''
       }
       
-      console.log('Processed user data:', userData)
       setUser(userData)
+      console.log('Processed user data:', userData)
     } catch (error) {
       console.error('Error fetching user:', error)
       setError('Error loading user')
@@ -96,7 +127,7 @@ export default function EditUser() {
     }
   }
 
-  const fetchRoles = async () => {
+  const fetchRoles = async (currentUserRole) => {
     try {
       const response = await fetch('/api/roles', {
         headers: {
@@ -105,7 +136,20 @@ export default function EditUser() {
       })
       if (!response.ok) throw new Error('Failed to fetch roles')
       const data = await response.json()
-      setRoles(data)
+      
+      console.log('Fetching roles with userRole:', currentUserRole)
+      
+      // Filtere die Rollen basierend auf der übergebenen userRole
+      const filteredRoles = data.filter(role => {
+        if (currentUserRole === 1) { // Superadmin kann alle Rollen auswählen
+          return true;
+        } else if (currentUserRole === 2) { // Customer Admin kann nur Customer Admin und Benutzer auswählen
+          return role.roleid === 2 || role.roleid === 3;
+        }
+        return false;
+      });
+
+      setRoles(filteredRoles)
     } catch (error) {
       console.error('Error fetching roles:', error)
       setError('Error loading roles')
@@ -117,6 +161,20 @@ export default function EditUser() {
     setSaving(true)
     
     try {
+      // Konvertiere beide Werte zu Nummern für den Vergleich
+      const currentUserRole = parseInt(userRole, 10);
+      const selectedRole = parseInt(user.role, 10);
+      
+      console.log('Current user role (type):', typeof currentUserRole, currentUserRole);
+      console.log('Selected role (type):', typeof selectedRole, selectedRole);
+
+      const isRoleAllowed = currentUserRole === 1 || // Superadmin darf alles
+        (currentUserRole === 2 && (selectedRole === 2 || selectedRole === 3)); // Customer Admin nur 2 oder 3
+
+      if (!isRoleAllowed) {
+        throw new Error('Sie haben keine Berechtigung, diese Rolle zuzuweisen');
+      }
+
       const response = await fetch(`/api/config/users/${id}`, {
         method: 'PUT',
         headers: {
@@ -153,6 +211,8 @@ export default function EditUser() {
     }))
   }
 
+  const isSuperAdmin = userRole === 1;
+
   if (!session) return <div>Loading...</div>
   if (loading) return <div>Loading user data...</div>
   if (error) return <div>Error: {error}</div>
@@ -179,9 +239,8 @@ export default function EditUser() {
                 <label htmlFor="username" className="form-label">Benutzername</label>
                 <input
                   type="text"
-                  className="form-control bg-dark text-light"
+                  className="form-control bg-white text-dark"
                   id="username"
-                  name="username"
                   value={user.username}
                   disabled
                 />
@@ -209,6 +268,7 @@ export default function EditUser() {
                   name="firstName"
                   value={user.firstName}
                   onChange={handleChange}
+                  required
                 />
               </div>
 
@@ -221,6 +281,7 @@ export default function EditUser() {
                   name="lastName"
                   value={user.lastName}
                   onChange={handleChange}
+                  required
                 />
               </div>
 
@@ -246,39 +307,29 @@ export default function EditUser() {
                 </select>
               </div>
 
-              <div className="col-md-6 mb-3">
-                <label htmlFor="customerid" className="form-label">Kunde</label>
-                <select
-                  className="form-select bg-white text-dark"
-                  id="customerid"
-                  name="customerid"
-                  value={user.customerid || ''}
-                  onChange={handleChange}
-                  required
-                >
-                  <option value="">Bitte wählen...</option>
-                  {customers.map(customer => {
-                    const match = customer.id.id === user.customerid
-                    console.log('Comparing:', {
-                      option: customer.id.id,
-                      selected: user.customerid,
-                      match
-                    })
-                    
-                    return (
+              {isSuperAdmin && (
+                <div className="col-md-6 mb-3">
+                  <label htmlFor="customerid" className="form-label">Kunde</label>
+                  <select
+                    className="form-select bg-white text-dark"
+                    id="customerid"
+                    name="customerid"
+                    value={user.customerid || ''}
+                    onChange={handleChange}
+                    required
+                  >
+                    <option value="">Bitte wählen...</option>
+                    {customers.map(customer => (
                       <option 
                         key={customer.id.id} 
                         value={customer.id.id}
                       >
                         {customer.title || customer.name}
                       </option>
-                    )
-                  })}
-                </select>
-                <div className="text-muted small mt-1">
-                  Selected ID: {user.customerid || 'none'}
+                    ))}
+                  </select>
                 </div>
-              </div>
+              )}
             </div>
 
             <div className="d-flex justify-content-end gap-2">

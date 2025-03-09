@@ -18,7 +18,7 @@ export default function NewUser() {
     email: '',
     firstName: '',
     lastName: '',
-    role: 'USER',
+    role: '',
     password: '',
     customerid: ''
   })
@@ -26,12 +26,50 @@ export default function NewUser() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [saving, setSaving] = useState(false)
+  const [userRole, setUserRole] = useState(null);
+  const [roles, setRoles] = useState([]);
+
+  useEffect(() => {
+    if (userRole !== null) {
+      fetchRoles();
+    }
+  }, [userRole]);
 
   useEffect(() => {
     if (session?.token) {
-      fetchCustomers()
+      Promise.all([
+        fetchUserRole(),
+        fetchCustomers()
+      ]).then(() => {
+        setLoading(false);
+      });
     }
-  }, [session])
+  }, [session]);
+
+  const fetchUserRole = async () => {
+    try {
+      const response = await fetch('/api/config/users/me', {
+        headers: {
+          'Authorization': `Bearer ${session.token}`
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch user role');
+      }
+
+      const data = await response.json();
+      setUserRole(data.role);
+      
+      setUser(prev => ({
+        ...prev,
+        tenantid: data.tenantid,
+        customerid: data.role !== 1 ? data.customerid : prev.customerid
+      }));
+    } catch (error) {
+      console.error('Error fetching user role:', error);
+    }
+  };
 
   const fetchCustomers = async () => {
     try {
@@ -60,30 +98,85 @@ export default function NewUser() {
     }
   }
 
+  const fetchRoles = async () => {
+    try {
+      const response = await fetch('/api/roles', {
+        headers: {
+          'Authorization': `Bearer ${session.token}`
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch roles');
+      }
+
+      const data = await response.json();
+      
+      const filteredRoles = data.filter(role => {
+        if (userRole === 1) {
+          return true;
+        } else if (userRole === 2) {
+          return role.roleid === 2 || role.roleid === 3;
+        }
+        return false;
+      });
+
+      console.log('Filtered roles:', filteredRoles);
+      setRoles(filteredRoles);
+    } catch (error) {
+      console.error('Error fetching roles:', error);
+      setError('Error loading roles');
+    }
+  };
+
   const handleSubmit = async (e) => {
-    e.preventDefault()
-    setSaving(true)
+    e.preventDefault();
+    setSaving(true);
 
     try {
+      // Konvertiere beide Werte zu Nummern für den Vergleich
+      const currentUserRole = parseInt(userRole, 10);
+      const selectedRole = parseInt(user.role, 10);
+      
+      console.log('Current user role (type):', typeof currentUserRole, currentUserRole);
+      console.log('Selected role (type):', typeof selectedRole, selectedRole);
+
+      const isRoleAllowed = currentUserRole === 1 || // Superadmin darf alles
+        (currentUserRole === 2 && (selectedRole === 2 || selectedRole === 3)); // Customer Admin nur 2 oder 3
+
+      if (!isRoleAllowed) {
+        throw new Error('Sie haben keine Berechtigung, diese Rolle zuzuweisen');
+      }
+
+      const userData = {
+        ...user,
+        role: selectedRole, // Verwende den bereits konvertierten Wert
+        tenantid: user.tenantid,
+        customerid: userRole === 1 ? user.customerid : user.customerid
+      };
+
+      console.log('Sending user data:', userData);
+
       const response = await fetch('/api/config/users', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${session.token}`
         },
-        body: JSON.stringify(user)
-      })
+        body: JSON.stringify(userData)
+      });
 
       if (!response.ok) {
-        throw new Error('Failed to create user')
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to create user');
       }
 
-      router.push('/config/users')
+      router.push('/config/users');
     } catch (err) {
-      setError(err.message)
-      setSaving(false)
+      setError(err.message);
+      setSaving(false);
     }
-  }
+  };
 
   const handleChange = (e) => {
     const { name, value } = e.target
@@ -92,6 +185,8 @@ export default function NewUser() {
       [name]: value
     }))
   }
+
+  const isSuperAdmin = userRole === 1;
 
   return (
     <div className="container mt-4">
@@ -177,8 +272,15 @@ export default function NewUser() {
                   onChange={handleChange}
                   required
                 >
-                  <option value="USER">Benutzer</option>
-                  <option value="ADMIN">Administrator</option>
+                  <option value="">Bitte wählen...</option>
+                  {roles.map(role => (
+                    <option 
+                      key={role.roleid} 
+                      value={role.roleid}
+                    >
+                      {role.rolename}
+                    </option>
+                  ))}
                 </select>
               </div>
 
@@ -195,24 +297,26 @@ export default function NewUser() {
                 />
               </div>
 
-              <div className="col-md-6 mb-3">
-                <label htmlFor="customerid" className="form-label">Kunde</label>
-                <select
-                  className="form-select bg-white text-dark"
-                  id="customerid"
-                  name="customerid"
-                  value={user.customerid}
-                  onChange={handleChange}
-                  required
-                >
-                  <option value="">Bitte wählen...</option>
-                  {customers.map(customer => (
-                    <option key={customer.id.id} value={customer.id.id}>
-                      {customer.title}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {isSuperAdmin && (
+                <div className="col-md-6 mb-3">
+                  <label htmlFor="customerid" className="form-label">Kunde</label>
+                  <select
+                    className="form-select bg-white text-dark"
+                    id="customerid"
+                    name="customerid"
+                    value={user.customerid}
+                    onChange={handleChange}
+                    required
+                  >
+                    <option value="">Bitte wählen...</option>
+                    {customers.map(customer => (
+                      <option key={customer.id.id} value={customer.id.id}>
+                        {customer.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
 
             <div className="d-flex justify-content-end gap-2">

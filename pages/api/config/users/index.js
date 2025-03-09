@@ -1,5 +1,5 @@
-import { getSession } from 'next-auth/react'
-import jwt from 'jsonwebtoken'
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "../../auth/[...nextauth]";
 import sql from 'mssql'
 import bcrypt from 'bcryptjs'
 
@@ -11,7 +11,8 @@ const config = {
   server: process.env.MSSQL_SERVER,
   database: process.env.MSSQL_DATABASE,
   options: {
-    encrypt: true
+    encrypt: true,
+    trustServerCertificate: true
   }
 }
 
@@ -22,173 +23,239 @@ const ROLE_MAPPING = {
 }
 
 export default async function handler(req, res) {
-  // Session oder Token Authentifizierung prüfen
-  const session = await getSession({ req })
-  let decoded
-  let username
-
+  const session = await getServerSession(req, res, authOptions);
   if (!session) {
-    const authHeader = req.headers.authorization
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Not authenticated' })
-    }
-
-    try {
-      const token = authHeader.split(' ')[1]
-      decoded = jwt.verify(token, JWT_SECRET)
-      username = decoded.username
-    } catch (err) {
-      return res.status(401).json({ error: 'Invalid token' })
-    }
-  } else {
-    username = session.user.name
+    return res.status(401).json({ message: 'Not authenticated' });
   }
 
-  try {
-    await sql.connect(config)
+  // POST-Methode für das Erstellen eines neuen Benutzers
+  if (req.method === 'POST') {
+    let pool;
+    try {
+      const {
+        username,
+        email,
+        firstName,
+        lastName,
+        role,
+        password,
+        customerid,
+        tenantid
+      } = req.body;
 
-    switch (req.method) {
-      case 'GET':
-        // Liste aller Benutzer
-        const result = await sql.query`
+      // Debug-Info
+      console.log('Received user data:', {
+        username,
+        email,
+        firstName,
+        lastName,
+        role,
+        customerid,
+        tenantid
+      });
+
+      if (!tenantid) {
+        return res.status(400).json({
+          message: 'tenantid is required'
+        });
+      }
+
+      if (!customerid && role !== 1) {
+        return res.status(400).json({
+          message: 'customerid is required for non-superadmin users'
+        });
+      }
+
+      // Hash das Passwort
+      const hashedPassword = await bcrypt.hash(password, 10);
+
+      pool = await sql.connect(config);
+
+      // Prüfe ob der Benutzername bereits existiert
+      const checkUser = await pool.request()
+        .input('username', sql.NVarChar, username)
+        .query('SELECT userid FROM hm_users WHERE username = @username');
+
+      if (checkUser.recordset.length > 0) {
+        return res.status(400).json({
+          message: 'Username already exists'
+        });
+      }
+
+      // Füge den neuen Benutzer ein
+      const result = await pool.request()
+        .input('username', sql.NVarChar, username)
+        .input('email', sql.NVarChar, email)
+        .input('firstname', sql.NVarChar, firstName)
+        .input('lastname', sql.NVarChar, lastName)
+        .input('role', sql.Int, role)
+        .input('password', sql.NVarChar, hashedPassword)
+        .input('customerid', sql.UniqueIdentifier, customerid)
+        .input('tenantid', sql.UniqueIdentifier, tenantid)
+        .input('status', sql.Int, 0)
+        .input('createdttm', sql.DateTime, new Date())
+        .input('updatedttm', sql.DateTime, new Date())
+        .query(`
+          INSERT INTO hm_users (
+            username, email, firstname, lastname, role,
+            password, customerid, tenantid, status,
+            createdttm, updatedttm
+          )
+          VALUES (
+            @username, @email, @firstname, @lastname, @role,
+            @password, @customerid, @tenantid, @status,
+            @createdttm, @updatedttm
+          );
+          SELECT SCOPE_IDENTITY() AS userid;
+        `);
+
+      const newUserId = result.recordset[0].userid;
+
+      return res.status(201).json({
+        success: true,
+        message: 'User created successfully',
+        userid: newUserId
+      });
+
+    } catch (error) {
+      console.error('Database Error:', error);
+      return res.status(500).json({
+        message: 'Error creating user',
+        error: error.message
+      });
+    } finally {
+      if (pool) {
+        try {
+          await pool.close();
+        } catch (err) {
+          console.error('Error closing connection:', err);
+        }
+      }
+    }
+  }
+
+  // GET-Methode für das Abrufen der Benutzerliste (vorheriger Code bleibt gleich)
+  if (req.method === 'GET') {
+    let pool = null;
+    let users = [];
+
+    try {
+      // Erstelle eine neue Verbindung
+      pool = await new sql.ConnectionPool(config).connect();
+
+      // Zuerst die Rolle und customerid des aktuellen Benutzers holen
+      const userResult = await pool.request()
+        .input('userid', sql.Int, session.user.userid)
+        .query(`
+          SELECT role, customerid, tenantid
+          FROM hm_users
+          WHERE userid = @userid
+        `);
+
+      const currentUser = userResult.recordset[0];
+
+      if (!currentUser) {
+        throw new Error('Current user not found');
+      }
+
+      let query = '';
+      const request = pool.request();
+
+      if (currentUser.role === 1) { // Superadmin
+        request.input('tenantid', sql.UniqueIdentifier, currentUser.tenantid);
+        query = `
           SELECT 
-            userid,
+            userid as id,
             username,
             email,
-            firstname,
-            lastname,
+            firstname as firstName,
+            lastname as lastName,
             role,
             customerid,
             status,
-            createdttm,
-            updatedttm
+            createdttm as createdAt,
+            updatedttm as updatedAt
           FROM hm_users
+          WHERE tenantid = @tenantid
           ORDER BY username
-        `
-
-        // ThingsBoard Token aus Session oder decodiertem Token
-        const tbToken = session?.tbToken || decoded?.tbToken
-
-        // Hole Customer Namen von ThingsBoard für alle Benutzer mit customerid
-        const users = await Promise.all(result.recordset.map(async (user) => {
-          if (user.customerid) {
-            try {
-              const tbResponse = await fetch(`${process.env.THINGSBOARD_URL}/api/customer/${user.customerid}`, {
-                headers: {
-                  'X-Authorization': `Bearer ${tbToken}`
-                }
-              })
-
-              if (tbResponse.ok) {
-                const customerData = await tbResponse.json()
-                user.customerName = customerData.title
-              }
-            } catch (error) {
-              console.error('Error fetching customer data:', error)
-              user.customerName = 'Fehler beim Laden'
-            }
-          }
-          return {
-            id: user.userid,
-            username: user.username,
-            email: user.email,
-            firstName: user.firstname,
-            lastName: user.lastname,
-            role: user.role,
-            status: user.status,
-            customerid: user.customerid,
-            customerName: user.customerName,
-            createdAt: user.createdttm,
-            updatedAt: user.updatedttm
-          }
-        }))
-
-        return res.status(200).json({
-          success: true,
-          data: users
-        })
-
-      case 'POST':
-        // Erst die Daten des erstellenden Users holen
-        const creatorResult = await sql.query`
-          SELECT customerid, tenantid
-          FROM hm_users
-          WHERE username = ${username}
-        `
-
-        if (creatorResult.recordset.length === 0) {
-          return res.status(404).json({ 
-            success: false, 
-            error: 'Ersteller nicht gefunden' 
-          })
-        }
-
-        const creatorData = creatorResult.recordset[0]
-
-        // Neuen Benutzer erstellen
-        const { username: newUsername, email, firstName, lastName, role, password } = req.body
-
-        // Prüfen ob Benutzer bereits existiert
-        const checkUser = await sql.query`
-          SELECT username FROM hm_users WHERE username = ${newUsername}
-        `
-        if (checkUser.recordset.length > 0) {
-          return res.status(400).json({ 
-            success: false, 
-            error: 'Benutzername existiert bereits' 
-          })
-        }
-
-        // Passwort hashen
-        const hashedPassword = await bcrypt.hash(password, 10)
-
-        // Role in Integer konvertieren
-        const roleId = ROLE_MAPPING[role] || 1
-
-        // Benutzer erstellen mit customerid und tenantid des Erstellers
-        await sql.query`
-          INSERT INTO hm_users (
+        `;
+      } else if (currentUser.role === 2) { // Customer Admin
+        request.input('customerid', sql.UniqueIdentifier, currentUser.customerid);
+        query = `
+          SELECT 
+            userid as id,
             username,
             email,
-            firstname,
-            lastname,
+            firstname as firstName,
+            lastname as lastName,
             role,
-            password,
             customerid,
-            tenantid,
-            createdttm,
-            updatedttm
-          )
-          VALUES (
-            ${newUsername},
-            ${email},
-            ${firstName},
-            ${lastName},
-            ${roleId},
-            ${hashedPassword},
-            ${creatorData.customerid},
-            ${creatorData.tenantid},
-            GETDATE(),
-            GETDATE()
-          )
-        `
+            status,
+            createdttm as createdAt,
+            updatedttm as updatedAt
+          FROM hm_users
+          WHERE customerid = @customerid
+          ORDER BY username
+        `;
+      } else {
+        throw new Error('Keine Berechtigung für Benutzerverwaltung');
+      }
 
-        return res.status(201).json({
-          success: true,
-          message: 'Benutzer erfolgreich erstellt'
-        })
+      const result = await request.query(query);
+      users = result.recordset;
 
-      default:
-        res.setHeader('Allow', ['GET', 'POST'])
-        res.status(405).end(`Method ${req.method} Not Allowed`)
+    } catch (error) {
+      console.error('Database Error:', error);
+      return res.status(500).json({ 
+        message: 'Database error',
+        error: error.message 
+      });
+    } finally {
+      if (pool) {
+        await pool.close();
+      }
     }
-  } catch (error) {
-    console.error('Users API error:', error)
-    res.status(500).json({ 
-      success: false, 
-      error: 'Internal server error' 
-    })
-  } finally {
-    await sql.close()
+
+    // Nach dem Schließen der Datenbankverbindung die ThingsBoard-Anfragen durchführen
+    try {
+      const enrichedUsers = await Promise.all(users.map(async (user) => {
+        if (user.customerid) {
+          try {
+            const response = await fetch(`${process.env.THINGSBOARD_URL}/api/customer/${user.customerid}`, {
+              headers: {
+                'X-Authorization': `Bearer ${session.tbToken}`
+              }
+            });
+
+            if (response.ok) {
+              const customerData = await response.json();
+              return {
+                ...user,
+                customerName: customerData.title
+              };
+            }
+          } catch (error) {
+            console.error('Error fetching customer data:', error);
+          }
+          return {
+            ...user,
+            customerName: 'Fehler beim Laden'
+          };
+        }
+        return user;
+      }));
+
+      return res.json({
+        success: true,
+        data: enrichedUsers
+      });
+
+    } catch (error) {
+      console.error('ThingsBoard API Error:', error);
+      return res.status(500).json({ 
+        message: 'Error fetching customer data',
+        error: error.message 
+      });
+    }
   }
 } 
