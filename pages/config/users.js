@@ -32,15 +32,25 @@ export default function Users() {
   })
 
   const [users, setUsers] = useState([])
+  const [roles, setRoles] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [showModal, setShowModal] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState(null);
   const [activationLink, setActivationLink] = useState('');
 
+  // Hole die User-ID aus der Session
+  const currentUserId = session?.user?.userid;
+  console.log('Current User ID:', currentUserId);
+  console.log('**************************************************')
+  console.log('Session:', session);
+  console.log('**************************************************')
   useEffect(() => {
     if (session?.token) {
-      fetchUsers()
+      Promise.all([
+        fetchUsers(),
+        fetchRoles()
+      ]).finally(() => setLoading(false));
     }
   }, [session])
 
@@ -59,12 +69,41 @@ export default function Users() {
       const data = await response.json()
       console.log('Users data:', data.data); // Debug-Info
       setUsers(data.data)
-      setLoading(false)
     } catch (error) {
       setError('Error loading users')
-      setLoading(false)
+      console.error(error)
     }
   }
+
+  const fetchRoles = async () => {
+    try {
+      const response = await fetch('/api/roles', {
+        headers: {
+          'Authorization': `Bearer ${session.token}`
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch roles');
+      }
+
+      const data = await response.json();
+      setRoles(data); // Die API gibt direkt das Array zurück
+    } catch (error) {
+      console.error('Error loading roles:', error);
+    }
+  };
+
+  // Hilfsfunktion um den Rollentext anhand der ID zu finden
+  const getRoleName = (roleId) => {
+    if (!roleId) return 'Keine Rolle';
+    
+    // Wenn roleId ein String ist, versuche ihn zu parsen
+    const id = typeof roleId === 'string' ? parseInt(roleId, 10) : roleId;
+    
+    const role = roles.find(r => r.roleid === id);
+    return role ? role.rolename : 'Unbekannte Rolle';
+  };
 
   const handleNew = () => {
     router.push('/config/users/new')
@@ -177,7 +216,16 @@ export default function Users() {
                     <td>{user.username}</td>
                     <td>{user.email}</td>
                     <td>{user.firstName} {user.lastName}</td>
-                    <td>{user.role}</td>
+                    <td>
+                      {(() => {
+                        try {
+                          return getRoleName(user.role)
+                        } catch (err) {
+                          console.error('Error getting role name:', err, user.role);
+                          return 'Fehler';
+                        }
+                      })()}
+                    </td>
                     <td>{user.customerName}</td>
                     <td>{getStatusBadge(user.status)}</td>
                     <td>{new Date(user.createdAt).toLocaleDateString()}</td>
@@ -189,13 +237,18 @@ export default function Users() {
                       >
                         <FontAwesomeIcon icon={faEdit} />
                       </button>
-                      <button
-                        className="btn btn-sm btn-outline-danger me-2"
-                        onClick={() => handleDelete(user.id)}
-                        title="Löschen"
-                      >
-                        <FontAwesomeIcon icon={faTrash} />
-                      </button>
+                      
+                      {/* Lösch-Button nur anzeigen, wenn es nicht der aktuelle User ist */}
+                      {user.id !== currentUserId && (
+                        <button
+                          className="btn btn-sm btn-outline-danger me-2"
+                          onClick={() => handleDelete(user.id)}
+                          title="Löschen"
+                        >
+                          <FontAwesomeIcon icon={faTrash} />
+                        </button>
+                      )}
+
                       {parseInt(user.status) === 0 && (
                         <button
                           className="btn btn-sm btn-outline-success"

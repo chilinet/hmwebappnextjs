@@ -26,12 +26,14 @@ export default function EditUser() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [saving, setSaving] = useState(false)
+  const [roles, setRoles] = useState([])
 
   useEffect(() => {
     if (session?.token && id) {
       Promise.all([
         fetchUser(),
-        fetchCustomers()
+        fetchCustomers(),
+        fetchRoles()
       ]).then(() => setLoading(false))
       .catch(err => {
         console.error('Loading error:', err)
@@ -91,6 +93,22 @@ export default function EditUser() {
     } catch (error) {
       console.error('Error fetching customers:', error)
       setError('Error loading customers')
+    }
+  }
+
+  const fetchRoles = async () => {
+    try {
+      const response = await fetch('/api/roles', {
+        headers: {
+          'Authorization': `Bearer ${session.token}`
+        }
+      })
+      if (!response.ok) throw new Error('Failed to fetch roles')
+      const data = await response.json()
+      setRoles(data)
+    } catch (error) {
+      console.error('Error fetching roles:', error)
+      setError('Error loading roles')
     }
   }
 
@@ -212,12 +230,19 @@ export default function EditUser() {
                   className="form-select bg-white text-dark"
                   id="role"
                   name="role"
-                  value={user.role}
+                  value={user.role || ''}
                   onChange={handleChange}
                   required
                 >
-                  <option value="USER">Benutzer</option>
-                  <option value="ADMIN">Administrator</option>
+                  <option value="">Bitte wählen...</option>
+                  {roles.map(role => (
+                    <option 
+                      key={role.roleid} 
+                      value={role.roleid}
+                    >
+                      {role.rolename}
+                    </option>
+                  ))}
                 </select>
               </div>
 

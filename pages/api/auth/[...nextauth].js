@@ -8,21 +8,31 @@ export const authOptions = {
       name: 'Credentials',
       credentials: {
         username: { label: "Username", type: "text" },
-        password: { label: "Password", type: "password" },
-        token: { type: "text" },
-        tbToken: { type: "text" }
+        password: { label: "Password", type: "password" }
       },
-      async authorize(credentials) {
-        if (!credentials.token || !credentials.tbToken) {
-          throw new Error('Missing tokens')
-        }
+      async authorize(credentials, req) {
+        try {
+          const res = await fetch(`${process.env.NEXTAUTH_URL}/api/login`, {
+            method: 'POST',
+            body: JSON.stringify(credentials),
+            headers: { "Content-Type": "application/json" }
+          })
 
-        // Geben Sie beide Token zurück
-        return {
-          id: '1',
-          name: credentials.username,
-          token: credentials.token,
-          tbToken: credentials.tbToken
+          const user = await res.json()
+
+          if (res.ok && user.success) {
+            return {
+              name: user.user.name,
+              email: user.user.email,
+              token: user.token,
+              userid: user.user.userid,
+              tbToken: user.tbToken,
+            }
+          }
+          return null
+        } catch (e) {
+          console.error('Auth error:', e)
+          return null
         }
       }
     })
@@ -30,6 +40,7 @@ export const authOptions = {
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
+        token.userid = user.userid
         token.token = user.token
         token.tbToken = user.tbToken
       }
@@ -38,6 +49,7 @@ export const authOptions = {
     async session({ session, token }) {
       session.token = token.token
       session.tbToken = token.tbToken
+      session.user.userid = token.userid
       return session
     }
   },
