@@ -95,7 +95,7 @@ export default function Structure() {
       const treeNode = {
         id: node.id,
         parent: parentId,
-        droppable: hasChildren,
+        droppable: true,  // Alle Nodes als droppable markieren, unabhängig von hasChildren
         text: node.label || node.name,
         data: {
           type: node.type,
@@ -287,6 +287,9 @@ export default function Structure() {
     const isSelected = selectedNode && selectedNode.id === node.id;
     const isMoving = draggedNode && draggedNode.id === node.id;
     
+    // Prüfen ob der Node tatsächlich Kinder im Tree hat
+    const hasChildren = treeData.some(item => item.parent === node.id);
+    
     const getIcon = (type) => {
       switch (type?.toLowerCase()) {
         case 'area':
@@ -307,7 +310,7 @@ export default function Structure() {
     return (
       <div
         style={{
-          cursor: node.droppable ? 'pointer' : 'default',
+          cursor: 'pointer', // Immer pointer, da jetzt alle droppable sind
           display: 'flex',
           alignItems: 'center',
           padding: '4px 8px',
@@ -321,7 +324,7 @@ export default function Structure() {
         className={`tree-node ${isSelected ? 'selected-node' : ''}`}
       >
         <div style={{ display: 'flex', alignItems: 'center' }}>
-          {node.droppable && (
+          {hasChildren && ( // Nur anzeigen wenn tatsächlich Kinder vorhanden sind
             <div onClick={(e) => {
               e.stopPropagation();
               onToggle(node.id);
