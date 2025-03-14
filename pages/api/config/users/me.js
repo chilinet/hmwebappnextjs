@@ -1,6 +1,7 @@
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../auth/[...nextauth]";
 import sql from 'mssql';
+import { getConnection } from '../../../../lib/db';
 
 const config = {
   user: process.env.MSSQL_USER,
@@ -9,9 +10,32 @@ const config = {
   server: process.env.MSSQL_SERVER,
   options: {
     encrypt: true,
-    trustServerCertificate: true
+    trustServerCertificate: true,
+    enableArithAbort: true,
+    connectTimeout: 30000, // 30 Sekunden
+    requestTimeout: 30000,
+    pool: {
+      max: 10,
+      min: 0,
+      idleTimeoutMillis: 30000
+    }
   }
 };
+
+const MAX_RETRIES = 3;
+const RETRY_DELAY = 1000; // 1 Sekunde
+
+async function connectWithRetry(retries = MAX_RETRIES) {
+  try {
+    return await sql.connect(config);
+  } catch (err) {
+    if (retries > 0) {
+      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+      return connectWithRetry(retries - 1);
+    }
+    throw err;
+  }
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -23,10 +47,8 @@ export default async function handler(req, res) {
     return res.status(401).json({ message: 'Not authenticated' });
   }
 
-  let pool;
   try {
-    pool = await sql.connect(config);
-
+    const pool = await getConnection();
     const result = await pool.request()
       .input('userid', sql.Int, session.user.userid)
       .query(`
@@ -51,13 +73,5 @@ export default async function handler(req, res) {
       message: 'Database error',
       error: error.message 
     });
-  } finally {
-    if (pool) {
-      try {
-        await pool.close();
-      } catch (err) {
-        console.error('Error closing connection:', err);
-      }
-    }
   }
 } 
