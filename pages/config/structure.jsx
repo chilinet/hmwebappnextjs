@@ -2,7 +2,7 @@ import { useRouter } from 'next/router';
 import { useSession } from 'next-auth/react';
 import { useState, useEffect } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faArrowLeft, faBuilding, faIndustry, faMicrochip, faChevronDown, faChevronRight, faRotateRight, faPlus, faCheck, faXmark } from '@fortawesome/free-solid-svg-icons';
+import { faArrowLeft, faBuilding, faIndustry, faMicrochip, faChevronDown, faChevronRight, faRotateRight, faPlus, faCheck, faXmark, faMinus } from '@fortawesome/free-solid-svg-icons';
 import { Tree } from '@minoru/react-dnd-treeview';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
@@ -283,6 +283,31 @@ export default function Structure() {
     }
   };
 
+  const handleDelete = async (e) => {
+    e.stopPropagation();
+    if (window.confirm('Möchten Sie diesen Eintrag wirklich löschen?')) {
+      try {
+        const response = await fetch(`/api/config/assets/${selectedNode.id}`, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': `Bearer ${session.token}`
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to delete node');
+        }
+
+        await fetchTreeData(); // Tree neu laden
+        setSelectedNode(null); // Selektion aufheben wenn der gelöschte Node selektiert war
+        setNodeDetails(null);
+      } catch (error) {
+        console.error('Error deleting node:', error);
+        setError('Fehler beim Löschen des Elements');
+      }
+    }
+  };
+
   const CustomNode = ({ node, onToggle, dragHandle, isOpen }) => {
     const isSelected = selectedNode && selectedNode.id === node.id;
     const isMoving = draggedNode && draggedNode.id === node.id;
@@ -310,7 +335,7 @@ export default function Structure() {
     return (
       <div
         style={{
-          cursor: 'pointer', // Immer pointer, da jetzt alle droppable sind
+          cursor: 'pointer',
           display: 'flex',
           alignItems: 'center',
           padding: '4px 8px',
@@ -369,6 +394,21 @@ export default function Structure() {
             </div>
           )}
 
+          {/* Delete Button - nur anzeigen wenn Node selektiert ist UND keine Kinder hat */}
+          {isSelected && !hasChildren && (
+            <button
+              className="btn btn-sm btn-outline-danger me-2"
+              onClick={handleDelete}
+              style={{
+                padding: '0.1rem 0.3rem',
+                fontSize: '0.8rem'
+              }}
+              title="Löschen"
+            >
+              <FontAwesomeIcon icon={faMinus} />
+            </button>
+          )}
+
           {/* Add Node Button */}
           <button
             className="btn btn-sm btn-outline-light add-node-btn"
@@ -380,6 +420,7 @@ export default function Structure() {
               padding: '0.1rem 0.3rem',
               fontSize: '0.8rem'
             }}
+            title="Hinzufügen"
           >
             <FontAwesomeIcon icon={faPlus} />
           </button>
