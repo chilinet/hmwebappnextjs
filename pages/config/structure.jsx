@@ -2,7 +2,7 @@ import { useRouter } from 'next/router';
 import { useSession } from 'next-auth/react';
 import { useState, useEffect } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faArrowLeft, faBuilding, faIndustry, faMicrochip, faChevronDown, faChevronRight, faRotateRight, faPlus, faCheck, faXmark, faMinus } from '@fortawesome/free-solid-svg-icons';
+import { faArrowLeft, faBuilding, faIndustry, faMicrochip, faChevronDown, faChevronRight, faRotateRight, faPlus, faCheck, faXmark, faMinus, faSearch, faTimes } from '@fortawesome/free-solid-svg-icons';
 import { Tree } from '@minoru/react-dnd-treeview';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
@@ -31,6 +31,16 @@ export default function Structure() {
   const [draggedNode, setDraggedNode] = useState(null);
   const [dropTarget, setDropTarget] = useState(null);
   const [showConfirmation, setShowConfirmation] = useState(false);
+  const [devices, setDevices] = useState([]);
+  const [loadingDevices, setLoadingDevices] = useState(false);
+  const [activeTab, setActiveTab] = useState('details');
+  const [unassignedDevices, setUnassignedDevices] = useState([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [assigningDevice, setAssigningDevice] = useState(false);
+  const [unassigningDevice, setUnassigningDevice] = useState(null);
+  const [editingLabel, setEditingLabel] = useState(null);
+  const [editedLabel, setEditedLabel] = useState('');
+  const [savingLabel, setSavingLabel] = useState(null);
 
   useEffect(() => {
     if (session?.token) {
@@ -66,6 +76,17 @@ export default function Structure() {
   useEffect(() => {
     fetchAssetProfiles();
   }, [session]);
+
+  useEffect(() => {
+    if (selectedNode?.id && !selectedNode.id.startsWith('temp_')) {
+      setLoadingDevices(true);
+      fetchDevices(selectedNode.id)
+        .then(data => setDevices(data.assigned))
+        .finally(() => setLoadingDevices(false));
+    } else {
+      setDevices([]);
+    }
+  }, [selectedNode]);
 
   const fetchUserData = async () => {
     try {
@@ -409,21 +430,23 @@ export default function Structure() {
             </button>
           )}
 
-          {/* Add Node Button */}
-          <button
-            className="btn btn-sm btn-outline-light add-node-btn"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleAddNode(node);
-            }}
-            style={{
-              padding: '0.1rem 0.3rem',
-              fontSize: '0.8rem'
-            }}
-            title="Hinzufügen"
-          >
-            <FontAwesomeIcon icon={faPlus} />
-          </button>
+          {/* Add Node Button - nur anzeigen wenn Node selektiert ist */}
+          {isSelected && (
+            <button
+              className="btn btn-sm btn-outline-light"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleAddNode(node);
+              }}
+              style={{
+                padding: '0.1rem 0.3rem',
+                fontSize: '0.8rem'
+              }}
+              title="Hinzufügen"
+            >
+              <FontAwesomeIcon icon={faPlus} />
+            </button>
+          )}
         </div>
       </div>
     );
@@ -554,6 +577,157 @@ export default function Structure() {
     }
   };
 
+  const fetchDevices = async (nodeId) => {
+    try {
+      const response = await fetch(`/api/config/assets/${nodeId}/devices`, {
+        headers: {
+          'Authorization': `Bearer ${session.token}`
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch devices');
+      }
+
+      const data = await response.json();
+      setDevices(data.assigned);
+      setUnassignedDevices(data.unassigned);
+      return data;
+    } catch (error) {
+      console.error('Error fetching devices:', error);
+      setError('Fehler beim Laden der Geräte');
+      return { assigned: [], unassigned: [] };
+    }
+  };
+
+  // Funktion zum Filtern der nicht zugeordneten Geräte
+  const filteredUnassignedDevices = unassignedDevices.filter(device => {
+    const searchLower = searchTerm.toLowerCase();
+    return (
+      device.name.toLowerCase().includes(searchLower) ||
+      (device.label && device.label.toLowerCase().includes(searchLower)) ||
+      device.type.toLowerCase().includes(searchLower)
+    );
+  });
+
+  const handleAssignDevice = async (deviceId) => {
+    if (!selectedNode || !deviceId) {
+      setError('Kein Node ausgewählt oder ungültige Device ID');
+      return;
+    }
+
+    setAssigningDevice(true);
+    try {
+      const response = await fetch('/api/config/relations', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.token}`
+        },
+        body: JSON.stringify({
+          fromId: selectedNode.id,
+          fromType: 'ASSET',
+          toId: deviceId,
+          toType: 'DEVICE',
+          relationType: 'Contains'
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to assign device');
+      }
+
+      await fetchDevices(selectedNode.id);
+
+    } catch (error) {
+      console.error('Error assigning device:', error);
+      setError('Fehler beim Zuordnen des Geräts');
+    } finally {
+      setAssigningDevice(false);
+    }
+  };
+
+  const handleUnassignDevice = async (deviceId) => {
+    if (!selectedNode || !deviceId) {
+      setError('Kein Node ausgewählt oder ungültige Device ID');
+      return;
+    }
+
+    setUnassigningDevice(deviceId);
+    try {
+      const response = await fetch('/api/config/relations', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.token}`
+        },
+        body: JSON.stringify({
+          fromId: selectedNode.id,
+          fromType: 'ASSET',
+          toId: deviceId,
+          toType: 'DEVICE',
+          relationType: 'Contains'
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to unassign device');
+      }
+
+      await fetchDevices(selectedNode.id);
+
+    } catch (error) {
+      console.error('Error unassigning device:', error);
+      setError('Fehler beim Entfernen der Zuordnung');
+    } finally {
+      setUnassigningDevice(null);
+    }
+  };
+
+  const handleSaveLabel = async (deviceId) => {
+    try {
+      setSavingLabel(deviceId);
+      const device = [...devices, ...unassignedDevices].find(d => d.id.id === deviceId);
+      
+      const response = await fetch(`/api/config/devices/${deviceId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.token}`
+        },
+        body: JSON.stringify({
+          label: editedLabel,
+          type: device.type,
+          name: device.name
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(`Failed to update label: ${data.message || response.statusText}`);
+      }
+
+      // Aktualisiere die Device-Listen
+      await fetchDevices(selectedNode.id);
+      
+      // Reset edit state
+      setEditingLabel(null);
+      setEditedLabel('');
+
+    } catch (error) {
+      console.error('Error updating label:', error);
+      setError(`Fehler beim Aktualisieren des Labels: ${error.message}`);
+    } finally {
+      setSavingLabel(null);
+    }
+  };
+
+  const startEditingLabel = (device) => {
+    setEditingLabel(device.id.id);
+    setEditedLabel(device.label || '');
+  };
+
   return (
     <DndProvider backend={HTML5Backend}>
       <div className="container mt-4">
@@ -662,60 +836,36 @@ export default function Structure() {
           <div 
             className="card bg-dark text-white flex-grow-1" 
             style={{ 
-              height: windowHeight ? `${windowHeight - 80}px` : 'auto'
+              height: windowHeight ? `${windowHeight - 80}px` : 'auto',
+              display: 'flex',
+              flexDirection: 'column'  // Wichtig für die innere Flexbox-Struktur
             }}
           >
-            <div className="card-body">
-              <ul className="nav nav-tabs" role="tablist">
-                <li className="nav-item" role="presentation">
-                  <button
-                    className="nav-link active text-white"
-                    data-bs-toggle="tab"
-                    data-bs-target="#settings"
-                    type="button"
-                    role="tab"
+            <div className="card-body d-flex flex-column" style={{ overflow: 'hidden' }}>  {/* overflow: hidden wichtig */}
+              <ul className="nav nav-tabs mb-3">
+                <li className="nav-item">
+                  <button 
+                    className={`nav-link ${activeTab === 'details' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('details')}
                   >
-                    Einstellungen
+                    Details
                   </button>
                 </li>
-                <li className="nav-item" role="presentation">
-                  <button
-                    className="nav-link text-white"
-                    data-bs-toggle="tab"
-                    data-bs-target="#devices"
-                    type="button"
-                    role="tab"
+                <li className="nav-item">
+                  <button 
+                    className={`nav-link ${activeTab === 'devices' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('devices')}
                   >
                     Devices
                   </button>
                 </li>
-                <li className="nav-item" role="presentation">
-                  <button
-                    className="nav-link text-white"
-                    data-bs-toggle="tab"
-                    data-bs-target="#unassigned"
-                    type="button"
-                    role="tab"
-                  >
-                    Nodes ohne Zuordnung
-                  </button>
-                </li>
               </ul>
 
-              <div className="tab-content mt-3">
-                <div
-                  className="tab-pane fade show active"
-                  id="settings"
-                  role="tabpanel"
-                >
-                  {loadingDetails ? (
-                    <div className="text-center">
-                      <div className="spinner-border text-light" role="status">
-                        <span className="visually-hidden">Loading...</span>
-                      </div>
-                    </div>
-                  ) : selectedNode ? (
-                    <div className="p-3">
+              {activeTab === 'details' && (
+                <div className="p-3">
+                  {selectedNode ? (
+                    // Existierendes Formular
+                    <>
                       <div className="mb-3">
                         <label className="form-label text-white">Name</label>
                         <input
@@ -762,32 +912,322 @@ export default function Structure() {
                       >
                         {isNewNode ? 'Erstellen' : 'Speichern'}
                       </button>
-                    </div>
+                    </>
                   ) : (
-                    <p className="text-white p-3">Bitte wählen Sie einen Node aus</p>
+                    <div className="text-center text-muted py-5">
+                      <h5>Bitte wählen Sie einen Node aus</h5>
+                      <p>Wählen Sie einen Node aus der Baumstruktur aus, um dessen Details anzuzeigen.</p>
+                    </div>
                   )}
                 </div>
-                <div
-                  className="tab-pane fade"
-                  id="devices"
-                  role="tabpanel"
-                >
-                  <h4 className="text-white">Devices</h4>
-                  {/* Devices Content */}
+              )}
+
+              {activeTab === 'devices' && (
+                <div className="devices-container d-flex flex-column" style={{ flex: 1, overflow: 'hidden' }}>
+                  {/* Obere Hälfte: Zugeordnete Geräte */}
+                  <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                    <h5 className="text-white mb-3">Zugeordnete Geräte</h5>
+                    <div className="table-responsive" style={{ height: 'calc(100% - 40px)', overflow: 'auto' }}>
+                      {loadingDevices ? (
+                        <div className="text-center py-3">
+                          <div className="spinner-border text-light" role="status">
+                            <span className="visually-hidden">Loading...</span>
+                          </div>
+                        </div>
+                      ) : devices.length > 0 ? (
+                        <table className="table table-dark table-hover mb-0">
+                          <thead>
+                            <tr>
+                              <th>Name</th>
+                              <th>Label</th>
+                              <th>Typ</th>
+                              <th>Status</th>
+                              <th>Letzte Aktivität</th>
+                              <th>Aktionen</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {devices.map(device => (
+                              <tr key={device.id.id}>
+                                <td>{device.name}</td>
+                                <td>
+                                  {editingLabel === device.id.id ? (
+                                    <div className="input-group input-group-sm">
+                                      <input
+                                        type="text"
+                                        className="form-control form-control-sm bg-dark text-white border-secondary"
+                                        value={editedLabel}
+                                        onChange={(e) => setEditedLabel(e.target.value)}
+                                        onKeyPress={(e) => {
+                                          if (e.key === 'Enter') {
+                                            handleSaveLabel(device.id.id);
+                                          }
+                                        }}
+                                        autoFocus
+                                      />
+                                      <button
+                                        className="btn btn-sm btn-outline-success"
+                                        onClick={() => handleSaveLabel(device.id.id)}
+                                        disabled={savingLabel === device.id.id}
+                                      >
+                                        {savingLabel === device.id.id ? (
+                                          <div className="spinner-border spinner-border-sm" role="status">
+                                            <span className="visually-hidden">Loading...</span>
+                                          </div>
+                                        ) : (
+                                          <FontAwesomeIcon icon={faCheck} />
+                                        )}
+                                      </button>
+                                      <button
+                                        className="btn btn-sm btn-outline-danger"
+                                        onClick={() => {
+                                          setEditingLabel(null);
+                                          setEditedLabel('');
+                                        }}
+                                        disabled={savingLabel === device.id.id}
+                                      >
+                                        <FontAwesomeIcon icon={faXmark} />
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <span 
+                                      onClick={() => startEditingLabel(device)}
+                                      style={{ cursor: 'pointer' }}
+                                      className="text-decoration-underline"
+                                      title="Klicken zum Bearbeiten"
+                                    >
+                                      {device.label || '-'}
+                                    </span>
+                                  )}
+                                </td>
+                                <td>{device.type}</td>
+                                <td>
+                                  <span className={`badge ${device.serverAttributes?.active ? 'bg-success' : 'bg-danger'}`}>
+                                    {device.serverAttributes?.active ? 'Online' : 'Offline'}
+                                  </span>
+                                </td>
+                                <td>
+                                  {device.serverAttributes?.lastActivityTime ? 
+                                    new Date(device.serverAttributes.lastActivityTime).toLocaleString() : 
+                                    'Keine Aktivität'
+                                  }
+                                </td>
+                                <td>
+                                  <button
+                                    className="btn btn-sm btn-outline-danger"
+                                    onClick={() => handleUnassignDevice(device.id.id)}
+                                    disabled={unassigningDevice === device.id.id}
+                                    title="Zuordnung entfernen"
+                                  >
+                                    {unassigningDevice === device.id.id ? (
+                                      <div className="spinner-border spinner-border-sm" role="status">
+                                        <span className="visually-hidden">Loading...</span>
+                                      </div>
+                                    ) : (
+                                      <FontAwesomeIcon icon={faMinus} />
+                                    )}
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      ) : (
+                        <div className="text-center text-muted py-3">
+                          Keine Geräte zugeordnet
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Trennlinie */}
+                  <hr className="border-secondary my-3" />
+
+                  {/* Untere Hälfte: Nicht zugeordnete Geräte */}
+                  <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                    <div className="d-flex justify-content-between align-items-center mb-3">
+                      <h5 className="text-white mb-0">Nicht zugeordnete Geräte</h5>
+                      <div className="d-flex align-items-center">
+                        <div className="input-group" style={{ width: '300px' }}>
+                          <span className="input-group-text bg-dark text-white border-secondary">
+                            <FontAwesomeIcon icon={faSearch} />
+                          </span>
+                          <input
+                            type="text"
+                            className="form-control bg-dark text-white border-secondary"
+                            placeholder="Suchen..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                          />
+                          {searchTerm && (
+                            <button
+                              className="btn btn-outline-secondary"
+                              type="button"
+                              onClick={() => setSearchTerm('')}
+                            >
+                              <FontAwesomeIcon icon={faTimes} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div 
+                      className="table-responsive" 
+                      style={{ 
+                        height: 'calc(100% - 50px)',
+                        overflow: 'auto',
+                        scrollbarWidth: 'thin',
+                        '&::-webkit-scrollbar': {
+                          width: '8px'
+                        },
+                        '&::-webkit-scrollbar-track': {
+                          background: '#343a40'
+                        },
+                        '&::-webkit-scrollbar-thumb': {
+                          background: '#666',
+                          borderRadius: '4px'
+                        }
+                      }}
+                    >
+                      {loadingDevices ? (
+                        <div className="text-center py-3">
+                          <div className="spinner-border text-light" role="status">
+                            <span className="visually-hidden">Loading...</span>
+                          </div>
+                        </div>
+                      ) : filteredUnassignedDevices.length > 0 ? (
+                        <table className="table table-dark table-hover mb-0">
+                          <thead>
+                            <tr>
+                              <th>Name</th>
+                              <th>Label</th>
+                              <th>Typ</th>
+                              <th>Status</th>
+                              <th>Letzte Aktivität</th>
+                              <th>Aktionen</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {filteredUnassignedDevices.map(device => (
+                              <tr key={device.id.id}>
+                                <td>{device.name}</td>
+                                <td>
+                                  {editingLabel === device.id.id ? (
+                                    <div className="input-group input-group-sm">
+                                      <input
+                                        type="text"
+                                        className="form-control form-control-sm bg-dark text-white border-secondary"
+                                        value={editedLabel}
+                                        onChange={(e) => setEditedLabel(e.target.value)}
+                                        onKeyPress={(e) => {
+                                          if (e.key === 'Enter') {
+                                            handleSaveLabel(device.id.id);
+                                          }
+                                        }}
+                                        autoFocus
+                                      />
+                                      <button
+                                        className="btn btn-sm btn-outline-success"
+                                        onClick={() => handleSaveLabel(device.id.id)}
+                                        disabled={savingLabel === device.id.id}
+                                      >
+                                        {savingLabel === device.id.id ? (
+                                          <div className="spinner-border spinner-border-sm" role="status">
+                                            <span className="visually-hidden">Loading...</span>
+                                          </div>
+                                        ) : (
+                                          <FontAwesomeIcon icon={faCheck} />
+                                        )}
+                                      </button>
+                                      <button
+                                        className="btn btn-sm btn-outline-danger"
+                                        onClick={() => {
+                                          setEditingLabel(null);
+                                          setEditedLabel('');
+                                        }}
+                                        disabled={savingLabel === device.id.id}
+                                      >
+                                        <FontAwesomeIcon icon={faXmark} />
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <span 
+                                      onClick={() => startEditingLabel(device)}
+                                      style={{ cursor: 'pointer' }}
+                                      className="text-decoration-underline"
+                                      title="Klicken zum Bearbeiten"
+                                    >
+                                      {device.label || '-'}
+                                    </span>
+                                  )}
+                                </td>
+                                <td>{device.type}</td>
+                                <td>
+                                  <span className={`badge ${device.serverAttributes?.active ? 'bg-success' : 'bg-danger'}`}>
+                                    {device.serverAttributes?.active ? 'Online' : 'Offline'}
+                                  </span>
+                                </td>
+                                <td>
+                                  {device.serverAttributes?.lastActivityTime ? 
+                                    new Date(device.serverAttributes.lastActivityTime).toLocaleString() : 
+                                    'Keine Aktivität'
+                                  }
+                                </td>
+                                <td>
+                                  <button
+                                    className="btn btn-sm btn-outline-warning"
+                                    onClick={() => handleAssignDevice(device.id.id)}
+                                    disabled={!selectedNode || assigningDevice}
+                                    title={!selectedNode ? 'Bitte wählen Sie zuerst einen Node aus' : 'Gerät diesem Node zuordnen'}
+                                  >
+                                    {assigningDevice ? (
+                                      <div className="spinner-border spinner-border-sm" role="status">
+                                        <span className="visually-hidden">Loading...</span>
+                                      </div>
+                                    ) : (
+                                      <FontAwesomeIcon icon={faPlus} />
+                                    )}
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      ) : (
+                        <div className="text-center text-muted py-3">
+                          {searchTerm ? 'Keine Geräte gefunden' : 'Keine nicht zugeordneten Geräte vorhanden'}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
-                <div
-                  className="tab-pane fade"
-                  id="unassigned"
-                  role="tabpanel"
-                >
-                  <h4 className="text-white">Nodes ohne Zuordnung</h4>
-                  {/* Unassigned Nodes Content */}
-                </div>
-              </div>
+              )}
             </div>
           </div>
         </div>
       </div>
+
+      {(assigningDevice || unassigningDevice) && (
+        <div 
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+            zIndex: 1000,
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center'
+          }}
+        >
+          <div className="spinner-border text-light" role="status">
+            <span className="visually-hidden">Loading...</span>
+          </div>
+        </div>
+      )}
 
       <style jsx global>{`
         .tree-root {
@@ -929,21 +1369,15 @@ export default function Structure() {
         /* Add Node Button Styles */
         .tree-node .add-node-btn {
           opacity: 0;
-          transition: opacity 0.2s ease-in-out;
+          transition: none;
         }
         
         .tree-node:hover .add-node-btn {
-          opacity: 1;
+          opacity: 0;
         }
         
         .selected-node .add-node-btn {
           opacity: 1;
-        }
-        
-        .add-node-btn:hover {
-          background-color: #fd7e14 !important;
-          border-color: #fd7e14 !important;
-          color: white !important;
         }
         
         .add-node-btn:focus {
