@@ -41,6 +41,9 @@ export default function Structure() {
   const [editingLabel, setEditingLabel] = useState(null);
   const [editedLabel, setEditedLabel] = useState('');
   const [savingLabel, setSavingLabel] = useState(null);
+  const [treeSearchTerm, setTreeSearchTerm] = useState('');
+  const [lastUnassignedFetch, setLastUnassignedFetch] = useState(null);
+  const [loadingUnassignedDevices, setLoadingUnassignedDevices] = useState(false);
 
   useEffect(() => {
     if (session?.token) {
@@ -577,6 +580,32 @@ export default function Structure() {
     }
   };
 
+  const fetchUnassignedDevices = async () => {
+    if (loadingUnassignedDevices) return;
+    
+    setLoadingUnassignedDevices(true);
+    try {
+      const response = await fetch(`/api/config/devices/unassigned`, {
+        headers: {
+          'Authorization': `Bearer ${session.token}`
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch unassigned devices');
+      }
+
+      const data = await response.json();
+      setUnassignedDevices(data);
+      setLastUnassignedFetch(Date.now());
+    } catch (error) {
+      console.error('Error fetching unassigned devices:', error);
+      setError('Fehler beim Laden der nicht zugeordneten Geräte');
+    } finally {
+      setLoadingUnassignedDevices(false);
+    }
+  };
+
   const fetchDevices = async (nodeId) => {
     try {
       const response = await fetch(`/api/config/assets/${nodeId}/devices`, {
@@ -591,7 +620,15 @@ export default function Structure() {
 
       const data = await response.json();
       setDevices(data.assigned);
-      setUnassignedDevices(data.unassigned);
+      
+      // Aktualisiere die nicht zugeordneten Geräte nur wenn:
+      // 1. Sie noch nie geladen wurden
+      // 2. Der letzte Fetch ist älter als 5 Minuten
+      // 3. Nach einer Zuordnungs-/Entfernungsaktion
+      if (!lastUnassignedFetch || Date.now() - lastUnassignedFetch > 300000) {
+        await fetchUnassignedDevices();
+      }
+      
       return data;
     } catch (error) {
       console.error('Error fetching devices:', error);
@@ -638,6 +675,7 @@ export default function Structure() {
       }
 
       await fetchDevices(selectedNode.id);
+      await fetchUnassignedDevices(); // Aktualisiere die nicht zugeordneten Geräte
 
     } catch (error) {
       console.error('Error assigning device:', error);
@@ -675,6 +713,7 @@ export default function Structure() {
       }
 
       await fetchDevices(selectedNode.id);
+      await fetchUnassignedDevices(); // Aktualisiere die nicht zugeordneten Geräte
 
     } catch (error) {
       console.error('Error unassigning device:', error);
@@ -728,6 +767,64 @@ export default function Structure() {
     setEditedLabel(device.label || '');
   };
 
+  // Hilfsfunktion um zu prüfen, ob ein Node oder seine Kinder den Suchbegriff enthalten
+  const nodeMatchesSearch = (node, searchTerm) => {
+    const searchLower = searchTerm.toLowerCase();
+    return (
+      node.text?.toLowerCase().includes(searchLower) ||
+      node.data?.label?.toLowerCase().includes(searchLower) ||
+      node.data?.name?.toLowerCase().includes(searchLower)
+    );
+  };
+
+  // Hilfsfunktion um alle Parent-IDs eines Nodes zu finden
+  const findParentPath = (nodeId, nodes) => {
+    const path = [];
+    let currentNode = nodes.find(n => n.id === nodeId);
+    while (currentNode && currentNode.parent !== 0) {
+      path.push(currentNode.parent);
+      currentNode = nodes.find(n => n.id === currentNode.parent);
+    }
+    return path;
+  };
+
+  // Filterfunktion ohne setState
+  const getFilteredTreeData = () => {
+    if (!treeSearchTerm) return treeData;
+    
+    // Finde alle Nodes, die den Suchbegriff enthalten
+    const matchingNodes = treeData.filter(node => nodeMatchesSearch(node, treeSearchTerm));
+    
+    // Sammle alle Parent-IDs der gefundenen Nodes
+    const parentIds = new Set();
+    matchingNodes.forEach(node => {
+      findParentPath(node.id, treeData).forEach(id => parentIds.add(id));
+    });
+    
+    // Gib alle Nodes zurück, die entweder den Suchbegriff enthalten
+    // oder Eltern von Nodes sind, die den Suchbegriff enthalten
+    return treeData.filter(node => 
+      nodeMatchesSearch(node, treeSearchTerm) || parentIds.has(node.id)
+    );
+  };
+
+  // Neuer useEffect für das Aufklappen der Nodes
+  useEffect(() => {
+    if (treeSearchTerm) {
+      const matchingNodes = treeData.filter(node => nodeMatchesSearch(node, treeSearchTerm));
+      const parentIds = new Set();
+      matchingNodes.forEach(node => {
+        findParentPath(node.id, treeData).forEach(id => parentIds.add(id));
+      });
+      const nodesToOpen = [...parentIds, ...matchingNodes.map(node => node.id)];
+      setOpenNodes(prev => Array.from(new Set([...prev, ...nodesToOpen])));
+    } else {
+      // Wenn die Suche leer ist, setze auf die ursprünglichen offenen Nodes zurück
+      const initialOpenNodes = getInitialOpenNodes(treeData);
+      setOpenNodes(initialOpenNodes);
+    }
+  }, [treeSearchTerm, treeData]); // Abhängigkeiten des Effects
+
   return (
     <DndProvider backend={HTML5Backend}>
       <div className="container mt-4">
@@ -754,7 +851,29 @@ export default function Structure() {
             }}
           >
             <div className="card-body" style={{ overflowY: 'auto' }}>
-              <div className="d-flex justify-content-end mb-3">
+              {/* Suchfeld für Tree */}
+              <div className="d-flex gap-2 mb-3">
+                <div className="input-group">
+                  <span className="input-group-text bg-dark text-white border-secondary">
+                    <FontAwesomeIcon icon={faSearch} />
+                  </span>
+                  <input
+                    type="text"
+                    className="form-control bg-dark text-white border-secondary"
+                    placeholder="Suchen..."
+                    value={treeSearchTerm}
+                    onChange={(e) => setTreeSearchTerm(e.target.value)}
+                  />
+                  {treeSearchTerm && (
+                    <button
+                      className="btn btn-outline-secondary"
+                      type="button"
+                      onClick={() => setTreeSearchTerm('')}
+                    >
+                      <FontAwesomeIcon icon={faTimes} />
+                    </button>
+                  )}
+                </div>
                 <button 
                   className="btn btn-outline-light btn-sm"
                   onClick={fetchTreeData}
@@ -781,7 +900,7 @@ export default function Structure() {
                 </div>
               ) : (
                 <Tree
-                  tree={treeData}
+                  tree={getFilteredTreeData()}
                   rootId={0}
                   classes={{
                     root: 'tree-root',
@@ -1047,7 +1166,18 @@ export default function Structure() {
                   <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
                     <div className="d-flex justify-content-between align-items-center mb-3">
                       <h5 className="text-white mb-0">Nicht zugeordnete Geräte</h5>
-                      <div className="d-flex align-items-center">
+                      <div className="d-flex align-items-center gap-2">
+                        <button 
+                          className="btn btn-sm btn-outline-light"
+                          onClick={fetchUnassignedDevices}
+                          disabled={loadingUnassignedDevices}
+                          title="Liste aktualisieren"
+                        >
+                          <FontAwesomeIcon 
+                            icon={faRotateRight} 
+                            className={loadingUnassignedDevices ? 'fa-spin' : ''}
+                          />
+                        </button>
                         <div className="input-group" style={{ width: '300px' }}>
                           <span className="input-group-text bg-dark text-white border-secondary">
                             <FontAwesomeIcon icon={faSearch} />
@@ -1396,6 +1526,34 @@ export default function Structure() {
         }
         .tree-node:hover .confirmation-buttons {
           display: flex;
+        }
+
+        /* Suchfeld Styles */
+        .input-group .form-control {
+          background-color: #343a40 !important;
+          color: white !important;
+          border-color: #6c757d;
+        }
+        
+        .input-group .form-control:focus {
+          box-shadow: none;
+          border-color: #fd7e14;
+        }
+        
+        .input-group-text {
+          background-color: #343a40 !important;
+          color: #6c757d !important;
+          border-color: #6c757d;
+        }
+        
+        .input-group .btn-outline-secondary {
+          color: #6c757d;
+          border-color: #6c757d;
+        }
+        
+        .input-group .btn-outline-secondary:hover {
+          background-color: #6c757d;
+          color: white;
         }
       `}</style>
     </DndProvider>
