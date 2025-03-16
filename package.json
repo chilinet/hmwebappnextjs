@@ -20,7 +20,7 @@
     "jsonwebtoken": "^9.0.2",
     "mssql": "^11.0.1",
     "mysql2": "^3.12.0",
-    "next": "15.2.0",
+    "next": "^14.0.0",
     "next-auth": "^4.24.11",
     "nodemailer": "^6.10.0",
     "react": "^19.0.0",
@@ -33,5 +33,8 @@
     "@eslint/eslintrc": "^3",
     "eslint": "^9",
     "eslint-config-next": "15.2.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }

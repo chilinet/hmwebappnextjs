@@ -5,6 +5,14 @@
 # Version: 1.0.17
 # ----------------------
 
-# Installs dependencies and builds the Next.js application
+# Install dependencies
 npm install
-npm run build 
+
+# Build the Next.js application
+npm run build
+
+# Install PM2 globally
+npm install -g pm2
+
+# Start the application using PM2
+pm2 start ecosystem.config.js 
