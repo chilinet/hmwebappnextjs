@@ -3,7 +3,7 @@ import CredentialsProvider from 'next-auth/providers/credentials'
 import { authOptions } from './auth/[...nextauth]'
 import jwt from 'jsonwebtoken'
 import sql from 'mssql'
-import bcrypt from 'bcrypt'
+import bcrypt from 'bcryptjs'
 
 const JWT_SECRET = process.env.NEXTAUTH_SECRET
 const TB_URL = process.env.THINGSBOARD_URL
@@ -43,49 +43,88 @@ async function getThingsboardToken(tb_username, tb_password, tb_url) {
 }
 
 export default async function handler(req, res) {
+ // console.log('API Route: /api/login called with method:', req.method);
+ // console.log('Request headers:', req.headers);
+ // console.log('Request body:', req.body);
+
   if (req.method !== 'POST') {
+    console.log('Method not allowed:', req.method);
     return res.status(405).json({ message: 'Method not allowed' })
   }
 
   const { username, password } = req.body
   let pool;
 
+  console.log('************************************************')
+  console.log(req.body)
+  console.log('************************************************')
+  
+ // let username = req.body.username
+ //  let password = req.body.password
+
+  console.log('username:', username)
+  console.log('password:', password)
+
   try {
+    console.log('Attempting database connection...');
     pool = await sql.connect(sqlConfig)
+    console.log('Database connected successfully');
     
     // User und zugehörige Customer-Settings aus der Datenbank abfragen
-    const result = await pool.request()
-      .input('username', sql.NVarChar, username)
-      .query(`
-        SELECT 
-          u.userid,
-          u.username,
-          u.password,
-          u.customerid,
-          cs.tb_username,
-          cs.tb_password,
-          cs.tb_url
-        FROM hm_users u
-        LEFT JOIN customer_settings cs ON u.customerid = cs.customer_id
-        WHERE u.username = @username
-      `)
+    let result;
+    try {
+      result = await pool.request()
+        .input('username', sql.NVarChar, username)
+        .query(`
+          SELECT 
+            u.userid,
+            u.username,
+            u.password,
+            u.customerid,
+            cs.tb_username,
+            cs.tb_password,
+            cs.tb_url
+          FROM hm_users u
+          LEFT JOIN customer_settings cs ON u.customerid = cs.customer_id
+           WHERE u.username = @username
+        `)
+    } catch (error) {
+      console.error('Database query error:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Database query failed'
+      });
+    }
+
+    console.log('Database query completed. Records found:', result.recordset.length);
 
     if (result.recordset.length === 0) {
+      console.log('No user found for username:', username);
       return res.status(401).json({ 
         success: false,
-        error: 'Invalid credentials' 
+        error: 'Invalid credentials 1' 
       })
     }
 
     const user = result.recordset[0]
+    console.log('User found:', { 
+      userid: user.userid, 
+      username: user.username,
+      hasPassword: !!user.password,
+      hasThingsboard: !!user.tb_username
+    });
 
     // Passwort überprüfen
     const passwordMatch = await bcrypt.compare(password, user.password)
+    
+   // console.log(passwordMatch)
+   // console.log(user.password)
+   // console.log(password)
 
     if (!passwordMatch) {
       return res.status(401).json({ 
         success: false,
-        error: 'Invalid credentials' 
+        error: 'Invalid credentials 2' 
       })
     }
 
@@ -98,12 +137,54 @@ export default async function handler(req, res) {
     }
 
     try {
+      // ThingsBoard Login
+      const tbResponse = await fetch(`${process.env.THINGSBOARD_URL}/api/auth/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          username: user.tb_username,
+          password: user.tb_password
+        })
+      })
+
+      // Debug-Logging
+       //console.log('ThingsBoard response status:', tbResponse.status);
+      //console.log('ThingsBoard response headers:', tbResponse.headers);
+      const responseText = await tbResponse.text();
+      //console.log('ThingsBoard response body:', responseText);
+
+      let tbData;
+      try {
+        // Prüfen ob responseText ein valides JSON ist
+        console.log('Prüfen ob responseText ein valides JSON ist');
+        if (!responseText || typeof responseText !== 'string' || responseText.trim() === '') {
+            throw new Error('Invalid JSON: Empty or invalid response');
+        }
+        console.log('responseText ist ein valides JSON');
+        tbData = JSON.parse(responseText);
+        console.log('tbData:', tbData);
+      } catch (error) {
+        console.error('Failed to parse ThingsBoard response:', error);
+        return res.status(500).json({
+          success: false,
+          error: 'Failed to authenticate with ThingsBoard',
+          details: process.env.NODE_ENV === 'development' ? responseText : undefined
+        });
+      }
+
+      if (!tbResponse.ok) {
+        return res.status(401).json({
+          success: false,
+          error: 'ThingsBoard authentication failed',
+          details: tbData.message || 'Unknown error'
+        });
+      }
+
       // ThingsBoard Token mit den Customer-spezifischen Credentials holen
-      const tbToken = await getThingsboardToken(
-        user.tb_username, 
-        user.tb_password,
-        user.tb_url
-      )
+      const tbToken = tbData.token
       
       // Token generieren
       const token = jwt.sign(
@@ -137,10 +218,12 @@ export default async function handler(req, res) {
       })
     }
   } catch (error) {
-    console.error('Login error:', error)
+    console.error('Login error:', error);
+    console.error('Stack trace:', error.stack);
     return res.status(500).json({ 
       success: false,
-      error: 'Internal server error' 
+      error: 'Internal server error',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     })
   } finally {
     if (pool) {

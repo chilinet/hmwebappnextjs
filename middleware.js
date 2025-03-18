@@ -3,7 +3,8 @@ import { NextResponse } from "next/server"
 
 // Redirect to our custom signin page
 export function middleware(request) {
-  return NextResponse.redirect(new URL('/auth/signin', request.url))
+  console.log('Middleware called for:', request.url);
+  return null;
 }
 
 // Nur auf /login anwenden

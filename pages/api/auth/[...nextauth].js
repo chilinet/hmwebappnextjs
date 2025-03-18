@@ -12,11 +12,44 @@ export const authOptions = {
       },
       async authorize(credentials, req) {
         try {
-          const res = await fetch(`${process.env.NEXTAUTH_URL}/api/login`, {
-            method: 'POST',
-            body: JSON.stringify(credentials),
-            headers: { "Content-Type": "application/json" }
-          })
+
+          console.log('************************************************') 
+          console.log('credentials:', credentials)
+          console.log('************************************************')
+
+          console.log('process.env.NEXTAUTH_URL:', process.env.NEXTAUTH_URL)
+          console.log('************************************************')
+
+          console.log('process.env.NEXTAUTH_URL_INTERNAL:', process.env.NEXTAUTH_URL_INTERNAL)
+          console.log('************************************************')
+
+          console.log('process.env.NODE_ENV:', process.env.NODE_ENV)
+          console.log('************************************************')
+
+          const apiUrl = process.env.NEXTAUTH_URL_INTERNAL + '/api/login'
+
+          let res;
+
+          try {
+            console.log('Attempting to fetch from:', apiUrl);
+            res = await fetch(apiUrl, {
+              method: 'POST', 
+              body: JSON.stringify(credentials),
+              headers: { "Content-Type": "application/json" }
+            });
+            console.log('Fetch successful');
+          } catch (fetchError) {
+            console.error('Fetch failed with error:', {
+              message: fetchError.message,
+              cause: fetchError.cause,
+              code: fetchError.code,
+              stack: fetchError.stack
+            });
+            throw fetchError;
+          }
+          console.log('************************************************')
+          console.log('res:', res)
+          console.log('************************************************')
 
           const user = await res.json()
 

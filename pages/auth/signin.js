@@ -14,27 +14,9 @@ export default function SignIn() {
         setError(null)
 
         try {
-            // Login über unsere eigene API, die auch den ThingsBoard-Token generiert
-            const response = await fetch('/api/login', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ username, password }),
-            })
-
-            const data = await response.json()
-
-            if (!response.ok) {
-                throw new Error(data.error || 'Login failed')
-            }
-
-            // NextAuth SignIn mit dem erhaltenen Token
             const result = await signIn('credentials', {
                 username,
                 password,
-                token: data.token,        // JWT Token
-                tbToken: data.tbToken,    // ThingsBoard Token
                 redirect: false,
             })
 

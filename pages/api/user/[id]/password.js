@@ -1,6 +1,6 @@
 import { getSession } from 'next-auth/react';
 import sql from 'mssql';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 
 const config = {
   user: 'hmroot',

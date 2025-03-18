@@ -1,2 +1,5 @@
 [config]
-command = bash deploy.sh 
+command = bash deploy.sh
+SCM_DO_BUILD_DURING_DEPLOYMENT=true
+DEPLOYMENT_SOURCE=.next/standalone
+POST_DEPLOYMENT_ACTION=npm start 

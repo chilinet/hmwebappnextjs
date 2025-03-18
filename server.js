@@ -10,7 +10,7 @@ const app = next({ dev, hostname, port })
 const handle = app.getRequestHandler()
 
 app.prepare().then(() => {
-  console.log('App prepared 2')
+  console.log('Next.js app is preparing...')
   createServer(async (req, res) => {
     try {
       const parsedUrl = parse(req.url, true)
