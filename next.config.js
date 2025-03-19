@@ -1,9 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: "standalone", // Macht die Anwendung unabhängig von Node_Modules
+  output: 'standalone',
   experimental: {
-    appDir: true,
-  },
-};
+    // 'appDir' entfernen, da es nicht mehr benötigt wird
+  }
+}
 
-module.exports = nextConfig;
+module.exports = nextConfig
