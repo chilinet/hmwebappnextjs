@@ -7,7 +7,23 @@ export function middleware(request) {
   return null;
 }
 
+export default withAuth({
+  callbacks: {
+    authorized: ({ token }) => !!token
+  },
+})
+
 // Nur auf /login anwenden
 export const config = {
-  matcher: '/login'
+  matcher: [
+    /*
+     * Match all request paths except for the ones starting with:
+     * - api/auth (auth endpoints)
+     * - _next/static (static files)
+     * - _next/image (image optimization files)
+     * - favicon.ico (favicon file)
+     * - auth/signin (login page)
+     */
+    '/((?!api/auth|_next/static|_next/image|favicon.ico|auth/signin).*)',
+  ],
 } 

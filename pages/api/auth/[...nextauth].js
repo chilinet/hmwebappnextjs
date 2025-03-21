@@ -1,8 +1,38 @@
 import NextAuth from 'next-auth'
 import CredentialsProvider from 'next-auth/providers/credentials'
+import sql from 'mssql'
+import bcrypt from 'bcryptjs'
+import jwt from 'jsonwebtoken'
+
+const sqlConfig = {
+  user: process.env.MSSQL_USER,
+  password: process.env.MSSQL_PASSWORD,
+  database: process.env.MSSQL_DATABASE,
+  server: process.env.MSSQL_SERVER,
+  options: {
+    encrypt: true,
+    trustServerCertificate: true
+  }
+}
 
 export const authOptions = {
   secret: process.env.NEXTAUTH_SECRET,
+  session: {
+    strategy: "jwt",
+    maxAge: 8 * 60 * 60, // 8 hours
+    updateAge: 24 * 60 * 60, // 24 hours
+  },
+  cookies: {
+    sessionToken: {
+      name: `next-auth.session-token`,
+      options: {
+        httpOnly: true,
+        sameSite: 'lax',
+        path: '/',
+        secure: process.env.NODE_ENV === 'production'
+      }
+    }
+  },
   providers: [
     CredentialsProvider({
       name: 'Credentials',
@@ -10,61 +40,79 @@ export const authOptions = {
         username: { label: "Username", type: "text" },
         password: { label: "Password", type: "password" }
       },
-      async authorize(credentials, req) {
+      async authorize(credentials) {
         try {
+          const pool = await sql.connect(sqlConfig)
+          
+          // User und Settings abfragen
+          const result = await pool.request()
+            .input('username', sql.NVarChar, credentials.username)
+            .query(`
+              SELECT 
+                u.userid,
+                u.username,
+                u.email,
+                u.password,
+                u.customerid,
+                cs.tb_username,
+                cs.tb_password,
+                cs.tb_url
+              FROM hm_users u
+              LEFT JOIN customer_settings cs ON u.customerid = cs.customer_id
+              WHERE u.username = @username
+            `)
 
-          console.log('************************************************') 
-          console.log('credentials:', credentials)
-          console.log('************************************************')
+          await pool.close()
 
-          console.log('process.env.NEXTAUTH_URL:', process.env.NEXTAUTH_URL)
-          console.log('************************************************')
-
-          console.log('process.env.NEXTAUTH_URL_INTERNAL:', process.env.NEXTAUTH_URL_INTERNAL)
-          console.log('************************************************')
-
-          console.log('process.env.NODE_ENV:', process.env.NODE_ENV)
-          console.log('************************************************')
-
-          const apiUrl = process.env.NEXTAUTH_URL_INTERNAL + '/api/login'
-
-          let res;
-
-          try {
-            console.log('Attempting to fetch from:', apiUrl);
-            res = await fetch(apiUrl, {
-              method: 'POST', 
-              body: JSON.stringify(credentials),
-              headers: { "Content-Type": "application/json" }
-            });
-            console.log('Fetch successful');
-          } catch (fetchError) {
-            console.error('Fetch failed with error:', {
-              message: fetchError.message,
-              cause: fetchError.cause,
-              code: fetchError.code,
-              stack: fetchError.stack
-            });
-            throw fetchError;
+          if (result.recordset.length === 0) {
+            return null
           }
-          console.log('************************************************')
-          console.log('res:', res)
-          console.log('************************************************')
 
-          const user = await res.json()
+          const user = result.recordset[0]
 
-          if (res.ok && user.success) {
-            return {
-              name: user.user.name,
-              email: user.user.email,
-              token: user.token,
-              userid: user.user.userid,
-              tbToken: user.tbToken,
-            }
+          // Passwort überprüfen
+          const passwordMatch = await bcrypt.compare(credentials.password, user.password)
+          if (!passwordMatch) {
+            return null
           }
-          return null
-        } catch (e) {
-          console.error('Auth error:', e)
+
+          // ThingsBoard Login
+          const tbResponse = await fetch(`${process.env.THINGSBOARD_URL}/api/auth/login`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              username: user.tb_username,
+              password: user.tb_password
+            })
+          })
+
+          const tbData = await tbResponse.json()
+          
+          if (!tbResponse.ok) {
+            return null
+          }
+
+          return {
+            id: user.userid.toString(),
+            name: user.username,
+            email: user.email,
+            userid: user.userid,
+            customerid: user.customerid,
+            token: jwt.sign(
+              { 
+                username: user.username,
+                userid: user.userid,
+                customerid: user.customerid,
+              },
+              process.env.NEXTAUTH_SECRET,
+              { expiresIn: '8h' }
+            ),
+            tbToken: tbData.token
+          }
+        } catch (error) {
+          console.error('Auth error:', error)
           return null
         }
       }
@@ -73,22 +121,36 @@ export const authOptions = {
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
-        token.userid = user.userid
-        token.token = user.token
-        token.tbToken = user.tbToken
+        return {
+          ...token,
+          ...user,
+          email: user.email,
+          userid: user.userid,
+          customerid: user.customerid,
+        }
       }
       return token
     },
     async session({ session, token }) {
+      if (!token) {
+        return null
+      }
+      session.user = {
+        ...session.user,
+        id: token.id,
+        email: token.email,
+        userid: token.userid,
+        customerid: token.customerid,
+      }
       session.token = token.token
       session.tbToken = token.tbToken
-      session.user.userid = token.userid
       return session
     }
   },
   pages: {
     signIn: '/auth/signin'
-  }
+  },
+  debug: process.env.NODE_ENV === 'development',
 }
 
 export default NextAuth(authOptions)

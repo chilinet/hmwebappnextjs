@@ -1,0 +1,245 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "HeatManager API",
+    "version": "1.0.0",
+    "description": "API für das HeatManager System"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000/api",
+      "description": "Lokaler Entwicklungsserver"
+    }
+  ],
+  "paths": {
+    "/config/devices": {
+      "get": {
+        "summary": "Liste aller Geräte abrufen",
+        "description": "Ruft eine Liste aller Geräte mit ihren Telemetrie-Daten und Asset-Hierarchie ab",
+        "tags": ["Devices"],
+        "security": [
+          {
+            "nextauth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Erfolgreich",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Device"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Nicht authentifiziert"
+          },
+          "400": {
+            "description": "Ungültige Anfrage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server-Fehler",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/customer-settings": {
+      "get": {
+        "summary": "Kundeneinstellungen abrufen",
+        "description": "Ruft die Einstellungen für einen bestimmten Kunden ab",
+        "tags": ["Customer Settings"],
+        "parameters": [
+          {
+            "name": "customerId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "ID des Kunden"
+          },
+          {
+            "name": "key",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Schlüssel der Einstellung"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Erfolgreich",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerSetting"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Device": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Geräte-ID"
+          },
+          "name": {
+            "type": "string",
+            "description": "Name des Geräts"
+          },
+          "type": {
+            "type": "string",
+            "description": "Gerätetyp"
+          },
+          "active": {
+            "type": "boolean",
+            "description": "Aktiv-Status des Geräts"
+          },
+          "label": {
+            "type": "string",
+            "description": "Bezeichnung des Geräts"
+          },
+          "asset": {
+            "$ref": "#/components/schemas/Asset"
+          },
+          "telemetry": {
+            "$ref": "#/components/schemas/Telemetry"
+          }
+        }
+      },
+      "Asset": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Asset-ID"
+          },
+          "path": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Hierarchiepfad des Assets"
+          }
+        }
+      },
+      "Telemetry": {
+        "type": "object",
+        "properties": {
+          "batteryVoltage": {
+            "type": "number",
+            "description": "Batteriespannung in Volt"
+          },
+          "channel": {
+            "type": "number",
+            "description": "Kommunikationskanal"
+          },
+          "fCnt": {
+            "type": "number",
+            "description": "Frame Counter"
+          },
+          "PercentValveOpen": {
+            "type": "number",
+            "description": "Ventilöffnung in Prozent"
+          },
+          "rssi": {
+            "type": "number",
+            "description": "Signalstärke in dBm"
+          },
+          "snr": {
+            "type": "number",
+            "description": "Signal-Rausch-Verhältnis in dB"
+          },
+          "motorPosition": {
+            "type": "number",
+            "description": "Position des Motors"
+          },
+          "motorRange": {
+            "type": "number",
+            "description": "Bewegungsbereich des Motors"
+          },
+          "lastActivityTime": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Zeitpunkt der letzten Aktivität"
+          }
+        }
+      },
+      "CustomerSetting": {
+        "type": "object",
+        "properties": {
+          "customerId": {
+            "type": "string",
+            "description": "ID des Kunden"
+          },
+          "key": {
+            "type": "string",
+            "description": "Einstellungsschlüssel"
+          },
+          "value": {
+            "type": "string",
+            "description": "Einstellungswert"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "nextauth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  }
+} 

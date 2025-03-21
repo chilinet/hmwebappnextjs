@@ -46,6 +46,10 @@ export default async function handler(req, res) {
   if (!session) {
     return res.status(401).json({ message: 'Not authenticated' });
   }
+  
+  console.log('************************************************')
+  console.log('session:', session)
+  console.log('************************************************')
 
   try {
     const pool = await getConnection();

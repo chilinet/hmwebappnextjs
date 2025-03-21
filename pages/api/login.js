@@ -43,10 +43,6 @@ async function getThingsboardToken(tb_username, tb_password, tb_url) {
 }
 
 export default async function handler(req, res) {
- // console.log('API Route: /api/login called with method:', req.method);
- // console.log('Request headers:', req.headers);
- // console.log('Request body:', req.body);
-
   if (req.method !== 'POST') {
     console.log('Method not allowed:', req.method);
     return res.status(405).json({ message: 'Method not allowed' })
@@ -54,16 +50,6 @@ export default async function handler(req, res) {
 
   const { username, password } = req.body
   let pool;
-
-  console.log('************************************************')
-  console.log(req.body)
-  console.log('************************************************')
-  
- // let username = req.body.username
- //  let password = req.body.password
-
-  console.log('username:', username)
-  console.log('password:', password)
 
   try {
     console.log('Attempting database connection...');
