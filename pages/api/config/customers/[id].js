@@ -1,105 +1,78 @@
-import jwt from 'jsonwebtoken'
-
-const JWT_SECRET = process.env.NEXTAUTH_SECRET
-const TB_URL = process.env.THINGSBOARD_URL
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "../../auth/[...nextauth]";
 
 export default async function handler(req, res) {
-  const { id } = req.query
-  console.log('Request req:', req.query);
-
-  // Token überprüfen
-  const authHeader = req.headers.authorization
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'No token provided' })
+  const session = await getServerSession(req, res, authOptions);
+  
+  if (!session) {
+    return res.status(401).json({ message: "Not authenticated" });
   }
 
-  const token = authHeader.split(' ')[1]
-  let decoded
+  const { id } = req.query;
+
   try {
-    decoded = jwt.verify(token, JWT_SECRET)
-  } catch (err) {
-    return res.status(401).json({ error: 'Invalid token' })
-  }
-
-  switch (req.method) {
-    case 'GET':
-      try {
-        const response = await fetch(`${TB_URL}/api/customer/${id}`, {
-          headers: {
-            'X-Authorization': `Bearer ${decoded.tbToken}`
-          }
-        })
-
-        if (!response.ok) {
-          throw new Error('Failed to fetch customer')
-        }
-
-        const customer = await response.json()
-        return res.status(200).json({ 
-          success: true,
-          data: {
-            id: customer.id.id,
-            title: customer.title,
-            email: customer.email,
-            address: customer.address,
-            city: customer.city,
-            country: customer.country,
-            phone: customer.phone
-          }
-        })
-      } catch (error) {
-        console.error('Error fetching customer:', error)
-        return res.status(500).json({ error: error.message })
+    if (req.method === 'PUT') {
+      // Validierung für das Prefix
+      const prefix = req.body.prefix;
+      if (prefix && (prefix.length > 10 || !/^[A-Z]*$/.test(prefix))) {
+        return res.status(400).json({
+          message: 'Prefix muss aus maximal 10 Großbuchstaben bestehen'
+        });
       }
 
-    case 'PUT':
-      try {
-        const response = await fetch(`${TB_URL}/api/customer`, {
-          method: 'POST', // ThingsBoard verwendet POST für Updates
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Authorization': `Bearer ${decoded.tbToken}`
-          },
-          body: JSON.stringify({
-            ...req.body,
-            id: {
-              entityType: 'CUSTOMER',
-              id: id
-            }
-          })
-        })
-
-        if (!response.ok) {
-          throw new Error('Failed to update customer')
+      const customerData = {
+        ...req.body,
+        id: {
+          entityType: "CUSTOMER",
+          id: id
         }
+      };
 
-        return res.status(200).json({ success: true })
-      } catch (error) {
-        console.error('Error updating customer:', error)
-        return res.status(500).json({ error: error.message })
+      //console.log('+++++++++++++++++++++++++++++++++++++++++');
+      //console.log('Customer Data:', customerData);
+      //console.log('+++++++++++++++++++++++++++++++++++++++++'); 
+      let urlpost = `${process.env.THINGSBOARD_URL}/api/customer`;
+      const response = await fetch(urlpost, {
+        method: 'POST', // ThingsBoard verwendet POST für Updates
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Authorization': `Bearer ${session.tbToken}`
+        },
+        body: JSON.stringify(customerData)
+      });
+
+      if (!response.ok) {
+        throw new Error(`ThingsBoard API error: ${response.status}`);
       }
 
-    case 'DELETE':
-      try {
-        const response = await fetch(`${TB_URL}/api/customer/${id}`, {
-          method: 'DELETE',
-          headers: {
-            'X-Authorization': `Bearer ${decoded.tbToken}`
-          }
-        })
+      const data = await response.json();
+      return res.status(200).json({ data });
+    }
 
-        if (!response.ok) {
-          throw new Error('Failed to delete customer')
+    // GET Request
+    if (req.method === 'GET') {
+      let url = `${process.env.THINGSBOARD_URL}/api/customer/${id}`;
+      const response = await fetch(url, {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Authorization': `Bearer ${session.tbToken}`
         }
+      });
 
-        return res.status(200).json({ success: true })
-      } catch (error) {
-        console.error('Error deleting customer:', error)
-        return res.status(500).json({ error: error.message })
+      if (!response.ok) {
+        throw new Error(`ThingsBoard API error: ${response.status}`);
       }
 
-    default:
-      res.setHeader('Allow', ['GET', 'PUT', 'DELETE'])
-      res.status(405).end(`Method ${req.method} Not Allowed`)
+      const data = await response.json();
+      return res.status(200).json({ data });
+    }
+
+    // Methode nicht erlaubt
+    res.setHeader('Allow', ['GET', 'PUT']);
+    return res.status(405).end(`Method ${req.method} Not Allowed`);
+
+  } catch (error) {
+    console.error('Error handling customer:', error);
+    res.status(500).json({ message: 'Failed to handle customer request' });
   }
 } 

@@ -59,7 +59,8 @@ export default async function handler(req, res) {
       });
 
       if (!assetResponse.ok) {
-        throw new Error('Failed to create asset');
+        const errorData = await assetResponse.json();
+        throw new Error(`Failed to create asset: ${assetResponse.status} - ${errorData.message || 'Unknown error'}`);
       }
 
       const asset = await assetResponse.json();

@@ -1,6 +1,7 @@
 import { getSession } from 'next-auth/react'
-import jwt from 'jsonwebtoken'
+import { getServerSession } from "next-auth/next"
 import sql from 'mssql'
+import { authOptions } from "../../auth/[...nextauth]";
 
 const config = {
   user: process.env.MSSQL_USER,
@@ -15,41 +16,20 @@ const config = {
 export default async function handler(req, res) {
   const { id } = req.query
 
-  // Authentifizierung prüfen
-  let authToken = null
   let tbToken = null
 
-  // Versuche zuerst den Bearer Token
-  const authHeader = req.headers.authorization
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    authToken = authHeader.split(' ')[1]
-    try {
-      const decoded = jwt.verify(authToken, process.env.NEXTAUTH_SECRET)
-      tbToken = decoded.tbToken
-    } catch (err) {
-      console.error('JWT verification failed:', err)
-    }
+  const session = await getServerSession(req, res, authOptions);
+  if (!session) {
+    return res.status(401).json({ message: 'Not authenticated' });
   }
 
-  // Wenn kein gültiger Bearer Token, versuche Session
+  tbToken = session.tbToken;
+  
   if (!tbToken) {
-    const session = await getSession({ req })
-    if (session?.tbToken) {
-      tbToken = session.tbToken
-    }
-  }
-
-  // Wenn keine Authentifizierung gefunden wurde
-  if (!tbToken) {
-    console.error('Authentication failed - No valid token found')
     return res.status(401).json({ 
       success: false, 
-      error: 'Not authenticated',
-      details: {
-        hasAuthHeader: !!authHeader,
-        hasSession: !!(await getSession({ req }))
-      }
-    })
+      error: 'No valid ThingsBoard token found'
+    });
   }
 
   console.log('************************************************');

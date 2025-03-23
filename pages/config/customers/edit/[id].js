@@ -22,7 +22,8 @@ export default function EditCustomer() {
     country: '',
     phone: '',
     tb_username: '',
-    tb_password: ''
+    tb_password: '',
+    prefix: ''
   })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -58,11 +59,17 @@ export default function EditCustomer() {
 
       const customerData = await customerResponse.json();
       const settingsData = await settingsResponse.json();
+      
+     // console.log('+++++++++++++++++++++++++++++++++++++++++');
+     // console.log('Customer Data:', customerData);
+     // console.log('Settings Data:', settingsData);
+     // console.log('+++++++++++++++++++++++++++++++++++++++++'); 
 
       setCustomer({
         ...customerData.data,
         tb_username: settingsData.data.tb_username || '',
-        tb_password: settingsData.data.tb_password || ''
+        tb_password: settingsData.data.tb_password || '',
+        prefix: settingsData.data.prefix || ''
       });
     } catch (error) {
       setError('Fehler beim Laden der Kundendaten');
@@ -101,7 +108,8 @@ export default function EditCustomer() {
         },
         body: JSON.stringify({
           tb_username: customer.tb_username,
-          tb_password: customer.tb_password
+          tb_password: customer.tb_password,
+          prefix: customer.prefix
         })
       });
 
@@ -118,12 +126,24 @@ export default function EditCustomer() {
   };
 
   const handleChange = (e) => {
-    const { name, value } = e.target
+    const { name, value } = e.target;
+    
+    if (name === 'prefix') {
+      const upperValue = value.toUpperCase();
+      if (upperValue.length <= 10 && /^[A-Z]*$/.test(upperValue)) {
+        setCustomer(prev => ({
+          ...prev,
+          [name]: upperValue
+        }));
+      }
+      return;
+    }
+
     setCustomer(prev => ({
       ...prev,
       [name]: value
-    }))
-  }
+    }));
+  };
 
   if (loading) {
     return <div>Loading...</div>
@@ -152,6 +172,27 @@ export default function EditCustomer() {
             <div className="card-body">
               <form onSubmit={handleSubmit}>
                 <div className="row">
+                  <div className="col-md-6 mb-3">
+                    <label htmlFor="prefix" className="form-label">
+                      Kunden Prefix
+                      <small className="text-muted ms-2">(max. 10 Großbuchstaben)</small>
+                    </label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      id="prefix"
+                      name="prefix"
+                      value={customer.prefix}
+                      onChange={handleChange}
+                      maxLength={10}
+                      pattern="[A-Z]*"
+                      style={{ textTransform: 'uppercase' }}
+                    />
+                    <div className="form-text">
+                      Nur Großbuchstaben erlaubt (A-Z)
+                    </div>
+                  </div>
+
                   <div className="col-md-6 mb-3">
                     <label htmlFor="title" className="form-label">Name</label>
                     <input

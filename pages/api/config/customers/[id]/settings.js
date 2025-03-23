@@ -31,34 +31,38 @@ export default async function handler(req, res) {
         const result = await pool.request()
           .input('customerId', sql.UniqueIdentifier, id)
           .query(`
-            SELECT tb_username, tb_password
+            SELECT prefix, lastnodeid, tb_username, tb_password
             FROM customer_settings
             WHERE customer_id = @customerId
           `);
 
         return res.json({
           success: true,
-          data: result.recordset[0] || {}
+          data: result.recordset[0] || { prefix: '', lastnodeid: 0, tb_username: '', tb_password: '' }
         });
 
       case 'PUT':
-        const { tb_username, tb_password } = req.body;
+        const { lastnodeid, tb_username, tb_password, prefix } = req.body;
 
         await pool.request()
           .input('customerId', sql.UniqueIdentifier, id)
+          .input('lastnodeid', sql.Int, lastnodeid)
           .input('username', sql.NVarChar, tb_username)
           .input('password', sql.NVarChar, tb_password)
+          .input('prefix', sql.NVarChar, prefix)
           .query(`
             MERGE customer_settings AS target
             USING (SELECT @customerId as customer_id) AS source
             ON target.customer_id = source.customer_id
             WHEN MATCHED THEN
               UPDATE SET 
-                tb_username = @username,
-                tb_password = @password
+                lastnodeid = @lastnodeid,
+                tb_username = ISNULL(@username, tb_username),
+                tb_password = ISNULL(@password, tb_password),
+                prefix = ISNULL(@prefix, prefix)
             WHEN NOT MATCHED THEN
-              INSERT (customer_id, tb_username, tb_password)
-              VALUES (@customerId, @username, @password);
+              INSERT (customer_id, lastnodeid, tb_username, tb_password, prefix)
+              VALUES (@customerId, @lastnodeid, @username, @password, @prefix);
           `);
 
         return res.json({

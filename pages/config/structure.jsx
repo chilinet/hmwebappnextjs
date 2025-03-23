@@ -44,6 +44,8 @@ export default function Structure() {
   const [treeSearchTerm, setTreeSearchTerm] = useState('');
   const [lastUnassignedFetch, setLastUnassignedFetch] = useState(null);
   const [loadingUnassignedDevices, setLoadingUnassignedDevices] = useState(false);
+  const [customerPrefix, setCustomerPrefix] = useState('');
+  const [lastNodeId, setLastNodeId] = useState(0);
 
   useEffect(() => {
     if (session?.token) {
@@ -90,6 +92,12 @@ export default function Structure() {
       setDevices([]);
     }
   }, [selectedNode]);
+
+  useEffect(() => {
+    if (customerData?.customerid) {
+      fetchCustomerSettings();
+    }
+  }, [customerData]);
 
   const fetchUserData = async () => {
     try {
@@ -218,21 +226,24 @@ export default function Structure() {
   };
 
   const handleAddNode = (parentNode) => {
-    // Erstelle einen temporären Node für die Bearbeitung
+    // Generiere die neue Node-Nummer
+    const newNodeNumber = (lastNodeId + 1).toString().padStart(4, '0');
+    const generatedName = `${customerPrefix}_${newNodeNumber}`;
+    
     const tempNode = {
-      id: 'temp_' + Date.now(), // Temporäre ID
+      id: 'temp_' + Date.now(),
       parent: parentNode.id,
-      text: '',
+      text: generatedName,
       data: {
         type: '',
         label: '',
-        name: ''
+        name: generatedName
       }
     };
     
     setSelectedNode(tempNode);
     setEditedDetails({
-      name: '',
+      name: generatedName,
       label: '',
       type: ''
     });
@@ -483,6 +494,41 @@ export default function Structure() {
         }
 
         const newAsset = await assetResponse.json();
+
+        // Create relation to parent node
+        const relationResponse = await fetch('/api/config/relations', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.token}`
+          },
+          body: JSON.stringify({
+            fromId: selectedNode.parent,
+            fromType: 'ASSET',
+            toId: newAsset.id.id,
+            toType: 'ASSET',
+            relationType: 'Contains'
+          })
+        });
+
+        if (!relationResponse.ok) {
+          throw new Error('Failed to create relation');
+        }
+        
+        const updateResponse = await fetch(`/api/config/customers/${customerData.customerid}/settings`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.token}`
+          },
+          body: JSON.stringify({
+            lastnodeid: lastNodeId + 1
+          })
+        });
+
+        if (updateResponse.ok) {
+          setLastNodeId(prev => prev + 1);
+        }
 
         // Update Tree
         const treeResponse = await fetch(`/api/config/customers/${customerData.customerid}/tree`, {
@@ -817,13 +863,70 @@ export default function Structure() {
         findParentPath(node.id, treeData).forEach(id => parentIds.add(id));
       });
       const nodesToOpen = [...parentIds, ...matchingNodes.map(node => node.id)];
-      setOpenNodes(prev => Array.from(new Set([...prev, ...nodesToOpen])));
+      setOpenNodes((prev) => Array.from(new Set([...prev, ...nodesToOpen])));
     } else {
       // Wenn die Suche leer ist, setze auf die ursprünglichen offenen Nodes zurück
       const initialOpenNodes = getInitialOpenNodes(treeData);
       setOpenNodes(initialOpenNodes);
     }
   }, [treeSearchTerm, treeData]); // Abhängigkeiten des Effects
+
+  const fetchCustomerSettings = async () => {
+    try {
+      const response = await fetch(`/api/config/customers/${customerData.customerid}/settings`, {
+        headers: {
+          'Authorization': `Bearer ${session.token}`
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch customer settings');
+      }
+
+      const data = await response.json();
+      setCustomerPrefix(data.data.prefix || '');
+      setLastNodeId(data.data.lastnodeid || 0);
+    } catch (error) {
+      console.error('Error fetching customer settings:', error);
+    }
+  };
+
+  const saveNode = async () => {
+    try {
+      // ... vorhandener Save-Code ...
+
+      if (response.ok) {
+        // Nach erfolgreichem Speichern, erhöhe lastnodeid
+        const updateResponse = await fetch(`/api/config/customers/${customerData.customerid}/settings`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.token}`
+          },
+          body: JSON.stringify({
+            lastnodeid: lastNodeId + 1
+          })
+        });
+
+        if (updateResponse.ok) {
+          setLastNodeId(prev => prev + 1);
+        }
+
+        await fetchTreeData();
+        setIsNewNode(false);
+        setSelectedNode(null);
+        setEditedDetails(null);
+      }
+    } catch (error) {
+      console.error('Error saving node:', error);
+      setError('Fehler beim Speichern des Elements');
+    }
+  };
+
+  // Neue Funktion zur Validierung der Pflichtfelder
+  const isFormValid = () => {
+    return editedDetails?.label && editedDetails?.type && editedDetails?.label.trim() !== '' && editedDetails?.type.trim() !== '';
+  };
 
   return (
     <DndProvider backend={HTML5Backend}>
@@ -986,51 +1089,66 @@ export default function Structure() {
                     // Existierendes Formular
                     <>
                       <div className="mb-3">
-                        <label className="form-label text-white">Name</label>
+                        <label className="form-label">Name</label>
                         <input
                           type="text"
-                          className="form-control bg-white text-dark"
+                          className="form-control bg-dark text-white"
                           value={editedDetails?.name || ''}
-                          onChange={(e) => handleInputChange('name', e.target.value)}
-                          placeholder={isNewNode ? "Neuer Name" : ""}
+                          disabled={true}
+                          readOnly={true}
+                          style={{
+                            backgroundColor: '#212529 !important',
+                            color: '#fff !important',
+                            cursor: 'not-allowed'
+                          }}
                         />
                       </div>
                       
                       <div className="mb-3">
-                        <label className="form-label text-white">Label</label>
+                        <label className="form-label">Label *</label>
                         <input
                           type="text"
-                          className="form-control bg-white text-dark"
+                          className="form-control"
+                          name="label"
                           value={editedDetails?.label || ''}
                           onChange={(e) => handleInputChange('label', e.target.value)}
-                          placeholder={isNewNode ? "Neues Label" : ""}
+                          required
                         />
                       </div>
 
                       <div className="mb-3">
-                        <label className="form-label text-white">Typ</label>
+                        <label className="form-label">Typ *</label>
                         <select
-                          className="form-select bg-white text-dark"
+                          className="form-select bg-dark text-white"
+                          name="type"
                           value={editedDetails?.type || ''}
                           onChange={(e) => handleInputChange('type', e.target.value)}
+                          required
                         >
                           <option value="">Bitte wählen...</option>
                           {assetProfiles.map(profile => (
-                            <option key={profile.id?.id || profile.id} value={profile.name}>
+                            <option key={profile.id} value={profile.name}>
                               {profile.name}
                             </option>
                           ))}
                         </select>
                       </div>
 
-                      <button 
-                        className="btn btn-warning"
-                        onClick={saveChanges}
-                        disabled={loadingDetails}
-                        style={{ backgroundColor: '#fd7e14', borderColor: '#fd7e14' }}
-                      >
-                        {isNewNode ? 'Erstellen' : 'Speichern'}
-                      </button>
+                      <div className="d-flex justify-content-end mt-3">
+                        <button
+                          type="submit"
+                          className="btn btn-primary"
+                          disabled={isNewNode ? (!isFormValid() || loadingDetails) : loadingDetails}
+                          onClick={saveChanges}
+                          style={{
+                            backgroundColor: (isNewNode ? isFormValid() : true) ? '#fd7e14' : '#6c757d',
+                            borderColor: (isNewNode ? isFormValid() : true) ? '#fd7e14' : '#6c757d',
+                            opacity: (isNewNode ? isFormValid() : true) ? 1 : 0.65
+                          }}
+                        >
+                          {loadingDetails ? 'Wird geladen...' : (isNewNode ? 'Speichern' : 'Speichern')}
+                        </button>
+                      </div>
                     </>
                   ) : (
                     <div className="text-center text-muted py-5">
@@ -1555,7 +1673,31 @@ export default function Structure() {
           background-color: #6c757d;
           color: white;
         }
-      `}</style>
+
+        /* Spezielle Styles für das deaktivierte Namensfeld */
+        .form-control:disabled,
+        .form-control[readonly] {
+          background-color: #212529 !important;
+          color: #fff !important;
+          border: 1px solid #495057;
+          opacity: 1;
+        }
+
+        .form-control:disabled:hover,
+        .form-control[readonly]:hover {
+          cursor: not-allowed;
+        }
+
+        .btn-primary:not(:disabled):hover {
+          background-color: #ff8c2a !important;
+          border-color: #ff8c2a !important;
+        }
+
+        .btn-primary:disabled {
+          cursor: not-allowed;
+        }
+      `}
+      </style>
     </DndProvider>
   );
-} 
+}

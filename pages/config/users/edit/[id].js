@@ -175,6 +175,9 @@ export default function EditUser() {
         throw new Error('Sie haben keine Berechtigung, diese Rolle zuzuweisen');
       }
 
+      console.log('************************************************');
+      console.log('Session handleSubmit :', session);
+      console.log('************************************************');
       const response = await fetch(`/api/config/users/${id}`, {
         method: 'PUT',
         headers: {
