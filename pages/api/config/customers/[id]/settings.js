@@ -44,27 +44,43 @@ export default async function handler(req, res) {
       case 'PUT':
         const { lastnodeid, tb_username, tb_password, prefix } = req.body;
 
-        await pool.request()
-          .input('customerId', sql.UniqueIdentifier, id)
-          .input('lastnodeid', sql.Int, lastnodeid)
-          .input('username', sql.NVarChar, tb_username)
-          .input('password', sql.NVarChar, tb_password)
-          .input('prefix', sql.NVarChar, prefix)
-          .query(`
-            MERGE customer_settings AS target
-            USING (SELECT @customerId as customer_id) AS source
-            ON target.customer_id = source.customer_id
-            WHEN MATCHED THEN
-              UPDATE SET 
-                lastnodeid = @lastnodeid,
-                tb_username = ISNULL(@username, tb_username),
-                tb_password = ISNULL(@password, tb_password),
-                prefix = ISNULL(@prefix, prefix)
-            WHEN NOT MATCHED THEN
-              INSERT (customer_id, lastnodeid, tb_username, tb_password, prefix)
-              VALUES (@customerId, @lastnodeid, @username, @password, @prefix);
-          `);
-
+        // Check if only lastnodeid is provided
+        if (Object.keys(req.body).length === 1 && lastnodeid !== undefined) {
+          await pool.request()
+            .input('customerId', sql.UniqueIdentifier, id)
+            .input('lastnodeid', sql.Int, lastnodeid)
+            .query(`
+              MERGE customer_settings AS target
+              USING (SELECT @customerId as customer_id) AS source
+              ON target.customer_id = source.customer_id
+              WHEN MATCHED THEN
+                UPDATE SET lastnodeid = @lastnodeid
+              WHEN NOT MATCHED THEN
+                INSERT (customer_id, lastnodeid)
+                VALUES (@customerId, @lastnodeid);
+            `);
+        } else {
+          await pool.request()
+            .input('customerId', sql.UniqueIdentifier, id)
+            .input('lastnodeid', sql.Int, lastnodeid)
+            .input('username', sql.NVarChar, tb_username)
+            .input('password', sql.NVarChar, tb_password)
+            .input('prefix', sql.NVarChar, prefix)
+            .query(`
+              MERGE customer_settings AS target
+              USING (SELECT @customerId as customer_id) AS source
+              ON target.customer_id = source.customer_id
+              WHEN MATCHED THEN
+                UPDATE SET 
+                  lastnodeid = @lastnodeid,
+                  tb_username = ISNULL(@username, tb_username),
+                  tb_password = ISNULL(@password, tb_password),
+                  prefix = ISNULL(@prefix, prefix)
+              WHEN NOT MATCHED THEN
+                INSERT (customer_id, lastnodeid, tb_username, tb_password, prefix)
+                VALUES (@customerId, @lastnodeid, @username, @password, @prefix);
+            `);
+        }
         return res.json({
           success: true,
           message: 'Einstellungen gespeichert'
