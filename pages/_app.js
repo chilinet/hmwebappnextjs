@@ -7,6 +7,7 @@ import '../lib/fontawesome'  // FontAwesome Konfiguration importieren
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { useState } from 'react'
+import { ThingsboardProvider } from '@/contexts/ThingsboardContext'
 
 export default function App({
   Component,
@@ -21,13 +22,15 @@ export default function App({
       },
     },
   }))
-  // Verwende das getLayout der Seite oder falle zurück auf das Standard-Layout
-  const getLayout = Component.getLayout || ((page) => <Layout>{page}</Layout>)
 
   return (
     <QueryClientProvider client={queryClient}>
       <SessionProvider session={session}>
-        {getLayout(<Component {...pageProps} />)}
+        <ThingsboardProvider>
+          <Layout>
+            <Component {...pageProps} />
+          </Layout>
+        </ThingsboardProvider>
       </SessionProvider>
       <ReactQueryDevtools initialIsOpen={false} />
     </QueryClientProvider>

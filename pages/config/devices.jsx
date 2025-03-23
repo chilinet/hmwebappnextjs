@@ -4,11 +4,13 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faEdit, faTrash, faPlus, faSearch } from "@fortawesome/free-solid-svg-icons";
 import Layout from "@/components/Layout";
 import { useDevices } from '@/lib/hooks/useDevices';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { useThingsboard } from '@/contexts/ThingsboardContext';
 
 function Devices() {
   const { data: session } = useSession();
-  const { data: devices, isLoading, error } = useDevices(session?.token);
+  const { tbToken, isLoading } = useThingsboard();
+  const { data: devices, error } = useDevices(tbToken);
   const [selectedDevice, setSelectedDevice] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -37,7 +39,7 @@ function Devices() {
     setShowModal(true);
   };
 
-  if (isLoading) {
+  if (isLoading || !tbToken) {
     return (
       <div className="d-flex justify-content-center align-items-center" style={{ height: '100vh' }}>
         <Spinner animation="border" />
