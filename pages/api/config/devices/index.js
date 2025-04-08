@@ -40,15 +40,14 @@ async function fetchWithRetry(url, options, retries = 3, delay = 1000) {
 
 async function getAssetHierarchy(deviceId, tbToken, session) {
   
-  console.log('getAssetHierarchy: ' + deviceId);
+  //console.log('getAssetHierarchy: ' + deviceId);
 
   try {
     // Hole die Relations für das Gerät
     const relationsResponse = await fetchWithRetry(
-      `${process.env.THINGSBOARD_URL}/api/relations/info?fromId=${deviceId}&fromType=DEVICE`,
+      `${process.env.THINGSBOARD_URL}/api/relations?toId=${deviceId}&toType=DEVICE&relationTypeGroup=COMMON`,
       {
         headers: {
-          'Content-Type': 'application/json',
           'accept': 'application/json',
           'X-Authorization': `Bearer ${tbToken}`
         }
@@ -57,59 +56,23 @@ async function getAssetHierarchy(deviceId, tbToken, session) {
 
     const relations = await relationsResponse.json();
 
-    console.log('relations: ' + JSON.stringify(relations, null, 2));
+    //console.log('relations: ' + JSON.stringify(relations, null, 2));
 
-    const assetRelation = relations.find(r => r.to.entityType === 'ASSET');
+    const assetRelation = relations.find(r => r.from.entityType === 'ASSET');
     if (!assetRelation) return '';
-
-    // Hole den Tree aus der Datenbank
-    const treeResponse = await fetchWithRetry(
-      `/api/customer-settings?customerId=${session.customerid}&key=tree`,
-      {
-        headers: {
-          'Content-Type': 'application/json',
-        }
+    const treePath = await fetch(`${process.env.NEXTAUTH_URL}/api/treepath/${assetRelation.from.id}?customerId=${session.user.customerid}`, {
+      headers: {
+        'x-api-source': 'backend'
       }
-    );
+    });
+    const treePathData = await treePath.json();
+    //console.log('treePath.pathString:', treePathData.pathString);
 
-    if (!treeResponse.ok) return '';
-
-    const treeData = await treeResponse.json();
-    if (!treeData || !treeData.value) return '';
-
-    const tree = JSON.parse(treeData.value);
-
-    //console.log('tree: ' + JSON.stringify(tree, null, 2));
-
-    // Finde den Node mit der Asset ID
-    function findNodePath(node, targetId, path = []) {
-      if (node.id === assetRelation.to.id) {
-        return [...path, node];
-      }
-
-      if (node.children) {
-        for (const child of node.children) {
-          const result = findNodePath(child, targetId, [...path, node]);
-          if (result) return result;
-        }
-      }
-
-      return null;
-    }
-
-    const nodePath = findNodePath(tree, assetRelation.to.id);
-    console.log('nodePath: ' + JSON.stringify(nodePath, null, 2));
-    console.log('--------------------------------');
-
-    if (!nodePath) return '';
+    
 
     return {
       id: assetRelation.to.id,
-      path: nodePath.map(node => ({
-        id: node.id,
-        name: node.name,
-        type: node.type
-      }))
+      pathString: treePathData.pathString
     };
 
   } catch (error) {
@@ -233,7 +196,7 @@ export default async function handler(req, res) {
 
     const tbData = await tbResponse.json();
     
-    console.log('tbData: ' + JSON.stringify(tbData, null, 2));
+    //console.log('tbData: ' + JSON.stringify(tbData, null, 2));
 
     // Hole Asset- und Telemetrie-Informationen für jedes Gerät
     const devicesWithData = await Promise.all(
@@ -243,7 +206,7 @@ export default async function handler(req, res) {
           getLatestTelemetry(device.id.id, session.tbToken)
         ]);
        // console.log('device: ' + JSON.stringify(device, null, 2));
-        //console.log('asset: ' + JSON.stringify(asset, null, 2));
+       // console.log('asset: ' + JSON.stringify(asset, null, 2));
         //console.log('telemetry: ' + JSON.stringify(telemetry, null, 2));
         return {
           id: device.id.id,

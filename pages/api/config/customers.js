@@ -20,7 +20,9 @@ export default async function handler(req, res) {
   try {
     const session = await getSession({ req })
     let tbToken
-
+    
+    
+    
     if (session) {
       tbToken = session.tbToken
     } else {

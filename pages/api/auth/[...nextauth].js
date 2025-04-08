@@ -93,7 +93,7 @@ export const authOptions = {
           if (!tbResponse.ok) {
             return null
           }
-
+          
           return {
             id: user.userid.toString(),
             name: user.username,
@@ -109,7 +109,9 @@ export const authOptions = {
               process.env.NEXTAUTH_SECRET,
               { expiresIn: '8h' }
             ),
-            tbToken: tbData.token
+            tbToken: tbData.token,
+            refreshToken: tbData.refreshToken,
+            tbTokenExpires: new Date(Date.now() + 60 * 60 * 1000).toISOString() // Current time + 1 hour
           }
         } catch (error) {
           console.error('Auth error:', error)
@@ -144,6 +146,8 @@ export const authOptions = {
       }
       session.token = token.token
       session.tbToken = token.tbToken
+      session.refreshToken = token.refreshToken
+      session.tbTokenExpires = token.tbTokenExpires
       return session
     }
   },

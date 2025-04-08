@@ -84,7 +84,7 @@ function Devices() {
             <FontAwesomeIcon icon={faSearch} />
           </InputGroup.Text>
           <Form.Control
-            placeholder="Suche nach Gerät, Label, Typ oder Asset..."
+            placeholder="Suche nach Gerät, Label, Typ oder Pfad..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             style={{
@@ -128,16 +128,13 @@ function Devices() {
               <th>Name</th>
               <th>Label</th>
               <th>Typ</th>
-              <th>Asset</th>
+              <th>Pfad</th>
               <th>Batterie</th>
               <th>FCnt</th>
               <th>Ventil</th>
-              <th>Motor Position</th>
-              <th>Motor Range</th>
               <th>RSSI</th>
               <th>SF</th>
               <th>SNR</th>
-              <th>Channel</th>
               <th>Status</th>
               <th>Letzte Aktivität</th>
             </tr>
@@ -157,16 +154,7 @@ function Devices() {
                 <td>{device.name}</td>
                 <td>{device.label}</td>
                 <td>{device.type}</td>
-                <td>
-                  {device.asset ? (
-                    <div>
-                      <div className="fw-bold text-white">{device.asset.name}</div>
-                      <small className="text-muted">{device.asset.type}</small>
-                    </div>
-                  ) : (
-                    <span className="text-muted">-</span>
-                  )}
-                </td>
+                <td>{device.asset?.pathString || '-'}</td>
                 <td>
                   {device.telemetry?.batteryVoltage ? (
                     <div className="text-white">{device.telemetry.batteryVoltage}V</div>
@@ -183,32 +171,15 @@ function Devices() {
                   ) : '-'}
                 </td>
                 <td>
-                  {device.telemetry?.motorPosition !== undefined ? (
-                    <div className="text-white">
-                      {Math.round(device.telemetry.motorPosition)}
-                    </div>
-                  ) : '-'}
-                </td>
-                <td>
-                  {device.telemetry?.motorRange !== undefined ? (
-                    <div className="text-white">
-                      {device.telemetry.motorRange}
-                    </div>
-                  ) : '-'}
-                </td>
-                <td>
                   {device.telemetry?.rssi ? (
                     <div className="text-white">{device.telemetry.rssi}dBm</div>
                   ) : '-'}
                 </td>
                 <td>
-                  {device.telemetry?.spreadingFactor || '-'}
+                  {device.telemetry?.sf || '-'}
                 </td>
                 <td>
                   {device.telemetry?.snr ? `${device.telemetry.snr}dB` : '-'}
-                </td>
-                <td>
-                  {device.telemetry?.channel || '-'}
                 </td>
                 <td>
                   <span className={`badge ${device.active ? 'bg-success' : 'bg-danger'}`}>
@@ -216,7 +187,26 @@ function Devices() {
                   </span>
                 </td>
                 <td className="text-white">
-                  {device.lastActivityTime ? new Date(device.lastActivityTime).toLocaleString() : 'Nie'}
+                  {device.telemetry?.lastActivityTime ? 
+                    new Date(parseInt(device.telemetry.lastActivityTime)).toLocaleString('de-DE', {
+                      day: '2-digit',
+                      month: '2-digit',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      second: '2-digit'
+                    }) : 
+                    device.lastActivityTime ? 
+                      new Date(parseInt(device.lastActivityTime)).toLocaleString('de-DE', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit'
+                      }) : 
+                      'Nie'
+                  }
                 </td>
               </tr>
             ))}
