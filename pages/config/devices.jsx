@@ -1,5 +1,5 @@
 import { useSession } from "next-auth/react";
-import { Table, Spinner, Button, Modal, Nav, Tab, Form, InputGroup } from "react-bootstrap";
+import { Table, Spinner, Button, Modal, Nav, Tab, Form, InputGroup, FormControl } from "react-bootstrap";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faEdit, faTrash, faPlus, faSearch } from "@fortawesome/free-solid-svg-icons";
 import Layout from "@/components/Layout";
@@ -14,6 +14,7 @@ function Devices() {
   const [selectedDevice, setSelectedDevice] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedType, setSelectedType] = useState('all');
 
   // Filter devices based on search term
   const filteredDevices = useMemo(() => {
@@ -21,13 +22,18 @@ function Devices() {
     if (!searchTerm) return devices;
 
     const searchLower = searchTerm.toLowerCase();
-    return devices.filter(device => 
-      device.name?.toLowerCase().includes(searchLower) ||
-      device.label?.toLowerCase().includes(searchLower) ||
-      device.type?.toLowerCase().includes(searchLower) ||
-      device.asset?.name?.toLowerCase().includes(searchLower)
-    );
-  }, [devices, searchTerm]);
+    return devices.filter(device => {
+      const matchesSearch = 
+        device.name.toLowerCase().includes(searchLower) ||
+        device.label.toLowerCase().includes(searchLower) ||
+        device.type.toLowerCase().includes(searchLower) ||
+        device.asset?.pathString?.toLowerCase().includes(searchLower);
+
+      const matchesType = selectedType === 'all' || device.type === selectedType;
+
+      return matchesSearch && matchesType;
+    });
+  }, [devices, searchTerm, selectedType]);
 
   const handleClose = () => {
     setShowModal(false);
@@ -83,7 +89,7 @@ function Devices() {
           }}>
             <FontAwesomeIcon icon={faSearch} />
           </InputGroup.Text>
-          <Form.Control
+          <FormControl
             placeholder="Suche nach Gerät, Label, Typ oder Pfad..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
