@@ -5,7 +5,7 @@ module.exports = {
       script: './server.js',
       instances: '1',
       env: {
-        NODE_ENV: 'development',
+        NODE_ENV: 'production',
       },
     },
   ],
