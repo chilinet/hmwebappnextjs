@@ -1,71 +1,152 @@
-//import { getServerSession } from "next-auth/next";
-import { getSession } from 'next-auth/react'
+import { getServerSession } from 'next-auth/next';
+import { authOptions } from '../auth/[...nextauth]';
+import { getConnection } from '../../../lib/db';
 import sql from 'mssql';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
-    return res.status(405).json({ error: 'Method not allowed' });
+    return res.status(405).json({
+      success: false,
+      error: 'Method not allowed',
+      message: 'Nur GET-Anfragen sind erlaubt'
+    });
   }
-
-  //const { customerId } = req.query;
-  console.log('session : ', session);
-  // Get customerId from session
-  const session = await getSession(req, res);
-  if (!session?.user?.customerId) {
-    return res.status(401).json({ error: 'Unauthorized - No valid session found' });
-  }
-  const customerId = session.user.customerId;
 
   try {
-    // SQL Verbindung aufbauen
-    await sql.connect({
-      user: process.env.MSSQL_USER,
-      password: process.env.MSSQL_PASSWORD,
-      server: process.env.MSSQL_SERVER,
-      database: process.env.MSSQL_DATABASE,
-      options: {
-        encrypt: true,
-        trustServerCertificate: true,
-      },
-    });
-
-    // Benutzeranzahl abfragen
-    const usersResult = await sql.query`
-      SELECT COUNT(*) as userCount 
-      FROM hm_users 
-      WHERE customerid = ${customerId}
-    `;
-    
-    // Thingsboard API aufrufen für Device-Anzahl
-    const tbSettings = await sql.query`
-      SELECT tbtoken 
-      FROM customer_settings 
-      WHERE customerid = ${customerId} 
-      AND tbtoken IS NOT NULL 
-      AND tbtokenexpiry > GETDATE()
-    `;
-
-    let deviceCount = 0;
-    if (tbSettings.recordset[0]?.tbtoken) {
-      const tbResponse = await fetch(`${process.env.THINGSBOARD_URL}/api/tenant/devices?pageSize=1&page=0`, {
-        headers: {
-          'X-Authorization': `Bearer ${tbSettings.recordset[0].tbtoken}`
-        }
+    // Authentifizierung prüfen
+    const session = await getServerSession(req, res, authOptions);
+    if (!session) {
+      return res.status(401).json({
+        success: false,
+        error: 'Not authenticated',
+        message: 'Nicht authentifiziert'
       });
-
-      if (tbResponse.ok) {
-        const tbData = await tbResponse.json();
-        deviceCount = tbData.totalElements;
-      }
     }
 
-    res.status(200).json({
-      users: usersResult.recordset[0].userCount,
-      devices: deviceCount
+    const { customerId } = req.query;
+    const userCustomerId = session.user?.customerid;
+
+    // Verwende customerId aus Query oder Session
+    const targetCustomerId = customerId || userCustomerId;
+
+    if (!targetCustomerId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing customer ID',
+        message: 'Customer ID fehlt'
+      });
+    }
+
+    const pool = await getConnection();
+
+    // Dashboard-Statistiken abrufen
+    const stats = await getDashboardStats(pool, targetCustomerId);
+
+    return res.status(200).json({
+      success: true,
+      ...stats
     });
 
   } catch (error) {
-    console.error('Dashboard stats error:', error);
-    res.status(500).json({ error: 'Failed to fetch dashboard stats' });
+    console.error('Dashboard stats API error:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Unbekannter Fehler',
+      message: 'Fehler beim Abrufen der Dashboard-Statistiken'
+    });
+  }
+}
+
+async function getDashboardStats(pool, customerId) {
+  try {
+    // Gesamte Anzahl Geräte
+    const totalDevicesResult = await pool.request()
+      .input('customerId', sql.UniqueIdentifier, customerId)
+      .query(`
+        SELECT COUNT(*) as totalDevices
+        FROM customer_settings cs
+        INNER JOIN hm_users u ON cs.customer_id = u.customerid
+        WHERE cs.customer_id = @customerId
+        AND EXISTS (
+          SELECT 1 FROM thingsboard_devices td 
+          WHERE td.customer_id = cs.customer_id
+        )
+      `);
+
+    // Aktive Geräte (letzte Aktivität in den letzten 24 Stunden)
+    const activeDevicesResult = await pool.request()
+      .input('customerId', sql.UniqueIdentifier, customerId)
+      .input('lastActivityThreshold', sql.DateTime, new Date(Date.now() - 24 * 60 * 60 * 1000))
+      .query(`
+        SELECT COUNT(*) as activeDevices
+        FROM thingsboard_devices td
+        WHERE td.customer_id = @customerId
+        AND td.last_activity_time > @lastActivityThreshold
+      `);
+
+    // Inaktive Geräte
+    const inactiveDevicesResult = await pool.request()
+      .input('customerId', sql.UniqueIdentifier, customerId)
+      .input('lastActivityThreshold', sql.DateTime, new Date(Date.now() - 24 * 60 * 60 * 1000))
+      .query(`
+        SELECT COUNT(*) as inactiveDevices
+        FROM thingsboard_devices td
+        WHERE td.customer_id = @customerId
+        AND (td.last_activity_time <= @lastActivityThreshold OR td.last_activity_time IS NULL)
+      `);
+
+    // Alerts (Beispiel: Geräte mit kritischen Werten)
+    const alertsResult = await pool.request()
+      .input('customerId', sql.UniqueIdentifier, customerId)
+      .query(`
+        SELECT COUNT(*) as alerts
+        FROM thingsboard_devices td
+        WHERE td.customer_id = @customerId
+        AND td.status = 'ERROR'
+      `);
+
+    // Letzte Aktivitäten
+    const recentActivityResult = await pool.request()
+      .input('customerId', sql.UniqueIdentifier, customerId)
+      .query(`
+        SELECT TOP 10
+          td.device_name,
+          td.last_activity_time,
+          td.status
+        FROM thingsboard_devices td
+        WHERE td.customer_id = @customerId
+        AND td.last_activity_time IS NOT NULL
+        ORDER BY td.last_activity_time DESC
+      `);
+
+    // Fallback-Werte falls keine Daten vorhanden
+    const totalDevices = totalDevicesResult.recordset[0]?.totalDevices || 0;
+    const activeDevices = activeDevicesResult.recordset[0]?.activeDevices || 0;
+    const inactiveDevices = inactiveDevicesResult.recordset[0]?.inactiveDevices || 0;
+    const alerts = alertsResult.recordset[0]?.alerts || 0;
+    const recentActivity = recentActivityResult.recordset || [];
+
+    return {
+      totalDevices,
+      activeDevices,
+      inactiveDevices,
+      alerts,
+      recentActivity,
+      lastUpdated: new Date().toISOString()
+    };
+
+  } catch (error) {
+    console.error('Error getting dashboard stats:', error);
+    
+    // Fallback-Werte bei Fehlern
+    return {
+      totalDevices: 0,
+      activeDevices: 0,
+      inactiveDevices: 0,
+      alerts: 0,
+      recentActivity: [],
+      lastUpdated: new Date().toISOString(),
+      error: 'Fehler beim Abrufen der Statistiken'
+    };
   }
 } 

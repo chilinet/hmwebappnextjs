@@ -10,6 +10,11 @@ import { useState } from 'react'
 import { ThingsboardProvider } from '@/contexts/ThingsboardContext'
 import { useRouter } from 'next/router'
 
+// Initialize ThingsBoard token refresh service (server-side only)
+if (typeof window === 'undefined') {
+  require('../lib/tokenRefreshInit');
+}
+
 export default function App({
   Component,
   pageProps: { session, ...pageProps },

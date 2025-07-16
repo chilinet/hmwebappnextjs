@@ -1,29 +1,146 @@
 import { useSession } from "next-auth/react";
-import { Table, Spinner, Button, Modal, Nav, Tab, Form, InputGroup, FormControl } from "react-bootstrap";
+import { Table, Spinner, Button, Modal, Nav, Tab, Form, InputGroup, FormControl, Alert } from "react-bootstrap";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faEdit, faTrash, faPlus, faSearch } from "@fortawesome/free-solid-svg-icons";
+import { faEdit, faTrash, faPlus, faSearch, faSync, faDownload, faUpload } from "@fortawesome/free-solid-svg-icons";
 import Layout from "@/components/Layout";
 import { useDevices } from '@/lib/hooks/useDevices';
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useThingsboard } from '@/contexts/ThingsboardContext';
+
+// Local storage keys
+const DEVICES_CACHE_KEY = 'hm_devices_cache';
+const DEVICES_LAST_UPDATE_KEY = 'hm_devices_last_update';
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
 
 function Devices() {
   const { data: session } = useSession();
   const { tbToken, isLoading } = useThingsboard();
-  const { data: devices, error } = useDevices(tbToken);
-  const [selectedDevice, setSelectedDevice] = useState(null);
+  const { data: devices, error, refetch } = useDevices(tbToken);
+  
+  // Local state for cached devices
+  const [cachedDevices, setCachedDevices] = useState([]);
+  const [lastUpdate, setLastUpdate] = useState(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [showModal, setShowModal] = useState(false);
+  const [selectedDevice, setSelectedDevice] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedType, setSelectedType] = useState('all');
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [refreshInterval, setRefreshInterval] = useState(null);
+
+  // Load cached data on component mount
+  useEffect(() => {
+    loadCachedDevices();
+  }, []);
+
+  // Auto-refresh functionality
+  useEffect(() => {
+    if (autoRefresh && tbToken) {
+      const interval = setInterval(() => {
+        refreshDevices();
+      }, 30000); // Refresh every 30 seconds
+      setRefreshInterval(interval);
+      
+      return () => {
+        if (interval) clearInterval(interval);
+      };
+    } else if (refreshInterval) {
+      clearInterval(refreshInterval);
+      setRefreshInterval(null);
+    }
+  }, [autoRefresh, tbToken]);
+
+  // Update cache when new devices data is available
+  useEffect(() => {
+    if (devices && devices.length > 0) {
+      cacheDevices(devices);
+    }
+  }, [devices]);
+
+  const loadCachedDevices = useCallback(() => {
+    try {
+      const cached = localStorage.getItem(DEVICES_CACHE_KEY);
+      const lastUpdateStr = localStorage.getItem(DEVICES_LAST_UPDATE_KEY);
+      
+      if (cached && lastUpdateStr) {
+        const parsedDevices = JSON.parse(cached);
+        const lastUpdateTime = parseInt(lastUpdateStr);
+        const now = Date.now();
+        
+        // Check if cache is still valid
+        if (now - lastUpdateTime < CACHE_DURATION) {
+          setCachedDevices(parsedDevices);
+          setLastUpdate(lastUpdateTime);
+          return true;
+        }
+      }
+    } catch (error) {
+      console.error('Error loading cached devices:', error);
+    }
+    return false;
+  }, []);
+
+  const cacheDevices = useCallback((devicesData) => {
+    try {
+      localStorage.setItem(DEVICES_CACHE_KEY, JSON.stringify(devicesData));
+      localStorage.setItem(DEVICES_LAST_UPDATE_KEY, Date.now().toString());
+      setCachedDevices(devicesData);
+      setLastUpdate(Date.now());
+    } catch (error) {
+      console.error('Error caching devices:', error);
+    }
+  }, []);
+
+  const refreshDevices = useCallback(async () => {
+    if (!tbToken) return;
+    
+    setIsRefreshing(true);
+    try {
+      await refetch();
+    } catch (error) {
+      console.error('Error refreshing devices:', error);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [tbToken, refetch]);
+
+  const clearCache = useCallback(() => {
+    try {
+      localStorage.removeItem(DEVICES_CACHE_KEY);
+      localStorage.removeItem(DEVICES_LAST_UPDATE_KEY);
+      setCachedDevices([]);
+      setLastUpdate(null);
+    } catch (error) {
+      console.error('Error clearing cache:', error);
+    }
+  }, []);
+
+  const exportDevices = useCallback(() => {
+    try {
+      const dataStr = JSON.stringify(cachedDevices, null, 2);
+      const dataBlob = new Blob([dataStr], { type: 'application/json' });
+      const url = URL.createObjectURL(dataBlob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `devices_${new Date().toISOString().split('T')[0]}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error exporting devices:', error);
+    }
+  }, [cachedDevices]);
+
+  // Use cached devices if available, otherwise use live data
+  const displayDevices = cachedDevices.length > 0 ? cachedDevices : (devices || []);
 
   // Filter devices based on search term
   const filteredDevices = useMemo(() => {
-    if (!devices) return [];
-    if (!searchTerm) return devices;
+    if (!displayDevices) return [];
+    if (!searchTerm && selectedType === 'all') return displayDevices;
 
     const searchLower = searchTerm.toLowerCase();
-    return devices.filter(device => {
-      const matchesSearch = 
+    return displayDevices.filter(device => {
+      const matchesSearch = !searchTerm || 
         device.name.toLowerCase().includes(searchLower) ||
         device.label.toLowerCase().includes(searchLower) ||
         device.type.toLowerCase().includes(searchLower) ||
@@ -33,7 +150,7 @@ function Devices() {
 
       return matchesSearch && matchesType;
     });
-  }, [devices, searchTerm, selectedType]);
+  }, [displayDevices, searchTerm, selectedType]);
 
   const handleClose = () => {
     setShowModal(false);
@@ -45,6 +162,11 @@ function Devices() {
     setShowModal(true);
   };
 
+  const formatLastUpdate = (timestamp) => {
+    if (!timestamp) return 'Nie';
+    return new Date(timestamp).toLocaleString('de-DE');
+  };
+
   if (isLoading || !tbToken) {
     return (
       <div className="d-flex justify-content-center align-items-center" style={{ height: '100vh' }}>
@@ -53,31 +175,70 @@ function Devices() {
     );
   }
 
-  if (error) {
-    return (
-      <div className="container mt-4">
-        <div className="alert alert-danger">
-          Error loading devices: {error.message}
-        </div>
-      </div>
-    );
-  }
-
-  if (!devices) {
-    return (
-      <div className="container mt-4">
-        <div className="alert alert-info">
-          Keine Geräte gefunden
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="container mt-4">
       <div className="d-flex justify-content-between align-items-center mb-4">
         <h2 className="text-white">Geräte</h2>
+        <div className="d-flex gap-2">
+          <Button
+            variant="outline-light"
+            size="sm"
+            onClick={refreshDevices}
+            disabled={isRefreshing}
+          >
+            <FontAwesomeIcon icon={faSync} spin={isRefreshing} className="me-2" />
+            {isRefreshing ? 'Aktualisiere...' : 'Aktualisieren'}
+          </Button>
+          <Button
+            variant={autoRefresh ? "success" : "outline-success"}
+            size="sm"
+            onClick={() => setAutoRefresh(!autoRefresh)}
+          >
+            Auto-Refresh
+          </Button>
+          <Button
+            variant="outline-info"
+            size="sm"
+            onClick={exportDevices}
+            disabled={cachedDevices.length === 0}
+          >
+            <FontAwesomeIcon icon={faDownload} className="me-2" />
+            Export
+          </Button>
+          <Button
+            variant="outline-warning"
+            size="sm"
+            onClick={clearCache}
+          >
+            Cache löschen
+          </Button>
+        </div>
       </div>
+
+      {/* Status Information */}
+      {lastUpdate && (
+        <Alert variant="info" className="mb-3">
+          <div className="d-flex justify-content-between align-items-center">
+            <span>
+              <strong>Cache Status:</strong> {cachedDevices.length} Geräte gespeichert
+            </span>
+            <span>
+              <strong>Letzte Aktualisierung:</strong> {formatLastUpdate(lastUpdate)}
+            </span>
+          </div>
+        </Alert>
+      )}
+
+      {error && (
+        <Alert variant="danger" className="mb-3">
+          Fehler beim Laden der Geräte: {error.message}
+          {cachedDevices.length > 0 && (
+            <div className="mt-2">
+              <small>Zeige gecachte Daten ({cachedDevices.length} Geräte)</small>
+            </div>
+          )}
+        </Alert>
+      )}
 
       {/* Search Bar */}
       <div className="mb-4">
@@ -107,7 +268,7 @@ function Devices() {
 
       <div style={{ 
         position: 'relative', 
-        height: 'calc(100vh - 260px)', // Adjusted for search bar
+        height: 'calc(100vh - 320px)', // Adjusted for additional elements
         overflow: 'auto'
       }}>
         <Table 
@@ -271,6 +432,15 @@ function Devices() {
                   </div>
                   <div className="mb-3">
                     <strong>Label:</strong> {selectedDevice?.label}
+                  </div>
+                  <div className="mb-3">
+                    <strong>Status:</strong> 
+                    <span className={`badge ms-2 ${selectedDevice?.active ? 'bg-success' : 'bg-danger'}`}>
+                      {selectedDevice?.active ? 'Aktiv' : 'Inaktiv'}
+                    </span>
+                  </div>
+                  <div className="mb-3">
+                    <strong>Pfad:</strong> {selectedDevice?.asset?.pathString || 'Nicht zugewiesen'}
                   </div>
                   {/* Weitere Geräteinformationen hier */}
                 </div>
