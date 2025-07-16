@@ -49,17 +49,10 @@ echo "Stopping existing PM2 processes..."
 pm2 stop all || true
 pm2 delete all || true
 
-# Start the application
-echo "Starting application with PM2..."
-pm2 start ecosystem.config.js
+# Start the application directly with Node instead of PM2 for Azure
+echo "Starting application directly with Node..."
+echo "PORT: $PORT"
+echo "NODE_ENV: $NODE_ENV"
 
-# Show PM2 status
-echo "PM2 Status:"
-pm2 status
-
-# Keep the script running to prevent container exit
-echo "Startup script completed. Application should be running."
-echo "PM2 logs will be available in the application logs."
-
-# Optional: Keep the script alive for debugging
-# tail -f /dev/null 
+# Start the application directly
+exec node server.js 
