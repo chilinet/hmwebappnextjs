@@ -1,0 +1,5 @@
+language: node
+buildCommands:
+  - npm install
+  - npm run build
+startupCommand: bash startup.sh
