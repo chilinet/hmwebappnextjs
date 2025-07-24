@@ -1,17 +1,7 @@
 import sql from 'mssql';
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../auth/[...nextauth]";
-
-const config = {
-  user: process.env.MSSQL_USER,
-  password: process.env.MSSQL_PASSWORD,
-  server: process.env.MSSQL_SERVER,
-  database: process.env.MSSQL_DATABASE,
-  options: {
-    encrypt: true,
-    trustServerCertificate: true,
-  },
-};
+import { getConnection } from '../../../lib/db';
 
 export default async function handler(req, res) {
   // Session-Überprüfung
@@ -30,7 +20,17 @@ export default async function handler(req, res) {
     
     const result = await pool.request()
       .input('id', sql.BigInt, id)
-      .query('SELECT * FROM hmcdev.dbo.inventory WHERE id = @id');
+      .query(`
+        SELECT i.id, i.devicenbr, i.devicename, i.deveui, i.joineui, i.serialnbr, i.appkey, 
+               i.loraversion, i.regionalversion, i.customerid, i.tbconnectionid, i.nwconnectionid, 
+               i.brand_id, b.name as brand_name, i.model_id, i.hardwareversion, i.firmwareversion, 
+               i.owner_id, i.group_id, i.distributor_id, i.status_id, i.invoicenbr, i.ordernbr, 
+               i.orderdate, i.installed_at, i.tbconnected_at, i.nwconnected_at, i.created_at, 
+               i.updated_at, i.status, i.contractId, i.deviceLabel, i.deviceProfileId, i.offerName
+        FROM hmcdev.dbo.inventory i
+        LEFT JOIN hmcdev.dbo.brand b ON i.brand_id = b.id
+        WHERE i.id = @id
+      `);
     
     if (result.recordset.length === 0) {
       return res.status(404).json({ error: 'Device not found' });

@@ -1,0 +1,18 @@
+[Unit]
+Description=HMWebApp Docker Compose Service
+Requires=docker.service
+After=docker.service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/path/to/your/app
+ExecStart=/usr/local/bin/docker-compose -f docker-compose.simple.yml up -d
+ExecStop=/usr/local/bin/docker-compose -f docker-compose.simple.yml down
+ExecReload=/usr/local/bin/docker-compose -f docker-compose.simple.yml restart
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target 

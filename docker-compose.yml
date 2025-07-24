@@ -1,0 +1,43 @@
+version: "3.8"
+
+services:
+  hmwebapp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      # Database configuration
+      - MSSQL_USER=${MSSQL_USER}
+      - MSSQL_PASSWORD=${MSSQL_PASSWORD}
+      - MSSQL_SERVER=${MSSQL_SERVER}
+      - MSSQL_DATABASE=${MSSQL_DATABASE}
+      # NextAuth configuration
+      - NEXTAUTH_URL=${NEXTAUTH_URL}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      # ThingsBoard configuration
+      - THINGSBOARD_URL=${THINGSBOARD_URL}
+      - THINGSBOARD_USERNAME=${THINGSBOARD_USERNAME}
+      - THINGSBOARD_PASSWORD=${THINGSBOARD_PASSWORD}
+      # Email configuration
+      - EMAIL_SERVER_HOST=${EMAIL_SERVER_HOST}
+      - EMAIL_SERVER_PORT=${EMAIL_SERVER_PORT}
+      - EMAIL_SERVER_USER=${EMAIL_SERVER_USER}
+      - EMAIL_SERVER_PASSWORD=${EMAIL_SERVER_PASSWORD}
+      - EMAIL_FROM=${EMAIL_FROM}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/hello"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - hmwebapp-network
+
+networks:
+  hmwebapp-network:
+    driver: bridge

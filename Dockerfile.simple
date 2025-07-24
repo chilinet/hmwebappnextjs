@@ -1,0 +1,32 @@
+# Simple Dockerfile for Next.js application
+FROM node:18-alpine
+
+# Install system dependencies
+RUN apk add --no-cache libc6-compat curl
+
+WORKDIR /app
+
+# Copy package files
+COPY package.json package-lock.json* ./
+
+# Install dependencies with retry mechanism
+RUN npm config set registry https://registry.npmjs.org/ && \
+    npm ci --no-audit --no-fund --prefer-offline
+
+# Copy source code
+COPY . .
+
+# Set environment variables
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+# Build the application
+RUN npm run build
+
+# Expose port
+EXPOSE 3000
+
+# Start the application
+CMD ["npm", "start"] 
