@@ -1,5 +1,7 @@
-import "@/styles/globals.css";
 import "bootstrap/dist/css/bootstrap.min.css";
+import "@/styles/globals.css";
+import "@/styles/light-theme.css";
+import "@/styles/navigation-overrides.css";
 import Layout from "@/components/Layout";
 //import { AuthProvider } from '../contexts/AuthContext';
 import { SessionProvider } from "next-auth/react"

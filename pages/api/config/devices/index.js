@@ -116,7 +116,7 @@ async function getLatestTelemetry(deviceId, tbToken) {
         }
       ),
       fetch(
-        `${process.env.THINGSBOARD_URL}/api/plugins/telemetry/DEVICE/${deviceId}/values/attributes/SERVER_SCOPE?keys=lastActivityTime`,
+        `${process.env.THINGSBOARD_URL}/api/plugins/telemetry/DEVICE/${deviceId}/values/attributes/SERVER_SCOPE`,
         {
           headers: {
             'accept': 'application/json',
@@ -147,7 +147,10 @@ async function getLatestTelemetry(deviceId, tbToken) {
       const attributesData = await attributesResponse.value.json();
       //console.log('attributesData: ' + JSON.stringify(attributesData, null, 2));
       if (attributesData && attributesData.length > 0) {
-        telemetry.lastActivityTime = attributesData.find(attr => attr.key === 'lastActivityTime')?.value;
+        // Speichere alle Server-Attribute
+        attributesData.forEach(attr => {
+          telemetry[attr.key] = attr.value;
+        });
       }
     }
 
@@ -217,7 +220,8 @@ export default async function handler(req, res) {
           label: device.label || '',
           additionalInfo: device.additionalInfo || {},
           asset: asset,
-          telemetry: telemetry
+          telemetry: telemetry,
+          serverAttributes: telemetry // Server-Attribute sind jetzt in telemetry enthalten
         };
       })
     );

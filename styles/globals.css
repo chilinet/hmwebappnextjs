@@ -62,10 +62,10 @@ a {
 }
 
 .nav-item {
-    background-color: #000000 !important; /* Solider schwarzer Hintergrund */
+    background-color: #ffffff !important; /* Solider schwarzer Hintergrund */
     transition: all 0.2s ease;
     font-size: 1.1rem;
-    border: 1px solid #333333;
+    border: 1px solid #ffffff;
 }
 
 .nav-item:hover {

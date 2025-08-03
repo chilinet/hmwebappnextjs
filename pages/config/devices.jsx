@@ -133,18 +133,33 @@ function Devices() {
   // Use cached devices if available, otherwise use live data
   const displayDevices = cachedDevices.length > 0 ? cachedDevices : (devices || []);
 
+  // Hilfsfunktion zum Finden des SerialNbr-Attributs
+  const getSerialNumber = (device) => {
+    const attributes = device.serverAttributes || device.telemetry || {};
+    return attributes.serialNbr || 
+           attributes.serialNumber || 
+           attributes.SerialNbr || 
+           attributes.SerialNumber || 
+           attributes.serial || 
+           attributes.Serial || 
+           '-';
+  };
+
   // Filter devices based on search term
   const filteredDevices = useMemo(() => {
     if (!displayDevices) return [];
     if (!searchTerm && selectedType === 'all') return displayDevices;
 
-    const searchLower = searchTerm.toLowerCase();
+    const searchLower = (searchTerm || '').toLowerCase();
     return displayDevices.filter(device => {
+      if (!device) return false;
+      const serialNumber = getSerialNumber(device).toLowerCase();
       const matchesSearch = !searchTerm || 
-        device.name.toLowerCase().includes(searchLower) ||
-        device.label.toLowerCase().includes(searchLower) ||
-        device.type.toLowerCase().includes(searchLower) ||
-        device.asset?.pathString?.toLowerCase().includes(searchLower);
+        (device.name || '').toLowerCase().includes(searchLower) ||
+        (device.label || '').toLowerCase().includes(searchLower) ||
+        (device.type || '').toLowerCase().includes(searchLower) ||
+        (device.asset?.pathString || '').toLowerCase().includes(searchLower) ||
+        serialNumber.includes(searchLower);
 
       const matchesType = selectedType === 'all' || device.type === selectedType;
 
@@ -251,7 +266,7 @@ function Devices() {
             <FontAwesomeIcon icon={faSearch} />
           </InputGroup.Text>
           <FormControl
-            placeholder="Suche nach Gerät, Label, Typ oder Pfad..."
+            placeholder="Suche nach Gerät, Label, Typ, SerialNbr oder Pfad..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             style={{
@@ -295,6 +310,7 @@ function Devices() {
               <th>Name</th>
               <th>Label</th>
               <th>Typ</th>
+              <th>SerialNbr</th>
               <th>Pfad</th>
               <th>Batterie</th>
               <th>FCnt</th>
@@ -321,6 +337,7 @@ function Devices() {
                 <td>{device.name}</td>
                 <td>{device.label}</td>
                 <td>{device.type}</td>
+                <td>{getSerialNumber(device)}</td>
                 <td>{device.asset?.pathString || '-'}</td>
                 <td>
                   {device.telemetry?.batteryVoltage ? (

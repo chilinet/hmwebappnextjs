@@ -71,6 +71,38 @@ export default async function handler(req, res) {
     const deviceRelations = Array.isArray(relations) ? 
       relations.filter(rel => rel.to.entityType === 'DEVICE') : [];
 
+    // Hilfsfunktion zum Abrufen aller Attribute für ein Device
+    const fetchAllDeviceAttributes = async (deviceId) => {
+      const scopes = ['SERVER_SCOPE', 'SHARED_SCOPE', 'CLIENT_SCOPE'];
+      const allAttributes = {};
+    //console.log(deviceId  + " deviceId")
+      for (const scope of scopes) {
+        try {
+          const attributesResponse = await fetch(
+            `${process.env.THINGSBOARD_URL}/api/plugins/telemetry/DEVICE/${deviceId}/values/attributes/${scope}`,
+            {
+              headers: {
+                'X-Authorization': `Bearer ${session.tbToken}`
+              }
+            }
+          );
+
+          if (attributesResponse.ok) {
+            const attributes = await attributesResponse.json();
+            if (Array.isArray(attributes)) {
+              attributes.forEach(attr => {
+                allAttributes[attr.key] = attr.value;
+              });
+            }
+          }
+        } catch (error) {
+          console.error(`Error fetching ${scope} attributes for device ${deviceId}:`, error);
+        }
+      }
+
+      return allAttributes;
+    };
+
     // Hole Details und Attribute für zugeordnete Devices
     const devices = await Promise.all(
       deviceRelations.map(async relation => {
@@ -92,25 +124,17 @@ export default async function handler(req, res) {
 
           const deviceData = await deviceResponse.json();
 
-          // Hole Server Attribute
-          const attributesResponse = await fetch(
-            `${process.env.THINGSBOARD_URL}/api/plugins/telemetry/DEVICE/${relation.to.id}/values/attributes/SERVER_SCOPE`,
-            {
-              headers: {
-                'X-Authorization': `Bearer ${session.tbToken}`
-              }
-            }
-          );
+          // Hole alle Attribute für das Device
+          const allAttributes = await fetchAllDeviceAttributes(relation.to.id);
 
-          const attributes = attributesResponse.ok ? await attributesResponse.json() : [];
+          // Debug: Log alle Attribute für das erste Device
+          if (deviceRelations.indexOf(relation) === 0) {
+            console.log('All attributes for first device:', allAttributes);
+          }
 
           return {
             ...deviceData,
-            serverAttributes: Array.isArray(attributes) ? 
-              attributes.reduce((acc, attr) => {
-                acc[attr.key] = attr.value;
-                return acc;
-              }, {}) : {}
+            serverAttributes: allAttributes
           };
         } catch (error) {
           console.error(`Error processing device ${relation.to.id}:`, error);
@@ -172,24 +196,12 @@ export default async function handler(req, res) {
     const unassignedDevicesWithAttributes = await Promise.all(
       filteredUnassignedDevices.map(async device => {
         try {
-          const attributesResponse = await fetch(
-            `${process.env.THINGSBOARD_URL}/api/plugins/telemetry/DEVICE/${device.id.id}/values/attributes/SERVER_SCOPE`,
-            {
-              headers: {
-                'X-Authorization': `Bearer ${session.tbToken}`
-              }
-            }
-          );
-
-          const attributes = attributesResponse.ok ? await attributesResponse.json() : [];
+          // Hole alle Attribute für das Device
+          const allAttributes = await fetchAllDeviceAttributes(device.id.id);
 
           return {
             ...device,
-            serverAttributes: Array.isArray(attributes) ? 
-              attributes.reduce((acc, attr) => {
-                acc[attr.key] = attr.value;
-                return acc;
-              }, {}) : {}
+            serverAttributes: allAttributes
           };
         } catch (error) {
           console.error(`Error processing unassigned device ${device.id.id}:`, error);

@@ -1,5 +1,5 @@
 # Simple Dockerfile for Next.js application
-FROM node:18-alpine
+FROM node:20-alpine
 
 # Install system dependencies
 RUN apk add --no-cache libc6-compat curl
@@ -9,7 +9,7 @@ WORKDIR /app
 # Copy package files
 COPY package.json package-lock.json* ./
 
-# Install dependencies with retry mechanism
+# Install dependencies with retry mechanism and better caching
 RUN npm config set registry https://registry.npmjs.org/ && \
     npm ci --no-audit --no-fund --prefer-offline
 

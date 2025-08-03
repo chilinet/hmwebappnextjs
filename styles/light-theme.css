@@ -1,0 +1,538 @@
+/* Light Theme Styles for HMWebApp */
+
+/* Light theme CSS variables */
+:root {
+  --primary: #007bff;
+  --secondary: #6c757d;
+  --success: #28a745;
+  --danger: #dc3545;
+  --warning: #ffc107;
+  --info: #17a2b8;
+  --light: #f8f9fa;
+  --dark: #343a40;
+  
+  --background: #ffffff;
+  --background-secondary: #f8f9fa;
+  --background-tertiary: #e9ecef;
+  
+  --text-primary: #212529;
+  --text-secondary: #6c757d;
+  --text-muted: #6c757d;
+  --text-light: #ffffff;
+  
+  --card-background: #ffffff;
+  --card-border: #dee2e6;
+  --card-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+  
+  --input-background: #ffffff;
+  --input-border: #ced4da;
+  --input-focus-border: #80bdff;
+  --input-focus-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+  
+  --button-primary: #007bff;
+  --button-primary-hover: #0056b3;
+  --button-secondary: #6c757d;
+  --button-secondary-hover: #545b62;
+  
+  --alert-success: #d4edda;
+  --alert-success-border: #c3e6cb;
+  --alert-success-text: #155724;
+  --alert-danger: #f8d7da;
+  --alert-danger-border: #f5c6cb;
+  --alert-danger-text: #721c24;
+  --alert-warning: #fff3cd;
+  --alert-warning-border: #ffeaa7;
+  --alert-warning-text: #856404;
+  --alert-info: #d1ecf1;
+  --alert-info-border: #bee5eb;
+  --alert-info-text: #0c5460;
+}
+
+/* Light theme specific styles */
+.light-theme {
+  background-color: var(--background);
+  color: var(--text-primary);
+}
+
+/* Card styles for light theme */
+.light-theme .card {
+  background-color: var(--card-background);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--card-shadow);
+  border-radius: 0.375rem;
+}
+
+/* Form styles for light theme */
+.light-theme .form-control {
+  background-color: var(--input-background);
+  border: 1px solid var(--input-border);
+  color: var(--text-primary);
+  border-radius: 0.375rem;
+  padding: 0.375rem 0.75rem;
+}
+
+.light-theme .form-control:focus {
+  border-color: var(--input-focus-border);
+  box-shadow: var(--input-focus-shadow);
+  outline: 0;
+}
+
+.light-theme .form-label {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* Button styles for light theme */
+.light-theme .btn-primary {
+  background-color: var(--button-primary);
+  border-color: var(--button-primary);
+  color: var(--text-light);
+}
+
+.light-theme .btn-primary:hover {
+  background-color: var(--button-primary-hover);
+  border-color: var(--button-primary-hover);
+}
+
+.light-theme .btn-secondary {
+  background-color: var(--button-secondary);
+  border-color: var(--button-secondary);
+  color: var(--text-light);
+}
+
+.light-theme .btn-secondary:hover {
+  background-color: var(--button-secondary-hover);
+  border-color: var(--button-secondary-hover);
+}
+
+/* Alert styles for light theme */
+.light-theme .alert-success {
+  background-color: var(--alert-success);
+  border-color: var(--alert-success-border);
+  color: var(--alert-success-text);
+}
+
+.light-theme .alert-danger {
+  background-color: var(--alert-danger);
+  border-color: var(--alert-danger-border);
+  color: var(--alert-danger-text);
+}
+
+.light-theme .alert-warning {
+  background-color: var(--alert-warning);
+  border-color: var(--alert-warning-border);
+  color: var(--alert-warning-text);
+}
+
+.light-theme .alert-info {
+  background-color: var(--alert-info);
+  border-color: var(--alert-info-border);
+  color: var(--alert-info-text);
+}
+
+/* Text colors for light theme */
+.light-theme .text-primary {
+  color: var(--text-primary) !important;
+}
+
+.light-theme .text-secondary {
+  color: var(--text-secondary) !important;
+}
+
+.light-theme .text-muted {
+  color: var(--text-muted) !important;
+}
+
+.light-theme .text-light {
+  color: var(--text-light) !important;
+}
+
+/* Background colors for light theme */
+.light-theme .bg-primary {
+  background-color: var(--primary) !important;
+}
+
+.light-theme .bg-secondary {
+  background-color: var(--secondary) !important;
+}
+
+.light-theme .bg-light {
+  background-color: var(--background-secondary) !important;
+}
+
+.light-theme .bg-white {
+  background-color: var(--background) !important;
+}
+
+/* Signin page specific styles */
+.signin-page {
+  background: linear-gradient(135deg, #e2e3e5 0%, #cbcbcb 100%);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.signin-card {
+  background-color: var(--card-background);
+  border: 1px solid var(--card-border);
+  box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+  border-radius: 0.5rem;
+  max-width: 400px;
+  width: 100%;
+}
+
+.signin-card .card-body {
+  padding: 2rem;
+}
+
+.signin-logo {
+  margin-bottom: 2rem;
+  text-align: center;
+}
+
+.signin-form .form-control {
+  background-color: var(--input-background);
+  border: 1px solid var(--input-border);
+  color: var(--text-primary);
+  border-radius: 0.375rem;
+  padding: 0.75rem 1rem;
+  font-size: 1rem;
+  transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+}
+
+.signin-form .form-control:focus {
+  border-color: var(--input-focus-border);
+  box-shadow: var(--input-focus-shadow);
+  outline: 0;
+}
+
+.signin-form .form-label {
+  color: var(--text-primary);
+  font-weight: 500;
+  margin-bottom: 0.5rem;
+}
+
+.signin-form .btn-primary {
+  background-color: var(--button-primary);
+  border-color: var(--button-primary);
+  color: var(--text-light);
+  padding: 0.75rem 1rem;
+  font-size: 1rem;
+  font-weight: 500;
+  border-radius: 0.375rem;
+  transition: all 0.15s ease-in-out;
+}
+
+.signin-form .btn-primary:hover {
+  background-color: var(--button-primary-hover);
+  border-color: var(--button-primary-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 0.25rem 0.5rem rgba(0, 0, 0, 0.15);
+}
+
+.signin-form .btn-primary:active {
+  transform: translateY(0);
+  box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.15);
+}
+
+/* Dashboard specific styles */
+.dashboard-card {
+  transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+  border: none;
+  border-radius: 0.75rem;
+}
+
+.dashboard-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15) !important;
+}
+
+.icon-shape {
+  width: 60px;
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: all 0.2s ease-in-out;
+}
+
+.icon-shape:hover {
+  transform: scale(1.1);
+}
+
+/* Welcome section styles */
+.welcome-section {
+  background: linear-gradient(135deg, var(--background) 0%, var(--background-secondary) 100%);
+  border-radius: 0.75rem;
+}
+
+/* Navigation styles */
+.navbar.light-theme {
+  background-color: var(--background);
+  border-bottom: 1px solid var(--card-border);
+  padding: 0.75rem 0;
+}
+
+.navbar-brand {
+  font-weight: 600;
+  color: var(--text-primary) !important;
+}
+
+.navbar-brand:hover {
+  color: var(--primary) !important;
+}
+
+.nav-link {
+  color: var(--text-muted) !important;
+  font-weight: 500;
+  transition: all 0.2s ease-in-out;
+  position: relative;
+}
+
+.nav-link:hover {
+  color: var(--primary) !important;
+  background-color: var(--background-secondary);
+}
+
+.nav-link.active-nav-link {
+  color: var(--primary) !important;
+  background-color: var(--primary);
+  background-color: rgba(0, 123, 255, 0.1);
+}
+
+.hover-primary:hover {
+  color: var(--primary) !important;
+}
+
+.transition-all {
+  transition: all 0.2s ease-in-out;
+}
+
+/* User dropdown styles */
+.user-avatar {
+  width: 32px;
+  height: 32px;
+  background-color: var(--background-secondary);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--primary);
+}
+
+/* User dropdown button - higher specificity */
+.navbar .btn-outline-light.light-theme-btn.dropdown-toggle {
+  background-color: var(--card-background) !important;
+  border-color: var(--card-border) !important;
+  color: var(--text-muted) !important;
+}
+
+.navbar .btn-outline-light.light-theme-btn.dropdown-toggle:hover {
+  background-color: var(--background-secondary) !important;
+  border-color: var(--primary) !important;
+  color: var(--primary) !important;
+}
+
+.navbar .btn-outline-light.light-theme-btn.dropdown-toggle:focus {
+  background-color: var(--background-secondary) !important;
+  border-color: var(--primary) !important;
+  color: var(--primary) !important;
+  box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25) !important;
+}
+
+.dropdown-menu {
+  background-color: var(--card-background);
+  border: 1px solid var(--card-border);
+  box-shadow: var(--card-shadow);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0;
+  margin-top: 0.5rem;
+}
+
+.dropdown-item {
+  color: var(--text-primary);
+  padding: 0.5rem 1rem;
+  transition: all 0.2s ease-in-out;
+}
+
+.dropdown-item:hover {
+  background-color: var(--background-secondary);
+  color: var(--primary);
+}
+
+.dropdown-item.text-danger:hover {
+  background-color: #f8d7da;
+  color: #721c24;
+}
+
+.dropdown-divider {
+  border-color: var(--card-border);
+  margin: 0.5rem 0;
+}
+
+/* Light theme button styles */
+.light-theme-btn {
+  border-radius: 0.5rem;
+  font-weight: 500;
+  transition: all 0.2s ease-in-out;
+  border: 1px solid transparent;
+}
+
+.light-theme-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 0.25rem 0.5rem rgba(0, 0, 0, 0.1);
+}
+
+.light-theme-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.1);
+}
+
+.light-theme-btn:focus {
+  box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+  outline: none;
+}
+
+/* Primary button light theme - higher specificity */
+.navbar .btn-primary.light-theme-btn {
+  background-color: var(--button-primary) !important;
+  border-color: var(--button-primary) !important;
+  color: var(--text-light) !important;
+}
+
+.navbar .btn-primary.light-theme-btn:hover {
+  background-color: var(--button-primary-hover) !important;
+  border-color: var(--button-primary-hover) !important;
+  color: var(--text-light) !important;
+}
+
+.navbar .btn-primary.light-theme-btn:focus {
+  background-color: var(--button-primary-hover) !important;
+  border-color: var(--button-primary-hover) !important;
+  box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25) !important;
+}
+
+/* Outline light button - higher specificity */
+.navbar .btn-outline-light.light-theme-btn {
+  background-color: transparent !important;
+  border-color: var(--card-border) !important;
+  color: var(--text-muted) !important;
+}
+
+.navbar .btn-outline-light.light-theme-btn:hover {
+  background-color: var(--background-secondary) !important;
+  border-color: var(--primary) !important;
+  color: var(--primary) !important;
+}
+
+.navbar .btn-outline-light.light-theme-btn:focus {
+  background-color: var(--background-secondary) !important;
+  border-color: var(--primary) !important;
+  color: var(--primary) !important;
+  box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25) !important;
+}
+
+/* Active navigation button - higher specificity */
+.navbar .btn-primary.active-nav-btn {
+  background-color: var(--primary) !important;
+  border-color: var(--primary) !important;
+  color: var(--text-light) !important;
+  font-weight: 600 !important;
+}
+
+.navbar .btn-primary.active-nav-btn:hover {
+  background-color: var(--button-primary-hover) !important;
+  border-color: var(--button-primary-hover) !important;
+  color: var(--text-light) !important;
+}
+
+.navbar .btn-primary.active-nav-btn:focus {
+  background-color: var(--button-primary-hover) !important;
+  border-color: var(--button-primary-hover) !important;
+  box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25) !important;
+}
+
+/* Mobile navigation */
+.navbar-toggler.light-theme-btn {
+  border: 1px solid var(--card-border);
+  background-color: transparent;
+  color: var(--text-muted);
+  padding: 0.5rem 0.75rem;
+}
+
+.navbar-toggler.light-theme-btn:hover {
+  background-color: var(--background-secondary);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.navbar-toggler.light-theme-btn:focus {
+  background-color: var(--background-secondary);
+  border-color: var(--primary);
+  color: var(--primary);
+  box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+}
+
+.navbar-toggler {
+  border: none;
+  padding: 0.25rem 0.5rem;
+}
+
+.navbar-toggler:focus {
+  box-shadow: none;
+  outline: none;
+}
+
+.navbar-toggler-icon {
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba(33, 37, 41, 0.75)' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
+}
+
+/* Footer styles */
+footer.light-theme {
+  background-color: var(--background);
+  border-top: 1px solid var(--card-border);
+  margin-top: auto;
+}
+
+footer .text-muted {
+  color: var(--text-muted) !important;
+}
+
+footer .text-primary {
+  color: var(--primary) !important;
+}
+
+footer .text-danger {
+  color: var(--danger) !important;
+}
+
+/* Loading states */
+.loading-container {
+  min-height: 60vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Responsive adjustments */
+@media (max-width: 576px) {
+  .signin-card .card-body {
+    padding: 1.5rem;
+  }
+  
+  .signin-page {
+    padding: 10px;
+  }
+  
+  .dashboard-card {
+    margin-bottom: 1rem;
+  }
+  
+  .icon-shape {
+    width: 50px;
+    height: 50px;
+  }
+} 

@@ -32,6 +32,10 @@ export default async function handler(req, res) {
       }
     }
 
+    //console.log('--------------------------------');
+    //console.log('Customer ID :', customerId);
+    //console.log('--------------------------------');
+
     // Wenn keine Authentifizierung gefunden wurde
     if (!tbToken) {
       return res.status(401).json({ error: 'Not authenticated' });
@@ -61,7 +65,7 @@ export default async function handler(req, res) {
 
     // Get all devices for the customer from ThingsBoard
     const devicesResponse = await fetch(
-      `${process.env.THINGSBOARD_URL}/api/customer/${customerId}/deviceInfos?pageSize=1000&page=0`,
+      `${process.env.THINGSBOARD_URL}/api/customer/${customerId}/deviceInfos?pageSize=10000&page=0`,
       {
         headers: {
           'accept': 'application/json',
@@ -106,6 +110,11 @@ export default async function handler(req, res) {
     );
 
     let relatedDevices = [];
+
+    console.log('--------------------------------');
+    console.log('Relations Response:', relationsResponse);
+    console.log('--------------------------------');  
+
     if (relationsResponse.ok) {
       const relations = await relationsResponse.json();
       

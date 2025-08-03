@@ -36,6 +36,7 @@ export default function Structure() {
   const [activeTab, setActiveTab] = useState('details');
   const [unassignedDevices, setUnassignedDevices] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [assignedSearchTerm, setAssignedSearchTerm] = useState('');
   const [assigningDevice, setAssigningDevice] = useState(false);
   const [unassigningDevice, setUnassigningDevice] = useState(null);
   const [editingLabel, setEditingLabel] = useState(null);
@@ -399,7 +400,7 @@ export default function Structure() {
             icon={getIcon(node.data?.type)}
             className={`me-2 ${node.data?.hasDevices ? 'text-warning' : 'text-secondary'}`}
           />
-          <span className={node.data?.hasDevices ? 'text-warning' : 'text-white'}>
+          <span className={node.data?.hasDevices ? 'text-warning' : 'text-black'}>
             {node.text}
           </span>
         </div>
@@ -683,13 +684,41 @@ export default function Structure() {
     }
   };
 
-  // Funktion zum Filtern der nicht zugeordneten Geräte
-  const filteredUnassignedDevices = unassignedDevices.filter(device => {
-    const searchLower = searchTerm.toLowerCase();
+  // Hilfsfunktion zum Finden des SerialNbr-Attributs
+  const getSerialNumber = (device) => {
+    const attributes = device.serverAttributes || {};
+    return attributes.serialNbr || 
+           attributes.serialNumber || 
+           attributes.SerialNbr || 
+           attributes.SerialNumber || 
+           attributes.serial || 
+           attributes.Serial || 
+           '-';
+  };
+
+  // Funktion zum Filtern der zugeordneten Geräte
+  const filteredAssignedDevices = (devices || []).filter(device => {
+    if (!device) return false;
+    const searchLower = (assignedSearchTerm || '').toLowerCase();
+    const serialNumber = getSerialNumber(device).toLowerCase();
     return (
-      device.name.toLowerCase().includes(searchLower) ||
+      (device.name || '').toLowerCase().includes(searchLower) ||
       (device.label && device.label.toLowerCase().includes(searchLower)) ||
-      device.type.toLowerCase().includes(searchLower)
+      (device.type || '').toLowerCase().includes(searchLower) ||
+      serialNumber.includes(searchLower)
+    );
+  });
+
+  // Funktion zum Filtern der nicht zugeordneten Geräte
+  const filteredUnassignedDevices = (unassignedDevices || []).filter(device => {
+    if (!device) return false;
+    const searchLower = (searchTerm || '').toLowerCase();
+    const serialNumber = getSerialNumber(device).toLowerCase();
+    return (
+      (device.name || '').toLowerCase().includes(searchLower) ||
+      (device.label && device.label.toLowerCase().includes(searchLower)) ||
+      (device.type || '').toLowerCase().includes(searchLower) ||
+      serialNumber.includes(searchLower)
     );
   });
 
@@ -928,6 +957,8 @@ export default function Structure() {
     return editedDetails?.label && editedDetails?.type && editedDetails?.label.trim() !== '' && editedDetails?.type.trim() !== '';
   };
 
+
+
   return (
     <DndProvider backend={HTML5Backend}>
       <div className="container mt-4">
@@ -939,14 +970,14 @@ export default function Structure() {
             >
               <FontAwesomeIcon icon={faArrowLeft} />
             </button>
-            <h2 className="mb-0 text-white">Gebäudestruktur</h2>
+            <h2 className="mb-0 text-dark">Gebäudestruktur</h2>
           </div>
         </div>
 
         <div className="d-flex gap-4">
           {/* Tree Container */}
           <div 
-            className="card bg-dark text-white" 
+            className="card bg-dark text-dark" 
             style={{ 
               minWidth: '400px',
               width: '400px',
@@ -957,12 +988,12 @@ export default function Structure() {
               {/* Suchfeld für Tree */}
               <div className="d-flex gap-2 mb-3">
                 <div className="input-group">
-                  <span className="input-group-text bg-dark text-white border-secondary">
+                  <span className="input-group-text bg-dark text-blue border-secondary">
                     <FontAwesomeIcon icon={faSearch} />
                   </span>
                   <input
                     type="text"
-                    className="form-control bg-dark text-white border-secondary"
+                    className="form-control bg-dark text-blue border-secondary"
                     placeholder="Suchen..."
                     value={treeSearchTerm}
                     onChange={(e) => setTreeSearchTerm(e.target.value)}
@@ -1045,7 +1076,7 @@ export default function Structure() {
                     handleDrop(dragSource, dropTarget);
                   }}
                   dragPreviewRender={(node) => (
-                    <div className="bg-dark text-white p-2 rounded">
+                    <div className="bg-dark text-black p-2 rounded">
                       {node.text}
                     </div>
                   )}
@@ -1056,7 +1087,7 @@ export default function Structure() {
 
           {/* Tabs Container */}
           <div 
-            className="card bg-dark text-white flex-grow-1" 
+            className="card bg-dark text-black flex-grow-1" 
             style={{ 
               height: windowHeight ? `${windowHeight - 80}px` : 'auto',
               display: 'flex',
@@ -1092,7 +1123,7 @@ export default function Structure() {
                         <label className="form-label">Name</label>
                         <input
                           type="text"
-                          className="form-control bg-dark text-white"
+                          className="form-control bg-dark text-black"
                           value={editedDetails?.name || ''}
                           disabled={true}
                           readOnly={true}
@@ -1119,7 +1150,7 @@ export default function Structure() {
                       <div className="mb-3">
                         <label className="form-label">Typ *</label>
                         <select
-                          className="form-select bg-dark text-white"
+                          className="form-select bg-dark text-black"
                           name="type"
                           value={editedDetails?.type || ''}
                           onChange={(e) => handleInputChange('type', e.target.value)}
@@ -1163,28 +1194,52 @@ export default function Structure() {
                 <div className="devices-container d-flex flex-column" style={{ flex: 1, overflow: 'hidden' }}>
                   {/* Obere Hälfte: Zugeordnete Geräte */}
                   <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-                    <h5 className="text-white mb-3">Zugeordnete Geräte</h5>
-                    <div className="table-responsive" style={{ height: 'calc(100% - 40px)', overflow: 'auto' }}>
+                    <div className="d-flex justify-content-between align-items-center mb-3">
+                      <h5 className="text-black mb-0">Zugeordnete Geräte</h5>
+                      <div className="input-group" style={{ width: '300px' }}>
+                        <span className="input-group-text bg-dark text-black border-secondary">
+                          <FontAwesomeIcon icon={faSearch} />
+                        </span>
+                        <input
+                          type="text"
+                          className="form-control bg-dark text-black border-secondary"
+                          placeholder="Suchen..."
+                          value={assignedSearchTerm}
+                          onChange={(e) => setAssignedSearchTerm(e.target.value)}
+                        />
+                        {assignedSearchTerm && (
+                          <button
+                            className="btn btn-outline-secondary"
+                            type="button"
+                            onClick={() => setAssignedSearchTerm('')}
+                          >
+                            <FontAwesomeIcon icon={faTimes} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="table-responsive" style={{ height: 'calc(100% - 50px)', overflow: 'auto' }}>
                       {loadingDevices ? (
                         <div className="text-center py-3">
                           <div className="spinner-border text-light" role="status">
                             <span className="visually-hidden">Loading...</span>
                           </div>
                         </div>
-                      ) : devices.length > 0 ? (
+                      ) : filteredAssignedDevices.length > 0 ? (
                         <table className="table table-dark table-hover mb-0">
                           <thead>
                             <tr>
                               <th>Name</th>
                               <th>Label</th>
                               <th>Typ</th>
+                              <th>SerialNbr</th>
                               <th>Status</th>
                               <th>Letzte Aktivität</th>
                               <th>Aktionen</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {devices.map(device => (
+                            {filteredAssignedDevices.map(device => (
                               <tr key={device.id.id}>
                                 <td>{device.name}</td>
                                 <td>
@@ -1192,7 +1247,7 @@ export default function Structure() {
                                     <div className="input-group input-group-sm">
                                       <input
                                         type="text"
-                                        className="form-control form-control-sm bg-dark text-white border-secondary"
+                                        className="form-control form-control-sm bg-dark text-black border-secondary"
                                         value={editedLabel}
                                         onChange={(e) => setEditedLabel(e.target.value)}
                                         onKeyPress={(e) => {
@@ -1238,6 +1293,7 @@ export default function Structure() {
                                   )}
                                 </td>
                                 <td>{device.type}</td>
+                                <td>{getSerialNumber(device)}</td>
                                 <td>
                                   <span className={`badge ${device.serverAttributes?.active ? 'bg-success' : 'bg-danger'}`}>
                                     {device.serverAttributes?.active ? 'Online' : 'Offline'}
@@ -1271,7 +1327,7 @@ export default function Structure() {
                         </table>
                       ) : (
                         <div className="text-center text-muted py-3">
-                          Keine Geräte zugeordnet
+                          {assignedSearchTerm ? 'Keine Geräte gefunden' : 'Keine Geräte zugeordnet'}
                         </div>
                       )}
                     </div>
@@ -1283,7 +1339,7 @@ export default function Structure() {
                   {/* Untere Hälfte: Nicht zugeordnete Geräte */}
                   <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
                     <div className="d-flex justify-content-between align-items-center mb-3">
-                      <h5 className="text-white mb-0">Nicht zugeordnete Geräte</h5>
+                      <h5 className="text-black mb-0">Nicht zugeordnete Geräte</h5>
                       <div className="d-flex align-items-center gap-2">
                         <button 
                           className="btn btn-sm btn-outline-light"
@@ -1297,12 +1353,12 @@ export default function Structure() {
                           />
                         </button>
                         <div className="input-group" style={{ width: '300px' }}>
-                          <span className="input-group-text bg-dark text-white border-secondary">
+                          <span className="input-group-text bg-dark text-black border-secondary">
                             <FontAwesomeIcon icon={faSearch} />
                           </span>
                           <input
                             type="text"
-                            className="form-control bg-dark text-white border-secondary"
+                            className="form-control bg-dark text-black border-secondary"
                             placeholder="Suchen..."
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
@@ -1351,6 +1407,7 @@ export default function Structure() {
                               <th>Name</th>
                               <th>Label</th>
                               <th>Typ</th>
+                              <th>SerialNbr</th>
                               <th>Status</th>
                               <th>Letzte Aktivität</th>
                               <th>Aktionen</th>
@@ -1365,7 +1422,7 @@ export default function Structure() {
                                     <div className="input-group input-group-sm">
                                       <input
                                         type="text"
-                                        className="form-control form-control-sm bg-dark text-white border-secondary"
+                                        className="form-control form-control-sm bg-dark text-black border-secondary"
                                         value={editedLabel}
                                         onChange={(e) => setEditedLabel(e.target.value)}
                                         onKeyPress={(e) => {
@@ -1411,6 +1468,7 @@ export default function Structure() {
                                   )}
                                 </td>
                                 <td>{device.type}</td>
+                                <td>{getSerialNumber(device)}</td>
                                 <td>
                                   <span className={`badge ${device.serverAttributes?.active ? 'bg-success' : 'bg-danger'}`}>
                                     {device.serverAttributes?.active ? 'Online' : 'Offline'}

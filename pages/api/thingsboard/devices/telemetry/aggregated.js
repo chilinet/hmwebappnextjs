@@ -60,7 +60,7 @@ export default async function handler(req, res) {
       try {
         // Use the specified attribute directly
         const attributeKeys = [attribute];
-        console.log(`Device ${deviceId} using attribute:`, attribute);
+        //console.log(`Device ${deviceId} using attribute:`, attribute);
 
         // Try different ThingsBoard API endpoints for historical data
         let response = null;
@@ -78,7 +78,7 @@ export default async function handler(req, res) {
           
           if (response.ok) {
             historicalData = await response.json();
-            console.log(`Device ${deviceId} got aggregated data:`, JSON.stringify(historicalData, null, 2));
+            //console.log(`Device ${deviceId} got aggregated data:`, JSON.stringify(historicalData, null, 2));
           }
         } catch (error) {
           console.log(`Device ${deviceId} aggregated API failed:`, error.message);
@@ -87,7 +87,7 @@ export default async function handler(req, res) {
         // Method 2: Try with aggregation but different parameters if Method 1 failed
         if (!historicalData) {
           try {
-            response = await fetch(`${process.env.THINGSBOARD_URL}/api/plugins/telemetry/DEVICE/${deviceId}/values/timeseries?keys=${attributeKeys.join(',')}&startTs=${startTime}&endTs=${endTime}&interval=${aggregationInterval}&agg=AVG&limit=1000`, {
+            response = await fetch(`${process.env.THINGSBOARD_URL}/api/plugins/telemetry/DEVICE/${deviceId}/values/timeseries?keys=${attributeKeys.join(',')}&startTs=${startTime}&endTs=${endTime}&interval=${aggregationInterval}&agg=AVG&limit=10000`, {
               method: 'GET',
               headers: {
                 'Content-Type': 'application/json',
@@ -97,7 +97,7 @@ export default async function handler(req, res) {
             
             if (response.ok) {
               historicalData = await response.json();
-              console.log(`Device ${deviceId} got raw data:`, JSON.stringify(historicalData, null, 2));
+              //console.log(`Device ${deviceId} got raw data:`, JSON.stringify(historicalData, null, 2));
             }
           } catch (error) {
             console.log(`Device ${deviceId} raw API failed:`, error.message);
@@ -107,7 +107,7 @@ export default async function handler(req, res) {
         // Method 3: Try without time range if previous methods failed
         if (!historicalData) {
           try {
-            response = await fetch(`${process.env.THINGSBOARD_URL}/api/plugins/telemetry/DEVICE/${deviceId}/values/timeseries?keys=${attributeKeys.join(',')}&limit=1000`, {
+            response = await fetch(`${process.env.THINGSBOARD_URL}/api/plugins/telemetry/DEVICE/${deviceId}/values/timeseries?keys=${attributeKeys.join(',')}&limit=10000`, {
               method: 'GET',
               headers: {
                 'Content-Type': 'application/json',
@@ -117,7 +117,7 @@ export default async function handler(req, res) {
             
             if (response.ok) {
               historicalData = await response.json();
-              console.log(`Device ${deviceId} got all data:`, JSON.stringify(historicalData, null, 2));
+              //console.log(`Device ${deviceId} got all data:`, JSON.stringify(historicalData, null, 2));
             }
           } catch (error) {
             console.log(`Device ${deviceId} all data API failed:`, error.message);
@@ -126,7 +126,7 @@ export default async function handler(req, res) {
 
         // If no historical data found, try current values
         if (!historicalData) {
-          console.log(`No historical data for device ${deviceId}, trying current values`);
+          //console.log(`No historical data for device ${deviceId}, trying current values`);
           const currentResponse = await fetch(`${process.env.THINGSBOARD_URL}/api/plugins/telemetry/DEVICE/${deviceId}/values/timeseries?keys=${attributeKeys.join(',')}`, {
             method: 'GET',
             headers: {
@@ -137,13 +137,13 @@ export default async function handler(req, res) {
           
           if (currentResponse.ok) {
             const currentTelemetry = await currentResponse.json();
-            console.log(`Device ${deviceId} current telemetry:`, JSON.stringify(currentTelemetry, null, 2));
+            //console.log(`Device ${deviceId} current telemetry:`, JSON.stringify(currentTelemetry, null, 2));
             
             // Process current values
             const temperatureData = currentTelemetry[attribute];
             
             if (temperatureData && temperatureData.length > 0) {
-              console.log(`Device ${deviceId} has current data for key ${attribute}`);
+              //console.log(`Device ${deviceId} has current data for key ${attribute}`);
               
               // Create a single data point for current value
               const currentPoint = temperatureData[0];
@@ -166,13 +166,13 @@ export default async function handler(req, res) {
 
         const deviceTelemetry = historicalData;
         
-        console.log(`Device ${deviceId} telemetry response:`, JSON.stringify(deviceTelemetry, null, 2));
+        //console.log(`Device ${deviceId} telemetry response:`, JSON.stringify(deviceTelemetry, null, 2));
         
         // Process the specified attribute
         const temperatureData = deviceTelemetry[attribute];
         
         if (temperatureData && temperatureData.length > 0) {
-          console.log(`Device ${deviceId} has ${temperatureData.length} data points for key ${attribute}`);
+          //console.log(`Device ${deviceId} has ${temperatureData.length} data points for key ${attribute}`);
           
           // Filter data within the time range
           const filteredData = temperatureData.filter(point => {
@@ -180,7 +180,7 @@ export default async function handler(req, res) {
             return timestamp >= startTime && timestamp <= endTime;
           });
 
-          console.log(`Device ${deviceId} has ${filteredData.length} data points in time range for key ${attribute}`);
+          //console.log(`Device ${deviceId} has ${filteredData.length} data points in time range for key ${attribute}`);
 
           if (filteredData.length > 0) {
             // Group by hour and calculate averages
@@ -209,7 +209,7 @@ export default async function handler(req, res) {
             // Sort by timestamp
             aggregatedData.sort((a, b) => a.ts - b.ts);
 
-            console.log(`Device ${deviceId} aggregated to ${aggregatedData.length} hourly data points`);
+            //console.log(`Device ${deviceId} aggregated to ${aggregatedData.length} hourly data points`);
 
             telemetryData.push({
               deviceId,
@@ -227,8 +227,8 @@ export default async function handler(req, res) {
       }
     }
 
-    console.log('=== FINAL TELEMETRY DATA ===');
-    console.log('Time range:', {
+    //console.log('=== FINAL TELEMETRY DATA ===');
+    /*console.log('Time range:', {
       start: new Date(startTime).toISOString(),
       end: new Date(endTime).toISOString(),
       interval: `${aggregationInterval}ms (${aggregationInterval/1000/60} minutes)`
@@ -236,6 +236,7 @@ export default async function handler(req, res) {
     console.log('Total devices processed:', deviceIdList.length);
     console.log('Devices with telemetry data:', telemetryData.length);
     console.log('Detailed telemetry data:', JSON.stringify(telemetryData, null, 2));
+    */
     
     res.status(200).json({
       success: true,
