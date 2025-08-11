@@ -7,15 +7,20 @@ const THINGSBOARD_URL = process.env.THINGSBOARD_URL;
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
-    return res.status(405).json({
-      success: false,
-      error: 'Method not allowed',
-      message: 'Nur GET-Anfragen sind erlaubt'
-    });
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { deviceId } = req.query;
-  const { attribute, startTs, endTs, interval, limit, agg, last7Days } = req.query;
+  // Get query parameters
+  const { 
+    deviceId, 
+    attribute, 
+    startTs, 
+    endTs, 
+    interval, 
+    limit = '100', 
+    agg, 
+    last7Days 
+  } = req.query;
 
   // Authentifizierung prüfen
   let tbToken = null;
@@ -115,6 +120,9 @@ export default async function handler(req, res) {
       finalInterval = '3600000'; // 1 Stunde in Millisekunden
       finalAgg = 'AVG';
       finalLimit = '168'; // 7 Tage * 24 Stunden = 168 Datenpunkte
+    } else {
+      // Standard-Limit auf 100 setzen, wenn nicht explizit angegeben
+      finalLimit = finalLimit || '100';
     }
 
     // ThingsBoard API URL zusammenbauen
@@ -186,24 +194,46 @@ export default async function handler(req, res) {
       // Daten nach Zeitstempel sortieren
       values.sort((a, b) => a.ts - b.ts);
       
+      // Intelligente Stichprobenbildung, wenn mehr Daten als Limit vorhanden sind
+      let processedValues = values;
+      const maxDataPoints = parseInt(finalLimit) || 100;
+      
+      if (values.length > maxDataPoints) {
+        // Berechne Schrittweite für Stichprobenbildung
+        const step = Math.ceil(values.length / maxDataPoints);
+        processedValues = [];
+        
+        for (let i = 0; i < values.length; i += step) {
+          processedValues.push(values[i]);
+          if (processedValues.length >= maxDataPoints) break;
+        }
+        
+        // Immer den letzten Datenpunkt einschließen
+        if (processedValues.length > 0 && processedValues[processedValues.length - 1] !== values[values.length - 1]) {
+          processedValues[processedValues.length - 1] = values[values.length - 1];
+        }
+      }
+      
       result.data.telemetry = {
         attribute: attribute,
-        dataPoints: values.length,
-        values: values.map(item => ({
+        dataPoints: processedValues.length,
+        originalDataPoints: values.length,
+        values: processedValues.map(item => ({
           timestamp: item.ts,
           timestampISO: new Date(item.ts).toISOString(),
           value: item.value
         })),
         statistics: {
-          min: Math.min(...values.map(v => v.value).filter(v => typeof v === 'number')),
-          max: Math.max(...values.map(v => v.value).filter(v => typeof v === 'number')),
-          avg: values.map(v => v.value).filter(v => typeof v === 'number').reduce((a, b) => a + b, 0) / values.filter(v => typeof v === 'number').length
+          min: Math.min(...processedValues.map(v => v.value).filter(v => typeof v === 'number')),
+          max: Math.max(...processedValues.map(v => v.value).filter(v => typeof v === 'number')),
+          avg: processedValues.map(v => v.value).filter(v => typeof v === 'number').reduce((a, b) => a + b, 0) / processedValues.filter(v => typeof v === 'number').length
         }
       };
     } else {
       result.data.telemetry = {
         attribute: attribute,
         dataPoints: 0,
+        originalDataPoints: 0,
         values: [],
         statistics: {
           min: null,

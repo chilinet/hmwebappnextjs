@@ -32,6 +32,30 @@ export default async function handler(req, res) {
         }
 
         const assetData = await response.json();
+        
+        // Asset-Attribute separat abrufen
+        let assetAttributes = {};
+        try {
+          const attributesResponse = await fetch(`${TB_API_URL}/api/plugins/telemetry/ASSET/${id}/values/attributes`, {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Authorization': `Bearer ${session.tbToken}`
+            }
+          });
+
+          if (attributesResponse.ok) {
+            const attributesData = await attributesResponse.json();
+            if (Array.isArray(attributesData)) {
+              attributesData.forEach(attr => {
+                assetAttributes[attr.key] = attr.value;
+              });
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching asset attributes:', error);
+        }
+
         return res.status(200).json({
           id: assetData.id.id,
           name: assetData.name,
@@ -39,7 +63,7 @@ export default async function handler(req, res) {
           label: assetData.label,
           additionalInfo: assetData.additionalInfo,
           createdTime: assetData.createdTime,
-          attributes: assetData.attributes || {}
+          attributes: assetAttributes
         });
       } catch (error) {
         console.error('Error in asset details API:', error);
@@ -66,12 +90,101 @@ export default async function handler(req, res) {
 
         const currentAsset = await getResponse.json();
         
-        // Aktualisierte Daten vorbereiten
+        // Wenn nur Attribute gesetzt werden, aktualisiere nur die Attribute
+        if ((req.body.runStatus || req.body.fixValue || req.body.schedulerPlan || req.body.childLock !== undefined || req.body.minTemp !== undefined || req.body.maxTemp !== undefined || req.body.overruleMinutes !== undefined) && !req.body.name && !req.body.type && !req.body.label) {
+                      try {
+              const attributesBody = {
+                ...(req.body.runStatus && { runStatus: req.body.runStatus }),
+                ...(req.body.fixValue && { fixValue: req.body.fixValue }),
+                ...(req.body.schedulerPlan && { schedulerPlan: req.body.schedulerPlan }),
+                ...(req.body.childLock !== undefined && { childLock: req.body.childLock }),
+                ...(req.body.minTemp !== undefined && { minTemp: req.body.minTemp }),
+                ...(req.body.maxTemp !== undefined && { maxTemp: req.body.maxTemp }),
+                ...(req.body.overruleMinutes !== undefined && { overruleMinutes: req.body.overruleMinutes })
+              };
+              
+              console.log('Updating asset attributes with:', attributesBody);
+              
+                            const attributesResponse = await fetch(`${TB_API_URL}/api/plugins/telemetry/ASSET/${id}/attributes/SERVER_SCOPE`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'X-Authorization': `Bearer ${session.tbToken}`
+                },
+                body: JSON.stringify(attributesBody)
+              });
+
+            if (!attributesResponse.ok) {
+              const errorText = await attributesResponse.text();
+              console.error('Error updating asset attributes:', attributesResponse.status, errorText);
+              throw new Error(`Failed to update asset attributes: ${attributesResponse.statusText}`);
+            } else {
+              console.log('Asset attributes updated successfully in ThingsBoard');
+              console.log('Response status:', attributesResponse.status);
+              
+              // Hole die aktualisierten Asset-Daten zurück
+              const getResponse = await fetch(`${TB_API_URL}/api/asset/${id}`, {
+                method: 'GET',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'X-Authorization': `Bearer ${session.tbToken}`
+                }
+              });
+
+              if (!getResponse.ok) {
+                throw new Error(`Error fetching updated asset: ${getResponse.statusText}`);
+              }
+
+              const assetData = await getResponse.json();
+              
+              // Asset-Attribute separat abrufen
+              let assetAttributes = {};
+              try {
+                const attributesResponse = await fetch(`${TB_API_URL}/api/plugins/telemetry/ASSET/${id}/values/attributes`, {
+                  method: 'GET',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'X-Authorization': `Bearer ${session.tbToken}`
+                  }
+                });
+
+                if (attributesResponse.ok) {
+                  const attributesData = await attributesResponse.json();
+                  if (Array.isArray(attributesData)) {
+                    attributesData.forEach(attr => {
+                      assetAttributes[attr.key] = attr.value;
+                    });
+                  }
+                }
+              } catch (error) {
+                console.error('Error fetching asset attributes:', error);
+              }
+
+              return res.status(200).json({
+                id: assetData.id.id,
+                name: assetData.name,
+                type: assetData.type,
+                label: assetData.label,
+                additionalInfo: assetData.additionalInfo,
+                createdTime: assetData.createdTime,
+                attributes: assetAttributes
+              });
+            }
+          } catch (error) {
+            console.error('Error updating asset attributes:', error);
+            return res.status(500).json({ 
+              error: 'Failed to update asset attributes',
+              details: error.message 
+            });
+          }
+        }
+
+        // Wenn andere Felder aktualisiert werden, aktualisiere das Asset
         const updatedAsset = {
           ...currentAsset,
-          name: req.body.name,
-          type: req.body.type,
-          label: req.body.label
+          name: req.body.name || currentAsset.name,
+          type: req.body.type || currentAsset.type,
+          label: req.body.label || currentAsset.label
         };
 
         // Asset in Thingsboard aktualisieren
@@ -89,6 +202,71 @@ export default async function handler(req, res) {
         }
 
         const updatedData = await updateResponse.json();
+
+        // Wenn das Label aktualisiert wurde, muss auch der Tree-Cache in der Datenbank aktualisiert werden
+        if (req.body.label) {
+          try {
+            // Hole die customer_id des Users
+            const pool = await getConnection();
+            const userResult = await pool.request()
+              .input('userid', sql.Int, session.user.userid)
+              .query(`
+                SELECT customerid
+                FROM hm_users
+                WHERE userid = @userid
+              `);
+
+            if (userResult.recordset.length > 0) {
+              const customerId = userResult.recordset[0].customerid;
+
+              // Hole den aktuellen Tree-Cache
+              const treeResult = await pool.request()
+                .input('customer_id', sql.UniqueIdentifier, customerId)
+                .query(`
+                  SELECT tree
+                  FROM customer_settings
+                  WHERE customer_id = @customer_id
+                `);
+
+              if (treeResult.recordset.length > 0) {
+                const tree = JSON.parse(treeResult.recordset[0].tree);
+                
+                // Funktion zum Aktualisieren des Labels im Tree
+                function updateNodeLabel(nodes, nodeId, newLabel) {
+                  return nodes.map(node => {
+                    if (node.id === nodeId) {
+                      return { ...node, label: newLabel, name: newLabel };
+                    }
+                    if (node.children) {
+                      return { ...node, children: updateNodeLabel(node.children, nodeId, newLabel) };
+                    }
+                    return node;
+                  });
+                }
+
+                // Aktualisiere das Label im Tree
+                const updatedTree = updateNodeLabel(tree, id, req.body.label);
+
+                // Speichere den aktualisierten Tree zurück in die Datenbank
+                await pool.request()
+                  .input('customer_id', sql.UniqueIdentifier, customerId)
+                  .input('tree', sql.NVarChar(sql.MAX), JSON.stringify(updatedTree))
+                  .query(`
+                    UPDATE customer_settings 
+                    SET tree = @tree,
+                        tree_updated = GETDATE()
+                    WHERE customer_id = @customer_id
+                  `);
+
+                console.log('Tree cache updated with new label');
+              }
+            }
+          } catch (error) {
+            console.error('Error updating tree cache:', error);
+            // Nicht kritisch - das Asset wurde bereits aktualisiert
+          }
+        }
+
         return res.status(200).json({
           id: updatedData.id.id,
           name: updatedData.name,

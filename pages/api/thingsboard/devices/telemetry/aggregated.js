@@ -34,7 +34,7 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: 'Not authenticated' });
     }
 
-    const { deviceIds, startTs, endTs, interval, attribute } = req.query;
+    const { deviceIds, startTs, endTs, interval, attribute, limit = '100' } = req.query;
 
     if (!deviceIds) {
       return res.status(400).json({ error: 'deviceIds parameter is required' });
@@ -52,6 +52,8 @@ export default async function handler(req, res) {
     const startTime = startTs ? parseInt(startTs) : endTime - (7 * 24 * 60 * 60 * 1000);
     // Convert interval to milliseconds (default: 1 hour = 3600000 ms)
     const aggregationInterval = interval ? parseInt(interval) : 3600000;
+    // Parse limit parameter (default: 100 data points)
+    const maxDataPoints = parseInt(limit) || 100;
 
     const telemetryData = [];
 
@@ -60,15 +62,14 @@ export default async function handler(req, res) {
       try {
         // Use the specified attribute directly
         const attributeKeys = [attribute];
-        //console.log(`Device ${deviceId} using attribute:`, attribute);
 
         // Try different ThingsBoard API endpoints for historical data
         let response = null;
         let historicalData = null;
         
-        // Method 1: Try with aggregation
+        // Method 1: Try with aggregation and limit
         try {
-          response = await fetch(`${process.env.THINGSBOARD_URL}/api/plugins/telemetry/DEVICE/${deviceId}/values/timeseries?keys=${attributeKeys.join(',')}&startTs=${startTime}&endTs=${endTime}&interval=${aggregationInterval}&agg=AVG`, {
+          response = await fetch(`${process.env.THINGSBOARD_URL}/api/plugins/telemetry/DEVICE/${deviceId}/values/timeseries?keys=${attributeKeys.join(',')}&startTs=${startTime}&endTs=${endTime}&interval=${aggregationInterval}&agg=AVG&limit=${maxDataPoints}`, {
             method: 'GET',
             headers: {
               'Content-Type': 'application/json',
@@ -78,16 +79,15 @@ export default async function handler(req, res) {
           
           if (response.ok) {
             historicalData = await response.json();
-            //console.log(`Device ${deviceId} got aggregated data:`, JSON.stringify(historicalData, null, 2));
           }
         } catch (error) {
           console.log(`Device ${deviceId} aggregated API failed:`, error.message);
         }
         
-        // Method 2: Try with aggregation but different parameters if Method 1 failed
+        // Method 2: Try with limit but without aggregation if Method 1 failed
         if (!historicalData) {
           try {
-            response = await fetch(`${process.env.THINGSBOARD_URL}/api/plugins/telemetry/DEVICE/${deviceId}/values/timeseries?keys=${attributeKeys.join(',')}&startTs=${startTime}&endTs=${endTime}&interval=${aggregationInterval}&agg=AVG&limit=10000`, {
+            response = await fetch(`${process.env.THINGSBOARD_URL}/api/plugins/telemetry/DEVICE/${deviceId}/values/timeseries?keys=${attributeKeys.join(',')}&startTs=${startTime}&endTs=${endTime}&limit=${maxDataPoints}`, {
               method: 'GET',
               headers: {
                 'Content-Type': 'application/json',
@@ -97,17 +97,16 @@ export default async function handler(req, res) {
             
             if (response.ok) {
               historicalData = await response.json();
-              //console.log(`Device ${deviceId} got raw data:`, JSON.stringify(historicalData, null, 2));
             }
           } catch (error) {
             console.log(`Device ${deviceId} raw API failed:`, error.message);
           }
         }
         
-        // Method 3: Try without time range if previous methods failed
+        // Method 3: Try with limit but without time range if previous methods failed
         if (!historicalData) {
           try {
-            response = await fetch(`${process.env.THINGSBOARD_URL}/api/plugins/telemetry/DEVICE/${deviceId}/values/timeseries?keys=${attributeKeys.join(',')}&limit=10000`, {
+            response = await fetch(`${process.env.THINGSBOARD_URL}/api/plugins/telemetry/DEVICE/${deviceId}/values/timeseries?keys=${attributeKeys.join(',')}&limit=${maxDataPoints}`, {
               method: 'GET',
               headers: {
                 'Content-Type': 'application/json',
@@ -117,7 +116,6 @@ export default async function handler(req, res) {
             
             if (response.ok) {
               historicalData = await response.json();
-              //console.log(`Device ${deviceId} got all data:`, JSON.stringify(historicalData, null, 2));
             }
           } catch (error) {
             console.log(`Device ${deviceId} all data API failed:`, error.message);
@@ -126,8 +124,7 @@ export default async function handler(req, res) {
 
         // If no historical data found, try current values
         if (!historicalData) {
-          //console.log(`No historical data for device ${deviceId}, trying current values`);
-          const currentResponse = await fetch(`${process.env.THINGSBOARD_URL}/api/plugins/telemetry/DEVICE/${deviceId}/values/timeseries?keys=${attributeKeys.join(',')}`, {
+          const currentResponse = await fetch(`${process.env.THINGSBOARD_URL}/api/plugins/telemetry/DEVICE/${deviceId}/values/timeseries?keys=${attributeKeys.join(',')}&limit=1`, {
             method: 'GET',
             headers: {
               'Content-Type': 'application/json',
@@ -137,14 +134,11 @@ export default async function handler(req, res) {
           
           if (currentResponse.ok) {
             const currentTelemetry = await currentResponse.json();
-            //console.log(`Device ${deviceId} current telemetry:`, JSON.stringify(currentTelemetry, null, 2));
             
             // Process current values
             const temperatureData = currentTelemetry[attribute];
             
             if (temperatureData && temperatureData.length > 0) {
-              //console.log(`Device ${deviceId} has current data for key ${attribute}`);
-              
               // Create a single data point for current value
               const currentPoint = temperatureData[0];
               const formattedData = [{
@@ -166,55 +160,81 @@ export default async function handler(req, res) {
 
         const deviceTelemetry = historicalData;
         
-        //console.log(`Device ${deviceId} telemetry response:`, JSON.stringify(deviceTelemetry, null, 2));
-        
         // Process the specified attribute
         const temperatureData = deviceTelemetry[attribute];
         
         if (temperatureData && temperatureData.length > 0) {
-          //console.log(`Device ${deviceId} has ${temperatureData.length} data points for key ${attribute}`);
-          
           // Filter data within the time range
           const filteredData = temperatureData.filter(point => {
             const timestamp = point.ts;
             return timestamp >= startTime && timestamp <= endTime;
           });
 
-          //console.log(`Device ${deviceId} has ${filteredData.length} data points in time range for key ${attribute}`);
-
           if (filteredData.length > 0) {
-            // Group by hour and calculate averages
-            const hourlyData = {};
-            filteredData.forEach(point => {
-              const date = new Date(point.ts);
-              const hourKey = new Date(date.getFullYear(), date.getMonth(), date.getDate(), date.getHours()).getTime();
+            // Limit the number of data points to improve performance
+            let processedData = filteredData;
+            
+            // If we have more data points than the limit, sample them intelligently
+            if (filteredData.length > maxDataPoints) {
+              // Sort by timestamp first
+              filteredData.sort((a, b) => a.ts - b.ts);
               
-              if (!hourlyData[hourKey]) {
-                hourlyData[hourKey] = {
-                  values: [],
-                  count: 0
-                };
+              // Calculate step size for sampling
+              const step = Math.ceil(filteredData.length / maxDataPoints);
+              processedData = [];
+              
+              for (let i = 0; i < filteredData.length; i += step) {
+                processedData.push(filteredData[i]);
+                if (processedData.length >= maxDataPoints) break;
               }
               
-              hourlyData[hourKey].values.push(point.value);
-              hourlyData[hourKey].count++;
-            });
+              // Always include the last data point
+              if (processedData.length > 0 && processedData[processedData.length - 1] !== filteredData[filteredData.length - 1]) {
+                processedData[processedData.length - 1] = filteredData[filteredData.length - 1];
+              }
+            }
 
-            // Calculate averages for each hour
-            const aggregatedData = Object.entries(hourlyData).map(([timestamp, data]) => ({
-              ts: parseInt(timestamp),
-              value: data.values.reduce((sum, val) => sum + val, 0) / data.count
-            }));
+            // Group by hour and calculate averages (only if we have aggregation interval)
+            let aggregatedData;
+            if (aggregationInterval >= 3600000) { // 1 hour or more
+              const hourlyData = {};
+              processedData.forEach(point => {
+                const date = new Date(point.ts);
+                const hourKey = new Date(date.getFullYear(), date.getMonth(), date.getDate(), date.getHours()).getTime();
+                
+                if (!hourlyData[hourKey]) {
+                  hourlyData[hourKey] = {
+                    values: [],
+                    count: 0
+                  };
+                }
+                
+                hourlyData[hourKey].values.push(point.value);
+                hourlyData[hourKey].count++;
+              });
 
-            // Sort by timestamp
-            aggregatedData.sort((a, b) => a.ts - b.ts);
+              // Calculate averages for each hour
+              aggregatedData = Object.entries(hourlyData).map(([timestamp, data]) => ({
+                ts: parseInt(timestamp),
+                value: data.values.reduce((sum, val) => sum + val, 0) / data.count
+              }));
 
-            //console.log(`Device ${deviceId} aggregated to ${aggregatedData.length} hourly data points`);
+              // Sort by timestamp
+              aggregatedData.sort((a, b) => a.ts - b.ts);
+            } else {
+              // For smaller intervals, use the data as-is
+              aggregatedData = processedData.map(point => ({
+                ts: point.ts,
+                value: point.value
+              }));
+            }
 
             telemetryData.push({
               deviceId,
               key: attribute,
-              data: aggregatedData
+              data: aggregatedData,
+              dataPoints: aggregatedData.length,
+              originalDataPoints: filteredData.length
             });
           } else {
             console.log(`Device ${deviceId} has no data in the specified time range for key ${attribute}`);
@@ -227,17 +247,6 @@ export default async function handler(req, res) {
       }
     }
 
-    //console.log('=== FINAL TELEMETRY DATA ===');
-    /*console.log('Time range:', {
-      start: new Date(startTime).toISOString(),
-      end: new Date(endTime).toISOString(),
-      interval: `${aggregationInterval}ms (${aggregationInterval/1000/60} minutes)`
-    });
-    console.log('Total devices processed:', deviceIdList.length);
-    console.log('Devices with telemetry data:', telemetryData.length);
-    console.log('Detailed telemetry data:', JSON.stringify(telemetryData, null, 2));
-    */
-    
     res.status(200).json({
       success: true,
       data: telemetryData,
@@ -245,6 +254,10 @@ export default async function handler(req, res) {
         start: startTime,
         end: endTime,
         interval: aggregationInterval
+      },
+      limits: {
+        maxDataPoints: maxDataPoints,
+        actualDataPoints: telemetryData.reduce((sum, device) => sum + (device.data?.length || 0), 0)
       }
     });
 

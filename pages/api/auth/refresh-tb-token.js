@@ -12,6 +12,19 @@ export default async function handler(req, res) {
       return res.status(401).json({ message: 'Not authenticated' });
     }
 
+    // Get user data from database to get ThingsBoard credentials
+    const userResponse = await fetch(`${process.env.NEXTAUTH_URL}/api/config/users/me`, {
+      headers: {
+        'Authorization': `Bearer ${session.token}`
+      }
+    });
+
+    if (!userResponse.ok) {
+      throw new Error('Failed to get user data');
+    }
+
+    const userData = await userResponse.json();
+    
     // ThingsBoard Login durchführen
     const tbResponse = await fetch(
       `${process.env.THINGSBOARD_URL}/api/auth/login`,
@@ -21,8 +34,8 @@ export default async function handler(req, res) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          username: session.email,
-          password: session.tbPassword // Muss im Session-Objekt verfügbar sein
+          username: userData.tb_username,
+          password: userData.tb_password
         }),
       }
     );
@@ -33,7 +46,11 @@ export default async function handler(req, res) {
 
     const tbData = await tbResponse.json();
     
-    return res.status(200).json({ token: tbData.token });
+    return res.status(200).json({ 
+      success: true,
+      message: 'Token refreshed successfully',
+      token: tbData.token 
+    });
   } catch (error) {
     console.error('Token refresh error:', error);
     return res.status(500).json({ message: 'Failed to refresh token' });
