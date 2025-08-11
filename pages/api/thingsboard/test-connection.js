@@ -21,8 +21,6 @@ export default async function handler(req, res) {
   }
 
   try {
-    console.log('Testing ThingsBoard connection...');
-    
     // Test 1: Basic connection test
     const testResponse = await fetch(`${TB_API_URL}/api/auth/user`, {
       method: 'GET',
@@ -30,12 +28,6 @@ export default async function handler(req, res) {
         'Content-Type': 'application/json',
         'X-Authorization': `Bearer ${session.tbToken}`
       }
-    });
-
-    console.log('ThingsBoard connection test result:', {
-      status: testResponse.status,
-      statusText: testResponse.statusText,
-      ok: testResponse.ok
     });
 
     if (!testResponse.ok) {
@@ -61,7 +53,7 @@ export default async function handler(req, res) {
         }
       });
     } catch (deviceError) {
-      console.log('Devices test failed:', deviceError.message);
+      // Devices test failed
     }
 
     // Test 3: Try multiple alarms endpoints
@@ -106,7 +98,6 @@ export default async function handler(req, res) {
         alarmsStatus = alarmsResponse.status.toString();
       }
     } catch (alarmError) {
-      console.log('Alarms test failed:', alarmError.message);
       alarmsStatus = `Error: ${alarmError.message}`;
     }
 

@@ -27,6 +27,7 @@ import { Tree } from '@minoru/react-dnd-treeview';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import ReactECharts from 'echarts-for-react';
+import TelemetryModal from '../components/TelemetryModal';
 
 export default function Dashboard() {
   const router = useRouter();
@@ -1194,11 +1195,20 @@ export default function Dashboard() {
               return device;
             }
 
-            // Calculate time range for last 24 hours
+            // First get the latest values without time range to determine last update
+            const latestTelemetryResponse = await fetch(
+              `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=fCnt,sensorTemperature,targetTemperature,batteryVoltage,PercentValveOpen,rssi,snr,sf,signalQuality`,
+              {
+                headers: {
+                  'Authorization': `Bearer ${session.token}`
+                }
+              }
+            );
+
+            // Then get the full 24-hour data for the modal
             const endTime = Date.now();
             const startTime = endTime - (24 * 60 * 60 * 1000); // 24 hours ago
             
-            // Use the ThingsBoard telemetry endpoint through our API with time range
             const telemetryResponse = await fetch(
               `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=fCnt,sensorTemperature,targetTemperature,batteryVoltage,PercentValveOpen,rssi,snr,sf,signalQuality&startTs=${startTime}&endTs=${endTime}`,
               {
@@ -1208,23 +1218,26 @@ export default function Dashboard() {
               }
             );
 
-            if (telemetryResponse.ok) {
+            if (telemetryResponse.ok && latestTelemetryResponse.ok) {
               const telemetryData = await telemetryResponse.json();
-              console.log(`Device ${deviceId} raw telemetry:`, telemetryData);
+              const latestTelemetryData = await latestTelemetryResponse.json();
+              
+              console.log(`Device ${deviceId} raw telemetry (24h):`, telemetryData);
+              console.log(`Device ${deviceId} latest telemetry:`, latestTelemetryData);
               
               // Log the number of data points for each attribute
               Object.keys(telemetryData).forEach(key => {
                 if (telemetryData[key] && Array.isArray(telemetryData[key])) {
-                  console.log(`Attribute ${key}: ${telemetryData[key].length} data points`);
+                  console.log(`Attribute ${key} (24h): ${telemetryData[key].length} data points`);
                 }
               });
 
-              // Extract the latest values for each attribute
+              // Extract the latest values for each attribute from the latest data
               const telemetry = {};
               
               // Helper function to get latest value for an attribute
               const getLatestValue = (attributeName) => {
-                const attributeData = telemetryData[attributeName];
+                const attributeData = latestTelemetryData[attributeName];
                 if (attributeData && Array.isArray(attributeData) && attributeData.length > 0) {
                   // Get the latest reading (last in array)
                   const latestReading = attributeData[attributeData.length - 1];
@@ -1235,7 +1248,7 @@ export default function Dashboard() {
                 return null;
               };
 
-              // Extract all attributes and find the latest timestamp
+              // Extract all attributes from latest data
               telemetry.batteryVoltage = getLatestValue('batteryVoltage');
               telemetry.fCnt = getLatestValue('fCnt');
               telemetry.PercentValveOpen = getLatestValue('PercentValveOpen');
@@ -1246,11 +1259,11 @@ export default function Dashboard() {
               telemetry.signalQuality = getLatestValue('signalQuality');
               telemetry.snr = getLatestValue('snr');
 
-              // Find the latest timestamp from all available telemetry data
+              // Find the latest timestamp from the latest telemetry data (not the 24h data)
               let latestTimestamp = null;
-              Object.keys(telemetryData).forEach(key => {
-                if (telemetryData[key] && Array.isArray(telemetryData[key]) && telemetryData[key].length > 0) {
-                  const lastEntry = telemetryData[key][telemetryData[key].length - 1];
+              Object.keys(latestTelemetryData).forEach(key => {
+                if (latestTelemetryData[key] && Array.isArray(latestTelemetryData[key]) && latestTelemetryData[key].length > 0) {
+                  const lastEntry = latestTelemetryData[key][latestTelemetryData[key].length - 1];
                   if (lastEntry && lastEntry.ts) {
                     const ts = lastEntry.ts;
                     if (!latestTimestamp || ts > latestTimestamp) {
@@ -1281,7 +1294,12 @@ export default function Dashboard() {
                 active: updatedActive
               };
             } else {
-              console.warn(`Failed to fetch telemetry for device ${deviceId}:`, telemetryResponse.status);
+              if (!latestTelemetryResponse.ok) {
+                console.warn(`Failed to fetch latest telemetry for device ${deviceId}:`, latestTelemetryResponse.status);
+              }
+              if (!telemetryResponse.ok) {
+                console.warn(`Failed to fetch 24h telemetry for device ${deviceId}:`, telemetryResponse.status);
+              }
             }
           } catch (error) {
             console.warn(`Error fetching telemetry for device ${device.id}:`, error);
@@ -1355,18 +1373,6 @@ export default function Dashboard() {
     
     setSelectedDeviceForTelemetry(device);
     setShowTelemetryModal(true);
-    setLoadingTelemetryModal(true);
-    
-    try {
-      const rawTelemetryData = await fetchRawTelemetryForModal(device);
-      console.log('Raw telemetry data loaded:', rawTelemetryData);
-      setTelemetryModalData(rawTelemetryData);
-    } catch (error) {
-      console.error('Error loading telemetry modal data:', error);
-      setTelemetryModalData([]);
-    } finally {
-      setLoadingTelemetryModal(false);
-    }
   };
 
   const fetchTelemetryData = async (nodeId, controller = null) => {
@@ -3768,151 +3774,14 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Telemetry Data Modal */}
-      {showTelemetryModal && (
-        <div 
-          style={{ 
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            width: '100%',
-            height: '100%',
-            zIndex: 1050,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: 'rgba(0, 0, 0, 0.2)',
-            backdropFilter: 'blur(2px)'
-          }} 
-          onClick={() => setShowTelemetryModal(false)}
-        >
-          <div 
-            className="bg-white rounded-lg shadow-2xl"
-            style={{
-              maxWidth: '90%',
-              width: '1200px',
-              maxHeight: '90%',
-              animation: 'slideIn 0.3s ease-out'
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="card-header d-flex justify-content-between align-items-center p-3">
-              <h5 className="mb-0">
-                Telemetriedaten - {selectedDeviceForTelemetry?.name || selectedDeviceForTelemetry?.label || 'Unbekanntes Gerät'}
-              </h5>
-              <button 
-                type="button" 
-                className="btn-close" 
-                onClick={() => setShowTelemetryModal(false)}
-              ></button>
-            </div>
-            <div className="card-body p-0">
-              {loadingTelemetryModal ? (
-                <div className="text-center py-5">
-                  <div className="spinner-border text-primary" role="status">
-                    <span className="visually-hidden">Lade...</span>
-                  </div>
-                  <p className="mt-2">Lade Telemetriedaten...</p>
-                </div>
-              ) : (
-                <div className="table-responsive" style={{ maxHeight: '70vh' }}>
-                  <table className="table table-striped table-hover mb-0">
-                    <thead className="table-dark sticky-top">
-                      <tr>
-                        <th>Zeitstempel</th>
-                        <th>Attribut</th>
-                        <th>Wert</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {telemetryModalData.length > 0 ? (
-                        telemetryModalData.map((entry, index) => (
-                          <tr key={index}>
-                            <td className="text-nowrap">
-                              <span className="text-dark">
-                                {entry.formattedTime}
-                              </span>
-                            </td>
-                            <td>
-                              <span className="badge bg-secondary">
-                                {(() => {
-                                  const attributeMap = {
-                                    'batteryVoltage': 'Batterie',
-                                    'fCnt': 'FCnt',
-                                    'PercentValveOpen': 'Ventil',
-                                    'rssi': 'RSSI',
-                                    'sensorTemperature': 'Aktuelle Temp.',
-                                    'targetTemperature': 'Ziel Temp.',
-                                    'sf': 'SF',
-                                    'signalQuality': 'Signal',
-                                    'snr': 'SNR'
-                                  };
-                                  return attributeMap[entry.attribute] || entry.attribute;
-                                })()}
-                              </span>
-                            </td>
-                            <td>
-                              <span className="text-dark">
-                                {(() => {
-                                  const value = entry.value;
-                                  if (value === null || value === undefined) return '-';
-                                  
-                                  // Format values based on attribute type
-                                  switch (entry.attribute) {
-                                    case 'batteryVoltage':
-                                      return `${parseFloat(value).toFixed(2)} V`;
-                                    case 'sensorTemperature':
-                                    case 'targetTemperature':
-                                      return `${parseFloat(value).toFixed(1)} °C`;
-                                    case 'PercentValveOpen':
-                                      return `${parseFloat(value).toFixed(0)} %`;
-                                    case 'rssi':
-                                    case 'snr':
-                                      return `${parseFloat(value).toFixed(1)} dB`;
-                                    case 'fCnt':
-                                    case 'sf':
-                                      return value;
-                                    case 'signalQuality':
-                                      return value;
-                                    default:
-                                      return value;
-                                  }
-                                })()}
-                              </span>
-                            </td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td colSpan="3" className="text-center py-4">
-                            <FontAwesomeIcon icon={faExclamationTriangle} size="2x" className="text-muted mb-3" />
-                            <h6 className="mb-0">Keine Telemetriedaten verfügbar</h6>
-                            <p className="text-muted mb-0">Für die letzten 24 Stunden wurden keine Daten gefunden.</p>
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-            <div className="card-footer p-3">
-              <div className="d-flex justify-content-between align-items-center">
-                <small className="text-muted">
-                  Zeige Rohdaten der letzten 24 Stunden für alle verfügbaren Attribute
-                </small>
-                <button 
-                  type="button" 
-                  className="btn btn-secondary btn-sm"
-                  onClick={() => setShowTelemetryModal(false)}
-                >
-                  Schließen
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Telemetry Modal */}
+      <TelemetryModal
+        isOpen={showTelemetryModal}
+        onClose={() => setShowTelemetryModal(false)}
+        device={selectedDeviceForTelemetry}
+        telemetryData={selectedDeviceForTelemetry?.telemetry?.rawData}
+        isLoading={false}
+      />
 
       {/* Time Range Selection Modal */}
       {showTimeRangeModal && (

@@ -124,7 +124,7 @@ export default async function handler(req, res) {
       apiUrl += `&maxLevel=${maxLevel}`;
     }
 
-    console.log('ThingsBoard Relations API URL:', apiUrl);
+    // Construct ThingsBoard Relations API URL
 
     // Relations von ThingsBoard abrufen
     const response = await fetch(apiUrl, {
@@ -176,7 +176,7 @@ export default async function handler(req, res) {
 
         if (deviceResponse.ok) {
           entityData = await deviceResponse.json();
-          console.log(`Device details for ${entityId}:`, entityData);
+          // Device details found
         } else {
           // 2. Versuche /api/asset/{assetId} für Assets
           const assetResponse = await fetch(
@@ -191,7 +191,7 @@ export default async function handler(req, res) {
 
           if (assetResponse.ok) {
             entityData = await assetResponse.json();
-            console.log(`Asset details for ${entityId}:`, entityData);
+            // Asset details found
           } else {
             // 3. Versuche /api/customer/{customerId} für Customers
             const customerResponse = await fetch(
@@ -206,7 +206,7 @@ export default async function handler(req, res) {
 
             if (customerResponse.ok) {
               entityData = await customerResponse.json();
-              console.log(`Customer details for ${entityId}:`, entityData);
+              // Customer details found
             } else {
               // 4. Versuche /api/tenant/{tenantId} für Tenants
               const tenantResponse = await fetch(
@@ -221,7 +221,7 @@ export default async function handler(req, res) {
 
               if (tenantResponse.ok) {
                 entityData = await tenantResponse.json();
-                console.log(`Tenant details for ${entityId}:`, entityData);
+                // Tenant details found
               } else {
                 console.error(`Failed to fetch entity details for ${entityId} from all endpoints`);
                 entityDetails[entityId] = null;
@@ -241,7 +241,7 @@ export default async function handler(req, res) {
     // Warte auf alle Entity-Details
     await Promise.all(entityDetailsPromises);
     
-    console.log('Entity details collected:', entityDetails);
+    // Entity details collected
 
     // Relations strukturieren und erweitern
     const structuredRelations = relations.map(relation => {

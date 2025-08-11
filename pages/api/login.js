@@ -44,7 +44,6 @@ async function getThingsboardToken(tb_username, tb_password, tb_url) {
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
-    console.log('Method not allowed:', req.method);
     return res.status(405).json({ message: 'Method not allowed' })
   }
 
@@ -52,9 +51,7 @@ export default async function handler(req, res) {
   let pool;
 
   try {
-    console.log('Attempting database connection...');
     pool = await sql.connect(sqlConfig)
-    console.log('Database connected successfully');
     
     // User und zugehörige Customer-Settings aus der Datenbank abfragen
     let result;
@@ -82,10 +79,7 @@ export default async function handler(req, res) {
       });
     }
 
-    console.log('Database query completed. Records found:', result.recordset.length);
-
     if (result.recordset.length === 0) {
-      console.log('No user found for username:', username);
       return res.status(401).json({ 
         success: false,
         error: 'Invalid credentials 1' 
@@ -93,12 +87,6 @@ export default async function handler(req, res) {
     }
 
     const user = result.recordset[0]
-    console.log('User found:', { 
-      userid: user.userid, 
-      username: user.username,
-      hasPassword: !!user.password,
-      hasThingsboard: !!user.tb_username
-    });
 
     // Passwort überprüfen
     const passwordMatch = await bcrypt.compare(password, user.password)
@@ -136,22 +124,15 @@ export default async function handler(req, res) {
         })
       })
 
-      // Debug-Logging
-       //console.log('ThingsBoard response status:', tbResponse.status);
-      //console.log('ThingsBoard response headers:', tbResponse.headers);
       const responseText = await tbResponse.text();
-      //console.log('ThingsBoard response body:', responseText);
 
       let tbData;
       try {
         // Prüfen ob responseText ein valides JSON ist
-        console.log('Prüfen ob responseText ein valides JSON ist');
         if (!responseText || typeof responseText !== 'string' || responseText.trim() === '') {
             throw new Error('Invalid JSON: Empty or invalid response');
         }
-        console.log('responseText ist ein valides JSON');
         tbData = JSON.parse(responseText);
-        console.log('tbData:', tbData);
       } catch (error) {
         console.error('Failed to parse ThingsBoard response:', error);
         return res.status(500).json({

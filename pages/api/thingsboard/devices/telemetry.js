@@ -43,8 +43,6 @@ export default async function handler(req, res) {
       telemetryUrl += `&startTs=${startTs}&endTs=${endTs}`;
     }
 
-    console.log('Fetching telemetry from:', telemetryUrl);
-
     // Fetch telemetry data from ThingsBoard
     const telemetryResponse = await fetch(telemetryUrl, {
       headers: {
@@ -63,7 +61,6 @@ export default async function handler(req, res) {
     }
 
     const telemetryData = await telemetryResponse.json();
-    console.log('Telemetry data received for device', deviceId, ':', telemetryData);
 
     // Return the telemetry data as-is
     res.status(200).json(telemetryData);

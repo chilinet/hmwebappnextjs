@@ -21,8 +21,6 @@ export default async function handler(req, res) {
   }
 
   try {
-    console.log('Testing ThingsBoard alarms endpoints...');
-    
     const results = {
       connection: {
         url: TB_API_URL,
@@ -33,7 +31,6 @@ export default async function handler(req, res) {
 
     // Test 1: Device-specific alarms endpoint
     try {
-      console.log('Testing /api/device/{id}/alarms...');
       const deviceResponse = await fetch(`${TB_API_URL}/api/device/test-device/alarms?pageSize=5&page=0`, {
         method: 'GET',
         headers: {
@@ -60,7 +57,6 @@ export default async function handler(req, res) {
 
     // Test 2: Simple alarms endpoint
     try {
-      console.log('Testing /api/alarms...');
       const simpleResponse = await fetch(`${TB_API_URL}/api/alarms?pageSize=5&page=0`, {
         method: 'GET',
         headers: {
@@ -84,7 +80,6 @@ export default async function handler(req, res) {
 
     // Test 3: Customer alarms endpoint
     try {
-      console.log('Testing /api/customer/{id}/alarms...');
       const customerResponse = await fetch(`${TB_API_URL}/api/customer/${session.customerid}/alarms?pageSize=5&page=0`, {
         method: 'GET',
         headers: {
@@ -108,7 +103,6 @@ export default async function handler(req, res) {
 
     // Test 4: Query endpoint with GET
     try {
-      console.log('Testing /api/alarm/query with GET...');
       const queryGetResponse = await fetch(`${TB_API_URL}/api/alarm/query?pageSize=5&page=0`, {
         method: 'GET',
         headers: {
@@ -132,7 +126,6 @@ export default async function handler(req, res) {
 
     // Test 5: Query endpoint with POST
     try {
-      console.log('Testing /api/alarm/query with POST...');
       const queryPostResponse = await fetch(`${TB_API_URL}/api/alarm/query`, {
         method: 'POST',
         headers: {
@@ -160,7 +153,6 @@ export default async function handler(req, res) {
 
     // Test 6: Try to get actual alarms from a real device
     try {
-      console.log('Trying to get actual alarms from customer devices...');
       const devicesResponse = await fetch(`${TB_API_URL}/api/customer/${session.customerid}/devices?pageSize=1&page=0`, {
         method: 'GET',
         headers: {
@@ -173,7 +165,6 @@ export default async function handler(req, res) {
         const devicesData = await devicesResponse.json();
         if (devicesData.data && devicesData.data.length > 0) {
           const realDeviceId = devicesData.data[0].id.id;
-          console.log('Found real device, testing alarms:', realDeviceId);
           
           const realAlarmsResponse = await fetch(`${TB_API_URL}/api/device/${realDeviceId}/alarms?pageSize=5&page=0`, {
             method: 'GET',
@@ -211,7 +202,6 @@ export default async function handler(req, res) {
       };
     }
 
-    console.log('Alarms test results:', results);
     return res.status(200).json(results);
 
   } catch (error) {

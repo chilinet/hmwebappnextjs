@@ -28,8 +28,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    // First, let's test the ThingsBoard connection with a simple API call
-    console.log('Testing ThingsBoard connection...');
+        // Test ThingsBoard connection
     const testResponse = await fetch(`${TB_API_URL}/api/auth/user`, {
       method: 'GET',
       headers: {
@@ -38,35 +37,18 @@ export default async function handler(req, res) {
       }
     });
     
-    console.log('ThingsBoard connection test:', {
-      status: testResponse.status,
-      statusText: testResponse.statusText
-    });
-    
     if (!testResponse.ok) {
       console.error('ThingsBoard connection test failed:', testResponse.status, testResponse.statusText);
       throw new Error(`ThingsBoard connection failed: ${testResponse.status} - ${testResponse.statusText}`);
     }
 
-    console.log('Attempting to fetch alarms from ThingsBoard:', {
-      url: `${TB_API_URL}/api/alarm/query`,
-      method: 'POST',
-      hasToken: !!session.tbToken,
-      tokenLength: session.tbToken ? session.tbToken.length : 0,
-      deviceIds: deviceIds.split(',')
-    });
-
     // Get alarms for each specific device using the correct ThingsBoard endpoint
-    console.log('Fetching alarms for devices:', deviceIds.split(','));
-    
     let allAlarms = [];
     const deviceIdArray = deviceIds.split(',');
     
     // Fetch alarms for each device individually
     for (const deviceId of deviceIdArray) {
       try {
-        console.log(`Fetching alarms for device: ${deviceId}`);
-        
         // Use the correct ThingsBoard endpoint: /api/alarm/DEVICE/{deviceId}
         // Limit to 20 most recent alarms per device to avoid overwhelming the system
         const deviceAlarmsResponse = await fetch(`${TB_API_URL}/api/alarm/DEVICE/${deviceId}?pageSize=20&page=0`, {
@@ -77,18 +59,8 @@ export default async function handler(req, res) {
           }
         });
         
-        console.log(`Device ${deviceId} alarms response:`, {
-          status: deviceAlarmsResponse.status,
-          statusText: deviceAlarmsResponse.statusText
-        });
-        
         if (deviceAlarmsResponse.ok) {
           const deviceAlarmsData = await deviceAlarmsResponse.json();
-          console.log(`Device ${deviceId} alarms data:`, {
-            hasData: !!deviceAlarmsData,
-            dataLength: deviceAlarmsData?.data?.length || 0,
-            dataKeys: deviceAlarmsData ? Object.keys(deviceAlarmsData) : []
-          });
           
           // Extract alarms from the response
           let deviceAlarms = [];
@@ -106,7 +78,6 @@ export default async function handler(req, res) {
           });
           
           allAlarms = allAlarms.concat(deviceAlarms);
-          console.log(`Added ${deviceAlarms.length} alarms from device ${deviceId}`);
         } else {
           console.warn(`Failed to fetch alarms for device ${deviceId}:`, deviceAlarmsResponse.status);
         }
@@ -115,8 +86,6 @@ export default async function handler(req, res) {
         // Continue with other devices
       }
     }
-    
-    console.log(`Total alarms collected: ${allAlarms.length}`);
     
     // Sort alarms by timestamp (newest first) and limit total alarms
     allAlarms.sort((a, b) => {
@@ -202,26 +171,7 @@ export default async function handler(req, res) {
         // Try to find timestamp from various possible fields in order of preference
         let timestamp = null;
         
-        // Log the alarm data to see what fields are available
-        console.log('Processing alarm for timestamp extraction:', {
-          alarmId: alarm.id,
-          availableFields: Object.keys(alarm),
-          timestampFields: {
-            timestamp: alarm.timestamp,
-            createdTime: alarm.createdTime,
-            createTime: alarm.createTime,
-            startTs: alarm.startTs,
-            ts: alarm.ts,
-            originator: alarm.originator,
-            created: alarm.created,
-            startTime: alarm.startTime,
-            time: alarm.time,
-            date: alarm.date,
-            createdAt: alarm.createdAt,
-            lastUpdated: alarm.lastUpdated,
-            updateTime: alarm.updateTime
-          }
-        });
+        // Process alarm for timestamp extraction
 
         // Try all possible timestamp fields in order of preference
         const timestampFields = [
@@ -244,7 +194,6 @@ export default async function handler(req, res) {
             const extracted = safeTimestamp(alarm[field]);
             if (extracted) {
               timestamp = extracted;
-              console.log(`Found timestamp in field '${field}': ${extracted} (${new Date(extracted).toISOString()})`);
               break;
             }
           }
@@ -256,14 +205,12 @@ export default async function handler(req, res) {
             const originatorTimestamp = safeTimestamp(alarm.originator);
             if (originatorTimestamp) {
               timestamp = originatorTimestamp;
-              console.log(`Found timestamp in originator: ${timestamp} (${new Date(timestamp).toISOString()})`);
             }
           }
         }
 
-        // If still no timestamp found, use a fallback but log it
+        // If still no timestamp found, use a fallback
         if (!timestamp) {
-          console.warn(`No valid timestamp found for alarm ${alarm.id}, using fallback`);
           // Don't use Date.now() as it's not the actual alarm time
           // Instead, try to create a reasonable fallback
           timestamp = Date.now() - (Math.random() * 24 * 60 * 60 * 1000); // Random time within last 24 hours

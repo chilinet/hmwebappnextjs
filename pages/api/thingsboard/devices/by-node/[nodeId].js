@@ -152,7 +152,6 @@ export default async function handler(req, res) {
 
     // Wenn keine Devices gefunden wurden, leeres Array zurückgeben
     if (relatedDevices.length === 0) {
-      console.log('No specific devices found for node, returning empty array');
       relatedDevices = [];
     }
 
@@ -169,10 +168,7 @@ export default async function handler(req, res) {
       customerId: device.customerId?.id
     }));
 
-    console.log('=== DEVICES BY NODE API ===');
-    console.log('Node ID:', nodeId);
-    console.log('Asset name:', targetAsset?.name || 'Unknown');
-    console.log('Total devices found:', formattedDevices.length);
+    // API response preparation
 
     res.status(200).json({
       success: true,

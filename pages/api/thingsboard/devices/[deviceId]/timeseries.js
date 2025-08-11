@@ -141,7 +141,7 @@ export default async function handler(req, res) {
       apiUrl += `&agg=${finalAgg}`;
     }
 
-    console.log('ThingsBoard API URL:', apiUrl);
+    // Construct ThingsBoard API URL
 
     // Telemetriedaten von ThingsBoard abrufen
     const response = await fetch(apiUrl, {

@@ -81,7 +81,7 @@ export default async function handler(req, res) {
             historicalData = await response.json();
           }
         } catch (error) {
-          console.log(`Device ${deviceId} aggregated API failed:`, error.message);
+          // Aggregated API failed, continue to fallback
         }
         
         // Method 2: Try with limit but without aggregation if Method 1 failed
@@ -99,7 +99,7 @@ export default async function handler(req, res) {
               historicalData = await response.json();
             }
           } catch (error) {
-            console.log(`Device ${deviceId} raw API failed:`, error.message);
+            // Raw API failed, continue to fallback
           }
         }
         
@@ -118,7 +118,7 @@ export default async function handler(req, res) {
               historicalData = await response.json();
             }
           } catch (error) {
-            console.log(`Device ${deviceId} all data API failed:`, error.message);
+            // All data API failed
           }
         }
 
