@@ -2,15 +2,29 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import Layout from '@/components/Layout';
-import { Card } from 'react-bootstrap';
+import { Card, Badge, ProgressBar } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faUsers, faServer, faThermometerHalf, faChartLine } from '@fortawesome/free-solid-svg-icons';
+import { 
+  faFire, 
+  faTachometerAlt, 
+  faThermometerHalf, 
+  faCog,
+  faExclamationTriangle,
+  faCheckCircle,
+  faArrowUp,
+  faArrowDown,
+  faBolt,
+  faHome,
+  faShieldAlt,
+  faChartLine,
+  faUsers
+} from '@fortawesome/free-solid-svg-icons';
 import Head from 'next/head';
 
 export default function Home() {
   const { data: session, status } = useSession();
   const router = useRouter();
-  const [stats, setStats] = useState(null);
+  const [dashboardData, setDashboardData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -21,34 +35,33 @@ export default function Home() {
   }, [status, router]);
 
   useEffect(() => {
-    async function fetchStats() {
+    async function fetchDashboardData() {
       if (session?.user?.customerId) {
         try {
-          console.log('Fetching stats for customer:', session.user.customerId);
-          const response = await fetch('/api/dashboard/stats');
+          const response = await fetch(`/api/dashboard/stats?customerId=${session.user.customerId}`);
           
           if (!response.ok) {
             const errorData = await response.json();
-            throw new Error(errorData.error || 'Failed to fetch stats');
+            throw new Error(errorData.error || 'Failed to fetch dashboard data');
           }
           
           const data = await response.json();
-          console.log('Received stats:', data);
-          setStats(data);
+          console.log('Dashboard data received:', data);
+          setDashboardData(data);
         } catch (err) {
-          console.error('Error fetching stats:', err);
+          console.error('Error fetching dashboard data:', err);
           setError(err.message);
         } finally {
           setLoading(false);
         }
       } else {
-        console.log('No customerId found in session:', session);
+        console.log('No customerId in session:', session?.user);
         setLoading(false);
       }
     }
 
     if (session) {
-      fetchStats();
+      fetchDashboardData();
     } else {
       setLoading(false);
     }
@@ -74,7 +87,7 @@ export default function Home() {
           <div className="spinner-border text-primary" role="status">
             <span className="visually-hidden">Loading...</span>
           </div>
-          <p className="mt-3 text-muted">Daten werden geladen...</p>
+          <p className="mt-3 text-muted">Dashboard-Daten werden geladen...</p>
         </div>
       </div>
     );
@@ -107,129 +120,276 @@ export default function Home() {
   return (
     <>
       <Head>
-        <title>Dashboard - HeatManager</title>
-        <meta name="description" content="HeatManager Dashboard - Übersicht über Geräte und Benutzer" />
+        <title>HeatManager - Übersicht</title>
+        <meta name="description" content="HeatManager - Intelligente Heizungssteuerung und -überwachung" />
       </Head>
       
       <div className="light-theme">
         <div className="container-fluid py-4">
+          {/* Spacer for top margin */}
           <div className="row mb-4">
             <div className="col-12">
-              <h1 className="h2 mb-0 text-primary">
-                <FontAwesomeIcon icon={faChartLine} className="me-2" />
-                Dashboard
-              </h1>
-              <p className="text-muted mb-0">Willkommen bei HeatManager</p>
+              <div style={{ height: '20px' }}></div>
             </div>
           </div>
           
-          <div className="row g-4">
-            <div className="col-xl-3 col-md-6">
-              <Card className="h-100 dashboard-card shadow-sm border-0">
+          {/* Main Dashboard Tiles */}
+          <div className="row g-4 mb-5">
+            {/* 1. Wärme Kachel */}
+            <div className="col-xl-6 col-lg-6">
+              <Card 
+                className="h-100 dashboard-tile shadow border-2 border-dark" 
+                style={{ cursor: 'pointer' }}
+                onClick={() => router.push('/dashboard')}
+              >
                 <Card.Body className="p-4">
-                  <div className="d-flex justify-content-between align-items-center">
+                  <div className="d-flex justify-content-between align-items-start mb-3">
                     <div>
-                      <h6 className="text-muted mb-2 fw-semibold">Aktive Geräte</h6>
-                      <h2 className="mb-0 text-primary fw-bold">{stats?.devices || 0}</h2>
-                      <small className="text-success">
-                        <FontAwesomeIcon icon={faThermometerHalf} className="me-1" />
-                        Online
-                      </small>
+                      <h4 className="mb-1 fw-bold text-dark">
+                        <FontAwesomeIcon icon={faFire} className="me-2 text-danger" />
+                        Wärme
+                      </h4>
+                      <p className="mb-0 text-muted fw-semibold">Heizungssteuerung & Monitoring</p>
                     </div>
-                    <div className="icon-shape bg-primary bg-opacity-10 text-primary">
-                      <FontAwesomeIcon icon={faServer} size="lg" />
+                    <div className="icon-shape bg-danger text-white border border-dark">
+                      <FontAwesomeIcon icon={faFire} size="lg" />
                     </div>
+                  </div>
+                  
+                            <div className="row g-3">
+            <div className="col-4">
+              <div className="text-center">
+                <h3 className="mb-1 fw-bold text-primary">{dashboardData?.devices || 0}</h3>
+                <small className="text-dark fw-semibold">Geräte</small>
+              </div>
+            </div>
+                    <div className="col-4">
+                      <div className="text-center">
+                        <h3 className="mb-1 fw-bold text-warning">{dashboardData?.alarms || 0}</h3>
+                        <small className="text-dark fw-semibold">Alarme</small>
+                      </div>
+                    </div>
+                    <div className="col-4">
+                      <div className="text-center">
+                        <h3 className="mb-1 fw-bold text-success">{dashboardData?.heatDemand || '85%'}</h3>
+                        <small className="text-dark fw-semibold">Wärmeanforderung</small>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="mt-3">
+                    <div className="d-flex justify-content-between align-items-center mb-1">
+                      <small className="text-dark fw-semibold">Systemstatus</small>
+                      <Badge bg="success" className="border border-dark">Aktiv</Badge>
+                    </div>
+                    <ProgressBar variant="primary" now={85} className="border border-dark" />
                   </div>
                 </Card.Body>
               </Card>
             </div>
 
-            <div className="col-xl-3 col-md-6">
-              <Card className="h-100 dashboard-card shadow-sm border-0">
+            {/* 2. Verbrauch Kachel */}
+            <div className="col-xl-6 col-lg-6">
+              <Card className="h-100 dashboard-tile shadow border-2 border-dark">
                 <Card.Body className="p-4">
-                  <div className="d-flex justify-content-between align-items-center">
+                  <div className="d-flex justify-content-between align-items-start mb-3">
                     <div>
-                      <h6 className="text-muted mb-2 fw-semibold">Benutzer</h6>
-                      <h2 className="mb-0 text-success fw-bold">{stats?.users || 0}</h2>
-                      <small className="text-muted">
-                        Registriert
-                      </small>
+                      <h4 className="mb-1 fw-bold text-dark">
+                        <FontAwesomeIcon icon={faTachometerAlt} className="me-2 text-info" />
+                        Verbrauch
+                      </h4>
+                      <p className="mb-0 text-muted fw-semibold">Energieverbrauch & Effizienz</p>
                     </div>
-                    <div className="icon-shape bg-success bg-opacity-10 text-success">
-                      <FontAwesomeIcon icon={faUsers} size="lg" />
+                    <div className="icon-shape bg-info text-white border border-dark">
+                      <FontAwesomeIcon icon={faTachometerAlt} size="lg" />
                     </div>
+                  </div>
+                  
+                  <div className="row g-3">
+                    <div className="col-4">
+                      <div className="text-center">
+                        <h3 className="mb-1 fw-bold text-primary">{dashboardData?.energyConsumption || '2.4'}</h3>
+                        <small className="text-dark fw-semibold">kWh/h</small>
+                      </div>
+                    </div>
+                    <div className="col-4">
+                      <div className="text-center">
+                        <h3 className="mb-1 fw-bold text-success">
+                          <FontAwesomeIcon icon={faArrowDown} className="me-1" />
+                          {dashboardData?.efficiency || '12%'}
+                        </h3>
+                        <small className="text-dark fw-semibold">Effizienz</small>
+                      </div>
+                    </div>
+                    <div className="col-4">
+                      <div className="text-center">
+                        <h3 className="mb-1 fw-bold text-primary">{dashboardData?.monthlyCost || '€89'}</h3>
+                        <small className="text-dark fw-semibold">Monatlich</small>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="mt-3">
+                    <div className="d-flex justify-content-between align-items-center mb-1">
+                      <small className="text-dark fw-semibold">Energieeinsparung</small>
+                      <Badge bg="success" className="border border-dark">+12%</Badge>
+                    </div>
+                    <ProgressBar variant="info" now={78} className="border border-dark" />
                   </div>
                 </Card.Body>
               </Card>
             </div>
 
-            <div className="col-xl-3 col-md-6">
-              <Card className="h-100 dashboard-card shadow-sm border-0">
+            {/* 3. Raumklima Kachel */}
+            <div className="col-xl-6 col-lg-6">
+              <Card className="h-100 dashboard-tile shadow border-2 border-dark">
                 <Card.Body className="p-4">
-                  <div className="d-flex justify-content-between align-items-center">
+                  <div className="d-flex justify-content-between align-items-start mb-3">
                     <div>
-                      <h6 className="text-muted mb-2 fw-semibold">Kunden</h6>
-                      <h2 className="mb-0 text-info fw-bold">{stats?.customers || 0}</h2>
-                      <small className="text-muted">
-                        Verwaltet
-                      </small>
+                      <h4 className="mb-1 fw-bold text-dark">
+                        <FontAwesomeIcon icon={faThermometerHalf} className="me-2 text-success" />
+                        Raumklima
+                      </h4>
+                      <p className="mb-0 text-muted fw-semibold">Temperatur & Luftqualität</p>
                     </div>
-                    <div className="icon-shape bg-info bg-opacity-10 text-info">
-                      <FontAwesomeIcon icon={faUsers} size="lg" />
+                    <div className="icon-shape bg-success text-white border border-dark">
+                      <FontAwesomeIcon icon={faThermometerHalf} size="lg" />
                     </div>
+                  </div>
+                  
+                  <div className="row g-3">
+                    <div className="col-4">
+                      <div className="text-center">
+                        <h3 className="mb-1 fw-bold text-primary">{dashboardData?.avgTemperature || '21.5'}°C</h3>
+                        <small className="text-dark fw-semibold">Durchschnitt</small>
+                      </div>
+                    </div>
+                    <div className="col-4">
+                      <div className="text-center">
+                        <h3 className="mb-1 fw-bold text-info">{dashboardData?.humidity || '45'}%</h3>
+                        <small className="text-dark fw-semibold">Luftfeuchtigkeit</small>
+                      </div>
+                    </div>
+                    <div className="col-4">
+                      <div className="text-center">
+                        <h3 className="mb-1 fw-bold text-success">
+                          <FontAwesomeIcon icon={faCheckCircle} className="me-1" />
+                          {dashboardData?.comfortLevel || 'Optimal'}
+                        </h3>
+                        <small className="text-dark fw-semibold">Komfort</small>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="mt-3">
+                    <div className="d-flex justify-content-between align-items-center mb-1">
+                      <small className="text-dark fw-semibold">Klimaqualität</small>
+                      <Badge bg="success" className="border border-dark">Optimal</Badge>
+                    </div>
+                    <ProgressBar variant="success" now={92} className="border border-dark" />
                   </div>
                 </Card.Body>
               </Card>
             </div>
 
-            <div className="col-xl-3 col-md-6">
-              <Card className="h-100 dashboard-card shadow-sm border-0">
+            {/* 4. Einstellungen Kachel */}
+            <div className="col-xl-6 col-lg-6">
+              <Card className="h-100 dashboard-tile shadow border-2 border-dark">
                 <Card.Body className="p-4">
-                  <div className="d-flex justify-content-between align-items-center">
+                  <div className="d-flex justify-content-between align-items-start mb-3">
                     <div>
-                      <h6 className="text-muted mb-2 fw-semibold">Assets</h6>
-                      <h2 className="mb-0 text-warning fw-bold">{stats?.assets || 0}</h2>
-                      <small className="text-muted">
-                        Konfiguriert
-                      </small>
+                      <h4 className="mb-1 fw-bold text-dark">
+                        <FontAwesomeIcon icon={faCog} className="me-2 text-warning" />
+                        Einstellungen
+                      </h4>
+                      <p className="mb-0 text-muted fw-semibold">System & Benutzerverwaltung</p>
                     </div>
-                    <div className="icon-shape bg-warning bg-opacity-10 text-warning">
-                      <FontAwesomeIcon icon={faServer} size="lg" />
+                    <div className="icon-shape bg-warning text-white border border-dark">
+                      <FontAwesomeIcon icon={faCog} size="lg" />
                     </div>
+                  </div>
+                  
+                  <div className="row g-3">
+                    <div className="col-4">
+                      <div className="text-center">
+                        <h3 className="mb-1 fw-bold text-primary">{dashboardData?.users || 0}</h3>
+                        <small className="text-dark fw-semibold">Benutzer</small>
+                      </div>
+                    </div>
+                    <div className="col-4">
+                      <div className="text-center">
+                        <h3 className="mb-1 fw-bold text-warning">
+                          <FontAwesomeIcon icon={faShieldAlt} className="me-1" />
+                          {dashboardData?.securityLevel || 'Hoch'}
+                        </h3>
+                        <small className="text-dark fw-semibold">Sicherheit</small>
+                      </div>
+                    </div>
+                    <div className="col-4">
+                      <div className="text-center">
+                        <h3 className="mb-1 fw-bold text-success">
+                          <FontAwesomeIcon icon={faBolt} className="me-1" />
+                          {dashboardData?.systemStatus || 'Online'}
+                        </h3>
+                        <small className="text-dark fw-semibold">Status</small>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="mt-3">
+                    <div className="d-flex justify-content-between align-items-center mb-1">
+                      <small className="text-dark fw-semibold">Systemverfügbarkeit</small>
+                      <Badge bg="success" className="border border-dark">99.9%</Badge>
+                    </div>
+                    <ProgressBar variant="warning" now={99} className="border border-dark" />
                   </div>
                 </Card.Body>
               </Card>
             </div>
           </div>
 
-          {/* Welcome Section */}
-          <div className="row mt-5">
+          {/* Quick Actions */}
+          <div className="row mt-4">
             <div className="col-12">
-              <Card className="border-0 shadow-sm welcome-section">
+              <Card className="border-0 shadow-sm">
                 <Card.Body className="p-4">
-                  <div className="row align-items-center">
-                    <div className="col-md-8">
-                      <h4 className="text-primary mb-3">Willkommen bei HeatManager</h4>
-                      <p className="text-muted mb-3">
-                        Ihr intelligentes System zur Heizungssteuerung und -überwachung. 
-                        Hier finden Sie eine Übersicht über alle wichtigen Kennzahlen und können 
-                        Ihre Geräte und Benutzer verwalten.
-                      </p>
-                      <div className="d-flex gap-2">
-                        <button className="btn btn-primary">
-                          <FontAwesomeIcon icon={faChartLine} className="me-2" />
-                          Dashboard öffnen
-                        </button>
-                        <button className="btn btn-outline-secondary">
-                          <FontAwesomeIcon icon={faServer} className="me-2" />
-                          Geräte verwalten
-                        </button>
-                      </div>
+                  <h5 className="text-primary mb-3">Schnellzugriff</h5>
+                  <div className="row g-3">
+                    <div className="col-md-3">
+                      <button 
+                        className="btn btn-outline-primary w-100"
+                        onClick={() => router.push('/dashboard')}
+                      >
+                        <FontAwesomeIcon icon={faChartLine} className="me-2" />
+                        Dashboard
+                      </button>
                     </div>
-                    <div className="col-md-4 text-center">
-                      <div className="bg-primary bg-opacity-10 rounded-circle d-inline-flex p-4">
-                        <FontAwesomeIcon icon={faThermometerHalf} size="3x" className="text-primary" />
-                      </div>
+                    <div className="col-md-3">
+                      <button 
+                        className="btn btn-outline-success w-100"
+                        onClick={() => router.push('/config/devices')}
+                      >
+                        <FontAwesomeIcon icon={faThermometerHalf} className="me-2" />
+                        Geräte
+                      </button>
+                    </div>
+                    <div className="col-md-3">
+                      <button 
+                        className="btn btn-outline-info w-100"
+                        onClick={() => router.push('/config/users')}
+                      >
+                        <FontAwesomeIcon icon={faUsers} className="me-2" />
+                        Benutzer
+                      </button>
+                    </div>
+                    <div className="col-md-3">
+                      <button 
+                        className="btn btn-outline-warning w-100"
+                        onClick={() => router.push('/config')}
+                      >
+                        <FontAwesomeIcon icon={faCog} className="me-2" />
+                        Einstellungen
+                      </button>
                     </div>
                   </div>
                 </Card.Body>
@@ -238,6 +398,37 @@ export default function Home() {
           </div>
         </div>
       </div>
+
+      <style jsx>{`
+        .dashboard-tile {
+          transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+          border-radius: 16px;
+          overflow: hidden;
+        }
+        
+        .dashboard-tile:hover {
+          transform: translateY(-5px);
+          box-shadow: 0 10px 25px rgba(0,0,0,0.15) !important;
+        }
+        
+        .icon-shape {
+          width: 60px;
+          height: 60px;
+          border-radius: 12px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        
+        .dashboard-tile .progress {
+          height: 8px;
+          border-radius: 4px;
+        }
+        
+        .dashboard-tile .badge {
+          font-size: 0.75rem;
+        }
+      `}</style>
     </>
   );
 }

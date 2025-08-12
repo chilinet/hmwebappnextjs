@@ -3,7 +3,6 @@ import { Table, Spinner, Button, Modal, Nav, Tab, Form, InputGroup, FormControl,
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faEdit, faTrash, faPlus, faSearch, faSync, faDownload, faUpload } from "@fortawesome/free-solid-svg-icons";
 import Layout from "@/components/Layout";
-import { useDevices } from '@/lib/hooks/useDevices';
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useThingsboard } from '@/contexts/ThingsboardContext';
 
@@ -15,7 +14,11 @@ const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
 function Devices() {
   const { data: session } = useSession();
   const { tbToken, isLoading } = useThingsboard();
-  const { data: devices, error, refetch } = useDevices(tbToken);
+  
+  // Local state for devices
+  const [devices, setDevices] = useState([]);
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
   
   // Local state for cached devices
   const [cachedDevices, setCachedDevices] = useState([]);
@@ -32,6 +35,13 @@ function Devices() {
   useEffect(() => {
     loadCachedDevices();
   }, []);
+
+  // Fetch devices when tbToken is available
+  useEffect(() => {
+    if (tbToken && session?.token) {
+      fetchDevices();
+    }
+  }, [tbToken, session?.token]);
 
   // Auto-refresh functionality
   useEffect(() => {
@@ -91,18 +101,45 @@ function Devices() {
     }
   }, []);
 
+  const fetchDevices = useCallback(async () => {
+    if (!tbToken || !session?.token) return;
+    
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch('/api/config/devices', {
+        headers: {
+          'Authorization': `Bearer ${session.token}`
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch devices');
+      }
+      
+      const data = await response.json();
+      setDevices(data);
+      cacheDevices(data);
+    } catch (error) {
+      console.error('Error fetching devices:', error);
+      setError(error.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [tbToken, session?.token, cacheDevices]);
+
   const refreshDevices = useCallback(async () => {
     if (!tbToken) return;
     
     setIsRefreshing(true);
     try {
-      await refetch();
+      await fetchDevices();
     } catch (error) {
       console.error('Error refreshing devices:', error);
     } finally {
       setIsRefreshing(false);
     }
-  }, [tbToken, refetch]);
+  }, [tbToken, fetchDevices]);
 
   const clearCache = useCallback(() => {
     try {
@@ -182,7 +219,7 @@ function Devices() {
     return new Date(timestamp).toLocaleString('de-DE');
   };
 
-  if (isLoading || !tbToken) {
+  if (isLoading || !tbToken || !session) {
     return (
       <div className="d-flex justify-content-center align-items-center" style={{ height: '100vh' }}>
         <Spinner animation="border" />

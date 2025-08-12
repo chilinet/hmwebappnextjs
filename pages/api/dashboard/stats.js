@@ -40,7 +40,7 @@ export default async function handler(req, res) {
     const pool = await getConnection();
 
     // Dashboard-Statistiken abrufen
-    const stats = await getDashboardStats(pool, targetCustomerId);
+    const stats = await getDashboardStats(pool, targetCustomerId, session);
 
     return res.status(200).json({
       success: true,
@@ -57,81 +57,97 @@ export default async function handler(req, res) {
   }
 }
 
-async function getDashboardStats(pool, customerId) {
+async function getDashboardStats(pool, customerId, session) {
   try {
-    // Gesamte Anzahl Geräte
-    const totalDevicesResult = await pool.request()
-      .input('customerId', sql.UniqueIdentifier, customerId)
-      .query(`
-        SELECT COUNT(*) as totalDevices
-        FROM customer_settings cs
-        INNER JOIN hm_users u ON cs.customer_id = u.customerid
-        WHERE cs.customer_id = @customerId
-        AND EXISTS (
-          SELECT 1 FROM thingsboard_devices td 
-          WHERE td.customer_id = cs.customer_id
-        )
-      `);
+    let devicesCount = 0;
+    let alarmsCount = 0;
+    
+    // Versuche zuerst ThingsBoard, falls Token verfügbar
+    if (session?.tbToken && process.env.THINGSBOARD_URL) {
+      try {
+        console.log('Attempting to fetch devices from ThingsBoard...');
+        
+        // Versuche verschiedene Endpunkte für Geräte
+        const endpoints = [
+          `/api/customer/${customerId}/devices?pageSize=1000`,
+          `/api/tenant/devices?pageSize=1000`,
+          `/api/devices?pageSize=1000`
+        ];
 
-    // Aktive Geräte (letzte Aktivität in den letzten 24 Stunden)
-    const activeDevicesResult = await pool.request()
-      .input('customerId', sql.UniqueIdentifier, customerId)
-      .input('lastActivityThreshold', sql.DateTime, new Date(Date.now() - 24 * 60 * 60 * 1000))
-      .query(`
-        SELECT COUNT(*) as activeDevices
-        FROM thingsboard_devices td
-        WHERE td.customer_id = @customerId
-        AND td.last_activity_time > @lastActivityThreshold
-      `);
+        for (const endpoint of endpoints) {
+          try {
+            const devicesResponse = await fetch(`${process.env.THINGSBOARD_URL}${endpoint}`, {
+              headers: {
+                'X-Authorization': `Bearer ${session.tbToken}`,
+                'Content-Type': 'application/json'
+              }
+            });
 
-    // Inaktive Geräte
-    const inactiveDevicesResult = await pool.request()
-      .input('customerId', sql.UniqueIdentifier, customerId)
-      .input('lastActivityThreshold', sql.DateTime, new Date(Date.now() - 24 * 60 * 60 * 1000))
-      .query(`
-        SELECT COUNT(*) as inactiveDevices
-        FROM thingsboard_devices td
-        WHERE td.customer_id = @customerId
-        AND (td.last_activity_time <= @lastActivityThreshold OR td.last_activity_time IS NULL)
-      `);
+            if (devicesResponse.ok) {
+              const devicesData = await devicesResponse.json();
+              devicesCount = devicesData.data?.length || 0;
+              console.log(`Successfully fetched ${devicesCount} devices from ${endpoint}`);
+              break;
+            }
+          } catch (error) {
+            console.log(`Endpoint ${endpoint} failed:`, error.message);
+          }
+        }
 
-    // Alerts (Beispiel: Geräte mit kritischen Werten)
-    const alertsResult = await pool.request()
-      .input('customerId', sql.UniqueIdentifier, customerId)
-      .query(`
-        SELECT COUNT(*) as alerts
-        FROM thingsboard_devices td
-        WHERE td.customer_id = @customerId
-        AND td.status = 'ERROR'
-      `);
+        // Versuche Alarme abzurufen
+        try {
+          const alarmsResponse = await fetch(`${process.env.THINGSBOARD_URL}/api/alarm/query`, {
+            method: 'POST',
+            headers: {
+              'X-Authorization': `Bearer ${session.tbToken}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              customerId: customerId,
+              pageSize: 1,
+              page: 0
+            })
+          });
 
-    // Letzte Aktivitäten
-    const recentActivityResult = await pool.request()
-      .input('customerId', sql.UniqueIdentifier, customerId)
-      .query(`
-        SELECT TOP 10
-          td.device_name,
-          td.last_activity_time,
-          td.status
-        FROM thingsboard_devices td
-        WHERE td.customer_id = @customerId
-        AND td.last_activity_time IS NOT NULL
-        ORDER BY td.last_activity_time DESC
-      `);
+          if (alarmsResponse.ok) {
+            const alarmsData = await alarmsResponse.json();
+            alarmsCount = alarmsData.totalElements || 0;
+            console.log(`Successfully fetched ${alarmsCount} alarms`);
+          }
+        } catch (alarmError) {
+          console.log('Failed to fetch alarms:', alarmError.message);
+        }
 
-    // Fallback-Werte falls keine Daten vorhanden
-    const totalDevices = totalDevicesResult.recordset[0]?.totalDevices || 0;
-    const activeDevices = activeDevicesResult.recordset[0]?.activeDevices || 0;
-    const inactiveDevices = inactiveDevicesResult.recordset[0]?.inactiveDevices || 0;
-    const alerts = alertsResult.recordset[0]?.alerts || 0;
-    const recentActivity = recentActivityResult.recordset || [];
+      } catch (tbError) {
+        console.error('ThingsBoard API error:', tbError);
+      }
+    }
+
+    // Fallback auf lokale Datenbank falls ThingsBoard nicht verfügbar oder keine Geräte gefunden
+    if (devicesCount === 0) {
+      console.log('Falling back to local database...');
+      try {
+        // Einfachere Abfrage - zähle alle Assets des Kunden
+        const totalDevicesResult = await pool.request()
+          .input('customerId', sql.UniqueIdentifier, customerId)
+          .query(`
+            SELECT COUNT(*) as totalDevices
+            FROM assets a
+            WHERE a.customer_id = @customerId
+          `);
+        devicesCount = totalDevicesResult.recordset[0]?.totalDevices || 0;
+        console.log(`Found ${devicesCount} devices in local database`);
+      } catch (dbError) {
+        console.error('Database error:', dbError);
+      }
+    }
+
+    console.log(`Final devices count: ${devicesCount}, alarms count: ${alarmsCount}`);
 
     return {
-      totalDevices,
-      activeDevices,
-      inactiveDevices,
-      alerts,
-      recentActivity,
+      devices: devicesCount,
+      alarms: alarmsCount,
+      heatDemand: '85%', // Mock-Wert für Wärmeanforderung
       lastUpdated: new Date().toISOString()
     };
 
@@ -140,11 +156,9 @@ async function getDashboardStats(pool, customerId) {
     
     // Fallback-Werte bei Fehlern
     return {
-      totalDevices: 0,
-      activeDevices: 0,
-      inactiveDevices: 0,
-      alerts: 0,
-      recentActivity: [],
+      devices: 0,
+      alarms: 0,
+      heatDemand: '85%',
       lastUpdated: new Date().toISOString(),
       error: 'Fehler beim Abrufen der Statistiken'
     };

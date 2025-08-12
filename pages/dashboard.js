@@ -3728,45 +3728,7 @@ export default function Dashboard() {
                   <h5>Willkommen im Dashboard</h5>
                   <p>Wählen Sie einen Node aus der Hierarchie aus, um dessen Details und Geräte anzuzeigen.</p>
                   
-                  {/* Dashboard Übersicht */}
-                  <div className="row mt-4">
-                    <div className="col-md-3">
-                      <div className="card bg-secondary text-white">
-                        <div className="card-body text-center">
-                          <FontAwesomeIcon icon={faMicrochip} size="2x" className="mb-2" />
-                          <h4>{dashboardData.totalDevices}</h4>
-                          <p className="mb-0">Gesamt Geräte</p>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="col-md-3">
-                      <div className="card bg-success text-white">
-                        <div className="card-body text-center">
-                          <FontAwesomeIcon icon={faCheckCircle} size="2x" className="mb-2" />
-                          <h4>{dashboardData.activeDevices}</h4>
-                          <p className="mb-0">Aktive Geräte</p>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="col-md-3">
-                      <div className="card bg-warning text-white">
-                        <div className="card-body text-center">
-                          <FontAwesomeIcon icon={faExclamationTriangle} size="2x" className="mb-2" />
-                          <h4>{dashboardData.inactiveDevices}</h4>
-                          <p className="mb-0">Inaktive Geräte</p>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="col-md-3">
-                      <div className="card bg-danger text-white">
-                        <div className="card-body text-center">
-                          <FontAwesomeIcon icon={faThermometerHalf} size="2x" className="mb-2" />
-                          <h4>{dashboardData.alerts}</h4>
-                          <p className="mb-0">Alerts</p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+
                 </div>
               )}
             </div>

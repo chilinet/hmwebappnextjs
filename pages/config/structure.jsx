@@ -177,14 +177,15 @@ export default function Structure() {
     if (level >= 2) return [];
     
     return nodes.reduce((acc, node) => {
-      if (node.droppable) {
-        return [
-          ...acc,
-          node.id,
-          ...getInitialOpenNodes(node.children || [], level + 1)
-        ];
+      // Füge alle Nodes bis zum 2. Level hinzu
+      const result = [...acc, node.id];
+      
+      // Wenn wir noch nicht beim 2. Level sind und die Node Kinder hat, öffne sie auch
+      if (level < 1 && node.droppable && node.children && node.children.length > 0) {
+        result.push(...getInitialOpenNodes(node.children, level + 1));
       }
-      return acc;
+      
+      return result;
     }, []);
   };
 
