@@ -115,6 +115,9 @@ export default function Dashboard() {
     { value: '90d', label: '90 Tage' }
   ];
 
+  // Centralized chart interval configuration (in milliseconds)
+  const CHART_INTERVAL_MS = 3600000; // 1 hour = 60 * 60 * 1000 ms
+
   // Helper function to convert time range to milliseconds
   const getTimeRangeInMs = (timeRange) => {
     const timeMap = {
@@ -1419,9 +1422,9 @@ export default function Dashboard() {
         duration: getTimeRangeLabel(selectedTimeRange)
       });*/
 
-      // Fetch telemetry data (3600000 ms = 1 hour)
+      // Fetch telemetry data using centralized interval
       const telemetryResponse = await fetch(
-        `/api/thingsboard/devices/telemetry/aggregated?deviceIds=${deviceIds}&startTs=${startTime}&endTs=${endTime}&interval=3600000&attribute=sensorTemperature`,
+        `/api/thingsboard/devices/telemetry/aggregated?deviceIds=${deviceIds}&startTs=${startTime}&endTs=${endTime}&interval=${CHART_INTERVAL_MS}&attribute=sensorTemperature`,
         {
           headers: {
             'Authorization': `Bearer ${session.token}`
@@ -1483,9 +1486,9 @@ export default function Dashboard() {
       const endTime = Date.now();
       const startTime = endTime - getTimeRangeInMs(selectedTimeRange);
 
-      // Fetch target telemetry data (3600000 ms = 1 hour)
+      // Fetch target telemetry data using centralized interval
       const telemetryResponse = await fetch(
-        `/api/thingsboard/devices/telemetry/aggregated?deviceIds=${deviceIds}&startTs=${startTime}&endTs=${endTime}&interval=3600000&attribute=targetTemperature`,
+        `/api/thingsboard/devices/telemetry/aggregated?deviceIds=${deviceIds}&startTs=${startTime}&endTs=${endTime}&interval=${CHART_INTERVAL_MS}&attribute=targetTemperature`,
         {
           headers: {
             'Authorization': `Bearer ${session.token}`
@@ -1545,9 +1548,9 @@ export default function Dashboard() {
       const endTime = Date.now();
       const startTime = endTime - getTimeRangeInMs(selectedTimeRange);
 
-      // Fetch valve telemetry data (3600000 ms = 1 hour)
+      // Fetch valve telemetry data using centralized interval
       const telemetryResponse = await fetch(
-        `/api/thingsboard/devices/telemetry/aggregated?deviceIds=${deviceIds}&startTs=${startTime}&endTs=${endTime}&interval=3600000&attribute=PercentValveOpen`,
+        `/api/thingsboard/devices/telemetry/aggregated?deviceIds=${deviceIds}&startTs=${startTime}&endTs=${endTime}&interval=${CHART_INTERVAL_MS}&attribute=PercentValveOpen`,
         {
           headers: {
             'Authorization': `Bearer ${session.token}`
@@ -1920,7 +1923,7 @@ export default function Dashboard() {
           params.forEach(param => {
             result += `<div style="margin: 3px 0; color: #333;">
               <span style="display: inline-block; width: 10px; height: 10px; background: ${param.color}; margin-right: 5px;"></span>
-              <span style="font-weight: bold;">${param.seriesName}:</span> ${param.value[1]}°C
+              <span style="font-weight: bold;">${param.seriesName}:</span> ${Number(param.value[1]).toFixed(1)}°C
             </div>`;
           });
           return result;
@@ -2080,7 +2083,7 @@ export default function Dashboard() {
           params.forEach(param => {
             result += `<div style="margin: 3px 0; color: #333;">
               <span style="display: inline-block; width: 10px; height: 10px; background: ${param.color}; margin-right: 5px;"></span>
-              <span style="font-weight: bold;">${param.seriesName}:</span> ${param.value[1]}°C
+              <span style="font-weight: bold;">${param.seriesName}:</span> ${Number(param.value[1]).toFixed(1)}°C
             </div>`;
           });
           return result;
@@ -2240,7 +2243,7 @@ export default function Dashboard() {
           params.forEach(param => {
             result += `<div style="margin: 3px 0; color: #333;">
               <span style="display: inline-block; width: 10px; height: 10px; background: ${param.color}; margin-right: 5px;"></span>
-              <span style="font-weight: bold;">${param.seriesName}:</span> ${param.value[1]}%
+              <span style="font-weight: bold;">${param.seriesName}:</span> ${Number(param.value[1]).toFixed(1)}%
             </div>`;
           });
           return result;
