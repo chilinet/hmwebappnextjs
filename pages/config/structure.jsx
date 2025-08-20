@@ -47,6 +47,7 @@ export default function Structure() {
   const [loadingUnassignedDevices, setLoadingUnassignedDevices] = useState(false);
   const [customerPrefix, setCustomerPrefix] = useState('');
   const [lastNodeId, setLastNodeId] = useState(0);
+  const [operationalMode, setOperationalMode] = useState('0');
 
   useEffect(() => {
     if (session?.token) {
@@ -214,6 +215,13 @@ export default function Structure() {
 
       const data = await response.json();
       setNodeDetails(data);
+      
+      // Setze den operationalMode basierend auf den geladenen Daten
+      if (data.operationalMode !== undefined) {
+        setOperationalMode(data.operationalMode.toString());
+      } else {
+        setOperationalMode('0');
+      }
     } catch (error) {
       console.error('Error fetching node details:', error);
       setError('Fehler beim Laden der Node-Details');
@@ -247,8 +255,10 @@ export default function Structure() {
     setEditedDetails({
       name: generatedName,
       label: '',
-      type: ''
+      type: '',
+      operationalMode: '0'
     });
+    setOperationalMode('0');
     setIsNewNode(true);
   };
 
@@ -401,7 +411,7 @@ export default function Structure() {
             icon={getIcon(node.data?.type)}
             className={`me-2 ${node.data?.hasDevices ? 'text-warning' : 'text-secondary'}`}
           />
-          <span className={node.data?.hasDevices ? 'text-warning' : 'text-black'}>
+                          <span className={node.data?.hasDevices ? 'text-warning' : ''}>
             {node.text}
           </span>
         </div>
@@ -475,6 +485,14 @@ export default function Structure() {
     }));
   };
 
+  const handleOperationalModeChange = (value) => {
+    setOperationalMode(value);
+    setEditedDetails(prev => ({
+      ...prev,
+      operationalMode: value
+    }));
+  };
+
   const saveChanges = async () => {
     if (!editedDetails || !selectedNode || !customerData) return;
     
@@ -488,7 +506,10 @@ export default function Structure() {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${session.token}`
           },
-          body: JSON.stringify(editedDetails)
+          body: JSON.stringify({
+            ...editedDetails,
+            operationalMode: operationalMode
+          })
         });
 
         if (!assetResponse.ok) {
@@ -545,7 +566,8 @@ export default function Structure() {
               id: newAsset.id.id,
               name: editedDetails.name,
               type: editedDetails.type,
-              label: editedDetails.label
+              label: editedDetails.label,
+              operationalMode: operationalMode
             }
           })
         });
@@ -563,7 +585,10 @@ export default function Structure() {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${session.token}`
           },
-          body: JSON.stringify(editedDetails)
+          body: JSON.stringify({
+            ...editedDetails,
+            operationalMode: operationalMode
+          })
         });
 
         if (!assetResponse.ok) {
@@ -581,7 +606,8 @@ export default function Structure() {
             nodeId: selectedNode.id,
             name: editedDetails.name,
             type: editedDetails.type,
-            label: editedDetails.label
+            label: editedDetails.label,
+            operationalMode: operationalMode
           })
         });
 
@@ -962,7 +988,7 @@ export default function Structure() {
 
   return (
     <DndProvider backend={HTML5Backend}>
-      <div className="container mt-4">
+      <div className="container-fluid px-4 mt-4">
         <div className="d-flex justify-content-between align-items-center mb-4">
           <div className="d-flex align-items-center">
             <button 
@@ -971,14 +997,14 @@ export default function Structure() {
             >
               <FontAwesomeIcon icon={faArrowLeft} />
             </button>
-            <h2 className="mb-0 text-dark">Gebäudestruktur</h2>
+            <h2 className="mb-0">Gebäudestruktur</h2>
           </div>
         </div>
 
         <div className="d-flex gap-4">
           {/* Tree Container */}
           <div 
-            className="card bg-dark text-dark" 
+            className="card" 
             style={{ 
               minWidth: '400px',
               width: '400px',
@@ -989,12 +1015,12 @@ export default function Structure() {
               {/* Suchfeld für Tree */}
               <div className="d-flex gap-2 mb-3">
                 <div className="input-group">
-                  <span className="input-group-text bg-dark text-blue border-secondary">
+                  <span className="input-group-text">
                     <FontAwesomeIcon icon={faSearch} />
                   </span>
                   <input
                     type="text"
-                    className="form-control bg-dark text-blue border-secondary"
+                    className="form-control"
                     placeholder="Suchen..."
                     value={treeSearchTerm}
                     onChange={(e) => setTreeSearchTerm(e.target.value)}
@@ -1029,7 +1055,7 @@ export default function Structure() {
 
               {loading ? (
                 <div className="text-center">
-                  <div className="spinner-border text-light" role="status">
+                  <div className="spinner-border" role="status">
                     <span className="visually-hidden">Loading...</span>
                   </div>
                 </div>
@@ -1077,7 +1103,7 @@ export default function Structure() {
                     handleDrop(dragSource, dropTarget);
                   }}
                   dragPreviewRender={(node) => (
-                    <div className="bg-dark text-black p-2 rounded">
+                    <div className="p-2 rounded border">
                       {node.text}
                     </div>
                   )}
@@ -1088,7 +1114,7 @@ export default function Structure() {
 
           {/* Tabs Container */}
           <div 
-            className="card bg-dark text-black flex-grow-1" 
+            className="card flex-grow-1" 
             style={{ 
               height: windowHeight ? `${windowHeight - 80}px` : 'auto',
               display: 'flex',
@@ -1121,23 +1147,21 @@ export default function Structure() {
                     // Existierendes Formular
                     <>
                       <div className="mb-3">
-                        <label className="form-label">Name</label>
+                        <label className="form-label fw-bold">Name</label>
                         <input
                           type="text"
-                          className="form-control bg-dark text-black"
+                          className="form-control"
                           value={editedDetails?.name || ''}
                           disabled={true}
                           readOnly={true}
                           style={{
-                            backgroundColor: '#212529 !important',
-                            color: '#fff !important',
                             cursor: 'not-allowed'
                           }}
                         />
                       </div>
                       
                       <div className="mb-3">
-                        <label className="form-label">Label *</label>
+                        <label className="form-label fw-bold">Label *</label>
                         <input
                           type="text"
                           className="form-control"
@@ -1149,9 +1173,9 @@ export default function Structure() {
                       </div>
 
                       <div className="mb-3">
-                        <label className="form-label">Typ *</label>
+                        <label className="form-label fw-bold">Typ *</label>
                         <select
-                          className="form-select bg-dark text-black"
+                          className="form-select"
                           name="type"
                           value={editedDetails?.type || ''}
                           onChange={(e) => handleInputChange('type', e.target.value)}
@@ -1164,6 +1188,54 @@ export default function Structure() {
                             </option>
                           ))}
                         </select>
+                      </div>
+
+                      <div className="mb-3">
+                        <label className="form-label fw-bold">Betriebsmodus</label>
+                        <div className="d-flex flex-column gap-2">
+                          <div className="form-check">
+                            <input
+                              className="form-check-input"
+                              type="radio"
+                              name="operationalMode"
+                              id="operationalMode0"
+                              value="0"
+                              checked={operationalMode === '0'}
+                              onChange={(e) => handleOperationalModeChange(e.target.value)}
+                            />
+                            <label className="form-check-label" htmlFor="operationalMode0">
+                              Kein
+                            </label>
+                          </div>
+                          <div className="form-check">
+                            <input
+                              className="form-check-input"
+                              type="radio"
+                              name="operationalMode"
+                              id="operationalMode2"
+                              value="2"
+                              checked={operationalMode === '2'}
+                              onChange={(e) => handleOperationalModeChange(e.target.value)}
+                            />
+                            <label className="form-check-label" htmlFor="operationalMode2">
+                              Externes Wandpanel
+                            </label>
+                          </div>
+                          <div className="form-check">
+                            <input
+                              className="form-check-input"
+                              type="radio"
+                              name="operationalMode"
+                              id="operationalMode10"
+                              value="10"
+                              checked={operationalMode === '10'}
+                              onChange={(e) => handleOperationalModeChange(e.target.value)}
+                            />
+                            <label className="form-check-label" htmlFor="operationalMode10">
+                              Externes Thermometer
+                            </label>
+                          </div>
+                        </div>
                       </div>
 
                       <div className="d-flex justify-content-end mt-3">
@@ -1196,18 +1268,18 @@ export default function Structure() {
                   {/* Obere Hälfte: Zugeordnete Geräte */}
                   <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
                     <div className="d-flex justify-content-between align-items-center mb-3">
-                      <h5 className="text-black mb-0">Zugeordnete Geräte</h5>
+                      <h5 className="mb-0">Zugeordnete Geräte</h5>
                       <div className="input-group" style={{ width: '300px' }}>
-                        <span className="input-group-text bg-dark text-black border-secondary">
-                          <FontAwesomeIcon icon={faSearch} />
-                        </span>
-                        <input
-                          type="text"
-                          className="form-control bg-dark text-black border-secondary"
-                          placeholder="Suchen..."
-                          value={assignedSearchTerm}
-                          onChange={(e) => setAssignedSearchTerm(e.target.value)}
-                        />
+                                                  <span className="input-group-text">
+                            <FontAwesomeIcon icon={faSearch} />
+                          </span>
+                          <input
+                            type="text"
+                            className="form-control"
+                            placeholder="Suchen..."
+                            value={assignedSearchTerm}
+                            onChange={(e) => setAssignedSearchTerm(e.target.value)}
+                          />
                         {assignedSearchTerm && (
                           <button
                             className="btn btn-outline-secondary"
@@ -1222,12 +1294,12 @@ export default function Structure() {
                     <div className="table-responsive" style={{ height: 'calc(100% - 50px)', overflow: 'auto' }}>
                       {loadingDevices ? (
                         <div className="text-center py-3">
-                          <div className="spinner-border text-light" role="status">
+                          <div className="spinner-border" role="status">
                             <span className="visually-hidden">Loading...</span>
                           </div>
                         </div>
                       ) : filteredAssignedDevices.length > 0 ? (
-                        <table className="table table-dark table-hover mb-0">
+                        <table className="table table-hover mb-0">
                           <thead>
                             <tr>
                               <th>Name</th>
@@ -1340,7 +1412,7 @@ export default function Structure() {
                   {/* Untere Hälfte: Nicht zugeordnete Geräte */}
                   <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
                     <div className="d-flex justify-content-between align-items-center mb-3">
-                      <h5 className="text-black mb-0">Nicht zugeordnete Geräte</h5>
+                      <h5 className="mb-0">Nicht zugeordnete Geräte</h5>
                       <div className="d-flex align-items-center gap-2">
                         <button 
                           className="btn btn-sm btn-outline-light"
@@ -1354,12 +1426,12 @@ export default function Structure() {
                           />
                         </button>
                         <div className="input-group" style={{ width: '300px' }}>
-                          <span className="input-group-text bg-dark text-black border-secondary">
+                          <span className="input-group-text">
                             <FontAwesomeIcon icon={faSearch} />
                           </span>
                           <input
                             type="text"
-                            className="form-control bg-dark text-black border-secondary"
+                            className="form-control"
                             placeholder="Suchen..."
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
@@ -1395,14 +1467,14 @@ export default function Structure() {
                         }
                       }}
                     >
-                      {loadingDevices ? (
-                        <div className="text-center py-3">
-                          <div className="spinner-border text-light" role="status">
-                            <span className="visually-hidden">Loading...</span>
-                          </div>
+                                          {loadingDevices ? (
+                      <div className="text-center py-3">
+                        <div className="spinner-border" role="status">
+                          <span className="visually-hidden">Loading...</span>
                         </div>
-                      ) : filteredUnassignedDevices.length > 0 ? (
-                        <table className="table table-dark table-hover mb-0">
+                      </div>
+                    ) : filteredUnassignedDevices.length > 0 ? (
+                        <table className="table table-hover mb-0">
                           <thead>
                             <tr>
                               <th>Name</th>
@@ -1530,7 +1602,7 @@ export default function Structure() {
             alignItems: 'center'
           }}
         >
-          <div className="spinner-border text-light" role="status">
+          <div className="spinner-border" role="status">
             <span className="visually-hidden">Loading...</span>
           </div>
         </div>
@@ -1538,27 +1610,27 @@ export default function Structure() {
 
       <style jsx global>{`
         .tree-root {
-          color: white;
+          color: inherit;
           list-style-type: none;
           padding-left: 0;
           width: 100%;
         }
         .tree-node {
           padding: 4px 0;
-          color: white;
+          color: inherit;
         }
         .tree-root span {
-          color: white !important;
+          color: inherit !important;
         }
         .tree-root span.text-warning {
-          color: white !important;
+          color: #000 !important;
         }
         .text-warning {
-          color: white !important;
+          color: #000 !important;
         }
         /* Hover-Effekt für Nodes */
         .tree-root div:hover {
-          background-color: rgba(44, 123, 229, 0.2);
+          background-color: rgba(0, 0, 0, 0.1);
           border-radius: 4px;
         }
         /* Aktiver Node */
@@ -1590,21 +1662,21 @@ export default function Structure() {
         }
         /* Tab Styles */
         .nav-tabs {
-          border-bottom-color: #495057;
+          border-bottom-color: var(--bs-border-color);
         }
         .nav-tabs .nav-link {
-          color: #6c757d;
+          color: var(--bs-body-color);
           border: none;
           border-bottom: 2px solid transparent;
         }
         .nav-tabs .nav-link:hover {
           border-color: transparent;
-          color: #fff;
+          color: var(--bs-primary);
         }
         .nav-tabs .nav-link.active {
           background-color: transparent;
-          border-bottom: 2px solid #fff;
-          color: #fff;
+          border-bottom: 2px solid var(--bs-primary);
+          color: var(--bs-primary);
         }
         .form-control {
           background-color: white !important;
@@ -1614,16 +1686,63 @@ export default function Structure() {
         .form-control:focus {
           background-color: white !important;
           color: black !important;
-          border-color: #fd7e14;
-          box-shadow: 0 0 0 0.25rem rgba(253, 126, 20, 0.25);
+          border-color: #000;
+          box-shadow: 0 0 0 0.25rem rgba(0, 0, 0, 0.25);
         }
         .form-control::placeholder {
           color: #6c757d;
         }
+        /* Suchfeld-Styles mit höherer Spezifität */
+        .input-group-text,
+        .input-group .input-group-text {
+          background-color: white !important;
+          color: black !important;
+          border: 1px solid #ced4da !important;
+        }
+        .input-group .form-control,
+        .form-control.bg-dark,
+        .form-control.bg-dark.text-black {
+          background-color: white !important;
+          color: black !important;
+          border: 1px solid #ced4da !important;
+        }
+        .input-group .form-control:focus,
+        .form-control.bg-dark:focus,
+        .form-control.bg-dark.text-black:focus {
+          background-color: white !important;
+          color: black !important;
+          border-color: #000 !important;
+          box-shadow: 0 0 0 0.25rem rgba(0, 0, 0, 0.25) !important;
+        }
+        /* Überschreibe alle Bootstrap-Dark-Klassen mit höchster Spezifität */
+        .bg-dark,
+        .form-control.bg-dark,
+        .input-group .form-control.bg-dark,
+        .input-group-sm .form-control.bg-dark {
+          background-color: white !important;
+        }
+        .text-black,
+        .form-control.text-black,
+        .input-group .form-control.text-black,
+        .input-group-sm .form-control.text-black {
+          color: black !important;
+        }
+        .border-secondary,
+        .form-control.border-secondary,
+        .input-group .form-control.border-secondary,
+        .input-group-sm .form-control.border-secondary {
+          border-color: #ced4da !important;
+        }
+        /* Spezifische Überschreibung für alle Suchfelder */
+        .form-control.bg-dark.text-black.border-secondary {
+          background-color: white !important;
+          color: black !important;
+          border-color: #ced4da !important;
+        }
         /* Button Styling */
         .btn-warning {
-          background-color: #fd7e14 !important;
-          border-color: #fd7e14 !important;
+          background-color: #000 !important;
+          border-color: #000 !important;
           color: white !important;
         }
         .btn-warning:hover {
@@ -1754,6 +1873,30 @@ export default function Structure() {
 
         .btn-primary:disabled {
           cursor: not-allowed;
+        }
+
+        /* Radiobutton Styles */
+        .form-check-input {
+          background-color: #343a40;
+          border-color: #6c757d;
+        }
+        
+        .form-check-input:checked {
+          background-color: #fd7e14;
+          border-color: #fd7e14;
+        }
+        
+        .form-check-input:focus {
+          box-shadow: 0 0 0 0.25rem rgba(253, 126, 20, 0.25);
+        }
+        
+        .form-check-label {
+          color: #fff;
+          cursor: pointer;
+        }
+        
+        .form-check:hover .form-check-label {
+          color: #fd7e14;
         }
       `}
       </style>

@@ -2,6 +2,53 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../auth/[...nextauth]';
 import { getConnection } from '../../../../lib/db';
 import sql from 'mssql';
+import thingsboardAuth from '../../thingsboard/auth';
+
+// Hilfsfunktion für ThingsBoard-API-Calls mit Token-Erneuerung
+async function makeThingsBoardRequest(url, options, session) {
+  try {
+    const response = await fetch(url, options);
+    
+    // Wenn der Token abgelaufen ist, versuche ihn zu erneuern
+    if (response.status === 401) {
+      console.log('Token expired, attempting to refresh...');
+      
+      try {
+        // Hole neue Anmeldedaten aus der Session
+        const newToken = await thingsboardAuth(
+          process.env.THINGSBOARD_USERNAME,
+          process.env.THINGSBOARD_PASSWORD
+        );
+        
+        // Aktualisiere den Token in der Session
+        session.tbToken = newToken;
+        
+        // Wiederhole den ursprünglichen Request mit dem neuen Token
+        const newOptions = {
+          ...options,
+          headers: {
+            ...options.headers,
+            'X-Authorization': `Bearer ${newToken}`
+          }
+        };
+        
+        const retryResponse = await fetch(url, newOptions);
+        if (!retryResponse.ok) {
+          throw new Error(`Request failed after token refresh: ${retryResponse.statusText}`);
+        }
+        
+        return retryResponse;
+      } catch (refreshError) {
+        console.error('Failed to refresh token:', refreshError);
+        throw new Error('Token refresh failed');
+      }
+    }
+    
+    return response;
+  } catch (error) {
+    throw error;
+  }
+}
 
 export default async function handler(req, res) {
   const session = await getServerSession(req, res, authOptions);
@@ -19,13 +66,13 @@ export default async function handler(req, res) {
   switch (req.method) {
     case 'GET':
       try {
-        const response = await fetch(`${TB_API_URL}/api/asset/${id}`, {
+        const response = await makeThingsBoardRequest(`${TB_API_URL}/api/asset/${id}`, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
             'X-Authorization': `Bearer ${session.tbToken}`
           }
-        });
+        }, session);
 
         if (!response.ok) {
           throw new Error(`Error fetching asset details: ${response.statusText}`);
@@ -36,13 +83,13 @@ export default async function handler(req, res) {
         // Asset-Attribute separat abrufen
         let assetAttributes = {};
         try {
-          const attributesResponse = await fetch(`${TB_API_URL}/api/plugins/telemetry/ASSET/${id}/values/attributes`, {
+          const attributesResponse = await makeThingsBoardRequest(`${TB_API_URL}/api/plugins/telemetry/ASSET/${id}/values/attributes`, {
             method: 'GET',
             headers: {
               'Content-Type': 'application/json',
               'X-Authorization': `Bearer ${session.tbToken}`
             }
-          });
+          }, session);
 
           if (attributesResponse.ok) {
             const attributesData = await attributesResponse.json();
@@ -63,7 +110,8 @@ export default async function handler(req, res) {
           label: assetData.label,
           additionalInfo: assetData.additionalInfo,
           createdTime: assetData.createdTime,
-          attributes: assetAttributes
+          attributes: assetAttributes,
+          operationalMode: assetAttributes.operationalMode || '0'
         });
       } catch (error) {
         console.error('Error in asset details API:', error);
@@ -76,13 +124,13 @@ export default async function handler(req, res) {
     case 'PUT':
       try {
         // Aktuelle Asset-Daten abrufen
-        const getResponse = await fetch(`${TB_API_URL}/api/asset/${id}`, {
+        const getResponse = await makeThingsBoardRequest(`${TB_API_URL}/api/asset/${id}`, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
             'X-Authorization': `Bearer ${session.tbToken}`
           }
-        });
+        }, session);
 
         if (!getResponse.ok) {
           throw new Error(`Error fetching current asset: ${getResponse.statusText}`);
@@ -91,7 +139,7 @@ export default async function handler(req, res) {
         const currentAsset = await getResponse.json();
         
         // Wenn nur Attribute gesetzt werden, aktualisiere nur die Attribute
-        if ((req.body.runStatus || req.body.fixValue || req.body.schedulerPlan || req.body.childLock !== undefined || req.body.minTemp !== undefined || req.body.maxTemp !== undefined || req.body.overruleMinutes !== undefined) && !req.body.name && !req.body.type && !req.body.label) {
+        if ((req.body.runStatus || req.body.fixValue || req.body.schedulerPlan || req.body.childLock !== undefined || req.body.minTemp !== undefined || req.body.maxTemp !== undefined || req.body.overruleMinutes !== undefined || req.body.operationalMode !== undefined) && !req.body.name && !req.body.type && !req.body.label) {
                       try {
               const attributesBody = {
                 ...(req.body.runStatus && { runStatus: req.body.runStatus }),
@@ -100,19 +148,20 @@ export default async function handler(req, res) {
                 ...(req.body.childLock !== undefined && { childLock: req.body.childLock }),
                 ...(req.body.minTemp !== undefined && { minTemp: req.body.minTemp }),
                 ...(req.body.maxTemp !== undefined && { maxTemp: req.body.maxTemp }),
-                ...(req.body.overruleMinutes !== undefined && { overruleMinutes: req.body.overruleMinutes })
+                ...(req.body.overruleMinutes !== undefined && { overruleMinutes: req.body.overruleMinutes }),
+                ...(req.body.operationalMode !== undefined && { operationalMode: req.body.operationalMode })
               };
               
               console.log('Updating asset attributes with:', attributesBody);
               
-                            const attributesResponse = await fetch(`${TB_API_URL}/api/plugins/telemetry/ASSET/${id}/attributes/SERVER_SCOPE`, {
+                            const attributesResponse = await makeThingsBoardRequest(`${TB_API_URL}/api/plugins/telemetry/ASSET/${id}/attributes/SERVER_SCOPE`, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
                   'X-Authorization': `Bearer ${session.tbToken}`
                 },
                 body: JSON.stringify(attributesBody)
-              });
+              }, session);
 
             if (!attributesResponse.ok) {
               const errorText = await attributesResponse.text();
@@ -123,13 +172,13 @@ export default async function handler(req, res) {
               console.log('Response status:', attributesResponse.status);
               
               // Hole die aktualisierten Asset-Daten zurück
-              const getResponse = await fetch(`${TB_API_URL}/api/asset/${id}`, {
+              const getResponse = await makeThingsBoardRequest(`${TB_API_URL}/api/asset/${id}`, {
                 method: 'GET',
                 headers: {
                   'Content-Type': 'application/json',
                   'X-Authorization': `Bearer ${session.tbToken}`
                 }
-              });
+              }, session);
 
               if (!getResponse.ok) {
                 throw new Error(`Error fetching updated asset: ${getResponse.statusText}`);
@@ -140,13 +189,13 @@ export default async function handler(req, res) {
               // Asset-Attribute separat abrufen
               let assetAttributes = {};
               try {
-                const attributesResponse = await fetch(`${TB_API_URL}/api/plugins/telemetry/ASSET/${id}/values/attributes`, {
+                const attributesResponse = await makeThingsBoardRequest(`${TB_API_URL}/api/plugins/telemetry/ASSET/${id}/values/attributes`, {
                   method: 'GET',
                   headers: {
                     'Content-Type': 'application/json',
                     'X-Authorization': `Bearer ${session.tbToken}`
                   }
-                });
+                }, session);
 
                 if (attributesResponse.ok) {
                   const attributesData = await attributesResponse.json();
@@ -167,7 +216,8 @@ export default async function handler(req, res) {
                 label: assetData.label,
                 additionalInfo: assetData.additionalInfo,
                 createdTime: assetData.createdTime,
-                attributes: assetAttributes
+                attributes: assetAttributes,
+                operationalMode: assetAttributes.operationalMode || '0'
               });
             }
           } catch (error) {
@@ -187,15 +237,46 @@ export default async function handler(req, res) {
           label: req.body.label || currentAsset.label
         };
 
+        // Wenn operationalMode gesetzt ist, aktualisiere ihn als Attribut
+        if (req.body.operationalMode !== undefined) {
+          try {
+            const attributesBody = {
+              operationalMode: req.body.operationalMode
+            };
+            
+            console.log('Updating operationalMode attribute with:', attributesBody);
+            
+            const attributesResponse = await makeThingsBoardRequest(`${TB_API_URL}/api/plugins/telemetry/ASSET/${id}/attributes/SERVER_SCOPE`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Authorization': `Bearer ${session.tbToken}`
+              },
+              body: JSON.stringify(attributesBody)
+            }, session);
+
+            if (!attributesResponse.ok) {
+              const errorText = await attributesResponse.text();
+              console.error('Error updating operationalMode attribute:', attributesResponse.status, errorText);
+              throw new Error(`Failed to update operationalMode attribute: ${attributesResponse.statusText}`);
+            } else {
+              console.log('operationalMode attribute updated successfully in ThingsBoard');
+            }
+          } catch (error) {
+            console.error('Error updating operationalMode attribute:', error);
+            throw new Error(`Failed to update operationalMode attribute: ${error.message}`);
+          }
+        }
+
         // Asset in Thingsboard aktualisieren
-        const updateResponse = await fetch(`${TB_API_URL}/api/asset`, {
+        const updateResponse = await makeThingsBoardRequest(`${TB_API_URL}/api/asset`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'X-Authorization': `Bearer ${session.tbToken}`
           },
           body: JSON.stringify(updatedAsset)
-        });
+        }, session);
 
         if (!updateResponse.ok) {
           throw new Error(`Error updating asset: ${updateResponse.statusText}`);
@@ -267,6 +348,29 @@ export default async function handler(req, res) {
           }
         }
 
+        // Hole die aktualisierten Attribute
+        let assetAttributes = {};
+        try {
+          const attributesResponse = await makeThingsBoardRequest(`${TB_API_URL}/api/plugins/telemetry/ASSET/${id}/values/attributes`, {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Authorization': `Bearer ${session.tbToken}`
+            }
+          }, session);
+
+          if (attributesResponse.ok) {
+            const attributesData = await attributesResponse.json();
+            if (Array.isArray(attributesData)) {
+              attributesData.forEach(attr => {
+                assetAttributes[attr.key] = attr.value;
+              });
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching updated asset attributes:', error);
+        }
+
         return res.status(200).json({
           id: updatedData.id.id,
           name: updatedData.name,
@@ -274,7 +378,8 @@ export default async function handler(req, res) {
           label: updatedData.label,
           additionalInfo: updatedData.additionalInfo,
           createdTime: updatedData.createdTime,
-          attributes: updatedData.attributes || {}
+          attributes: assetAttributes,
+          operationalMode: assetAttributes.operationalMode || '0'
         });
 
       } catch (error) {

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faUser, faTachometerAlt, faSliders, faCog, faSignOutAlt, faBars } from "@fortawesome/free-solid-svg-icons";
+import { faUser, faTachometerAlt, faSliders, faCog, faSignOutAlt, faBars, faUsers } from "@fortawesome/free-solid-svg-icons";
 import { useSession, signIn, signOut } from "next-auth/react";
 import { useRouter } from 'next/router';
 import { useState, useEffect } from 'react';
@@ -109,6 +109,15 @@ export default function Navigation() {
                                         >
                                             <FontAwesomeIcon icon={faCog} className="me-2 text-muted" />
                                             Konfiguration
+                                        </Link>
+                                        <Link 
+                                            href="/admin/customer-sync" 
+                                            className={`dropdown-item d-flex align-items-center ${
+                                                router.pathname === '/admin/customer-sync' ? 'active' : ''
+                                            }`}
+                                        >
+                                            <FontAwesomeIcon icon={faUsers} className="me-2 text-muted" />
+                                            Customer-Sync
                                         </Link>
                                         <div className="dropdown-divider"></div>
                                         <button 

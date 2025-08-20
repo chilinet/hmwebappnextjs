@@ -1,9 +1,9 @@
 import { useSession } from "next-auth/react";
 import { Table, Spinner, Button, Modal, Nav, Tab, Form, InputGroup, FormControl, Alert } from "react-bootstrap";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faEdit, faTrash, faPlus, faSearch, faSync, faDownload, faUpload } from "@fortawesome/free-solid-svg-icons";
+import { faEdit, faTrash, faPlus, faSearch, faSync, faDownload, faUpload, faArrowUp } from "@fortawesome/free-solid-svg-icons";
 import Layout from "@/components/Layout";
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useThingsboard } from '@/contexts/ThingsboardContext';
 
 // Local storage keys
@@ -28,8 +28,12 @@ function Devices() {
   const [selectedDevice, setSelectedDevice] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedType, setSelectedType] = useState('all');
+  const [selectedStatus, setSelectedStatus] = useState('all');
+  const [selectedGateway, setSelectedGateway] = useState('all');
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [refreshInterval, setRefreshInterval] = useState(null);
+  const [showScrollToTop, setShowScrollToTop] = useState(false);
+  const tableContainerRef = useRef(null);
 
   // Load cached data on component mount
   useEffect(() => {
@@ -64,6 +68,53 @@ function Devices() {
   useEffect(() => {
     if (devices && devices.length > 0) {
       cacheDevices(devices);
+    }
+  }, [devices]);
+
+  // Handle scroll events for scroll-to-top button
+  useEffect(() => {
+    const handleScroll = () => {
+      const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+      setShowScrollToTop(scrollTop > 100);
+    };
+
+    // Also listen to table scroll events
+    const handleTableScroll = (event) => {
+      const scrollTop = event.target.scrollTop;
+      setShowScrollToTop(scrollTop > 100);
+    };
+
+    window.addEventListener('scroll', handleScroll);
+    
+    // Add table scroll listener after component mounts
+    const tableContainer = document.querySelector('.table-responsive');
+    if (tableContainer) {
+      tableContainer.addEventListener('scroll', handleTableScroll);
+    }
+
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+      if (tableContainer) {
+        tableContainer.removeEventListener('scroll', handleTableScroll);
+      }
+    };
+  }, []);
+
+  // Add ref to table container and set up scroll listener
+  useEffect(() => {
+    if (tableContainerRef.current) {
+      const handleTableScroll = (event) => {
+        const scrollTop = event.target.scrollTop;
+        setShowScrollToTop(scrollTop > 50);
+      };
+
+      tableContainerRef.current.addEventListener('scroll', handleTableScroll);
+      
+      return () => {
+        if (tableContainerRef.current) {
+          tableContainerRef.current.removeEventListener('scroll', handleTableScroll);
+        }
+      };
     }
   }, [devices]);
 
@@ -118,8 +169,68 @@ function Devices() {
       }
       
       const data = await response.json();
-      setDevices(data);
-      cacheDevices(data);
+      
+
+      
+      // Hole Seriennummern aus der Inventory-API für jedes Device
+      const devicesWithSerialNumbers = await Promise.all(
+        data.map(async (device) => {
+          // Extrahiere die korrekte Device-ID
+          let deviceId;
+          if (typeof device.id === 'string') {
+            deviceId = device.id;
+          } else if (device.id && typeof device.id === 'object' && device.id.id) {
+            deviceId = device.id.id;
+          } else if (device.id) {
+            deviceId = device.id;
+          } else {
+            console.warn('No valid device ID found for device:', device);
+            return device;
+          }
+          
+          try {
+            // Hole Seriennummer aus der Inventory-API
+            const inventoryResponse = await fetch(`/api/inventory/${deviceId}`);
+            let serialNumber = '-';
+            if (inventoryResponse.ok) {
+              const inventoryData = await inventoryResponse.json();
+              serialNumber = inventoryData.serialnbr || '-';
+            }
+            
+            // Verbessere den Asset-Pfad, falls er nur eine ID ist
+            let improvedAsset = device.asset;
+            if (device.asset?.pathString && device.asset.pathString.startsWith('Asset ')) {
+              const assetId = device.asset.pathString.replace('Asset ', '');
+              try {
+                // Versuche den Asset-Pfad zu verbessern
+                const treepathResponse = await fetch(`/api/treepath/${assetId}?customerId=${session.user.customerid}`);
+                if (treepathResponse.ok) {
+                  const treepathData = await treepathResponse.json();
+                  improvedAsset = {
+                    ...device.asset,
+                    pathString: treepathData.pathString || device.asset.pathString,
+                    fullPath: treepathData.fullPath
+                  };
+                }
+              } catch (treepathError) {
+                console.warn(`Could not improve asset path for ${assetId}:`, treepathError);
+              }
+            }
+            
+            return {
+              ...device,
+              serialNumber: serialNumber,
+              asset: improvedAsset
+            };
+          } catch (error) {
+            console.error(`Error fetching data for device ${deviceId}:`, error);
+          }
+          return device;
+        })
+      );
+      
+      setDevices(devicesWithSerialNumbers);
+      cacheDevices(devicesWithSerialNumbers);
     } catch (error) {
       console.error('Error fetching devices:', error);
       setError(error.message);
@@ -167,11 +278,33 @@ function Devices() {
     }
   }, [cachedDevices]);
 
+  const scrollToTop = () => {
+    // Scroll page to top
+    window.scrollTo({
+      top: 0,
+      behavior: 'smooth'
+    });
+    
+    // Also scroll table to top if it has scroll position
+    if (tableContainerRef.current) {
+      tableContainerRef.current.scrollTo({
+        top: 0,
+        behavior: 'smooth'
+      });
+    }
+  };
+
   // Use cached devices if available, otherwise use live data
   const displayDevices = cachedDevices.length > 0 ? cachedDevices : (devices || []);
 
   // Hilfsfunktion zum Finden des SerialNbr-Attributs
   const getSerialNumber = (device) => {
+    // Priorität: 1. Lokale Seriennummer aus inventory-Tabelle über API
+    if (device.serialNumber) {
+      return device.serialNumber;
+    }
+    
+    // Fallback: ThingsBoard-Attribute (falls keine lokale Seriennummer verfügbar ist)
     const attributes = device.serverAttributes || device.telemetry || {};
     return attributes.serialNbr || 
            attributes.serialNumber || 
@@ -182,10 +315,24 @@ function Devices() {
            '-';
   };
 
+  // Neue Funktion: Hole Seriennummer direkt aus der Inventory-API
+  const fetchSerialNumberFromInventory = async (deviceId) => {
+    try {
+      const response = await fetch(`/api/inventory/${deviceId}`);
+      if (response.ok) {
+        const inventoryData = await response.json();
+        return inventoryData.serialnbr || '-';
+      }
+    } catch (error) {
+      console.error('Error fetching serial number from inventory:', error);
+    }
+    return '-';
+  };
+
   // Filter devices based on search term
   const filteredDevices = useMemo(() => {
     if (!displayDevices) return [];
-    if (!searchTerm && selectedType === 'all') return displayDevices;
+    if (!searchTerm && selectedType === 'all' && selectedStatus === 'all' && selectedGateway === 'all') return displayDevices;
 
     const searchLower = (searchTerm || '').toLowerCase();
     return displayDevices.filter(device => {
@@ -196,13 +343,24 @@ function Devices() {
         (device.label || '').toLowerCase().includes(searchLower) ||
         (device.type || '').toLowerCase().includes(searchLower) ||
         (device.asset?.pathString || '').toLowerCase().includes(searchLower) ||
-        serialNumber.includes(searchLower);
+        serialNumber.includes(searchLower) ||
+        (device.telemetry?.gatewayId || '').toLowerCase().includes(searchLower);
 
       const matchesType = selectedType === 'all' || device.type === selectedType;
+      
+      const matchesStatus = selectedStatus === 'all' || 
+        (selectedStatus === 'active' && device.active) ||
+        (selectedStatus === 'inactive' && !device.active);
+      
+      const matchesGateway = selectedGateway === 'all' || 
+        (selectedGateway === 'withGateway' && device.telemetry?.gatewayId) ||
+        (selectedGateway === 'withoutGateway' && !device.telemetry?.gatewayId) ||
+        (selectedGateway !== 'all' && selectedGateway !== 'withGateway' && selectedGateway !== 'withoutGateway' && 
+         device.telemetry?.gatewayId === selectedGateway);
 
-      return matchesSearch && matchesType;
+      return matchesSearch && matchesType && matchesStatus && matchesGateway;
     });
-  }, [displayDevices, searchTerm, selectedType]);
+  }, [displayDevices, searchTerm, selectedType, selectedStatus, selectedGateway]);
 
   const handleClose = () => {
     setShowModal(false);
@@ -228,7 +386,7 @@ function Devices() {
   }
 
   return (
-    <div className="container mt-4">
+    <div className="container-fluid px-4 mt-4">
       <div className="d-flex justify-content-between align-items-center mb-4">
         <h2 className="text-white">Geräte</h2>
         <div className="d-flex gap-2">
@@ -257,7 +415,7 @@ function Devices() {
             <FontAwesomeIcon icon={faDownload} className="me-2" />
             Export
           </Button>
-          <Button
+                    <Button
             variant="outline-warning"
             size="sm"
             onClick={clearCache}
@@ -295,130 +453,183 @@ function Devices() {
       {/* Search Bar */}
       <div className="mb-4">
         <InputGroup>
-          <InputGroup.Text style={{ 
-            backgroundColor: '#34495E', 
-            borderColor: '#2C3E50',
-            color: 'white'
-          }}>
+          <InputGroup.Text>
             <FontAwesomeIcon icon={faSearch} />
           </InputGroup.Text>
-          <FormControl
-            placeholder="Suche nach Gerät, Label, Typ, SerialNbr oder Pfad..."
+          <Form.Control
+            placeholder="Suche nach Gerät, Label, Typ, SerialNbr, Gateway oder Pfad..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            style={{
-              backgroundColor: '#2C3E50',
-              borderColor: '#34495E',
-              color: 'white',
-              '&::placeholder': {
-                color: 'rgba(255, 255, 255, 0.5)'
-              }
-            }}
           />
         </InputGroup>
       </div>
 
-      <div style={{ 
-        position: 'relative', 
-        height: 'calc(100vh - 320px)', // Adjusted for additional elements
-        overflow: 'auto'
-      }}>
-        <Table 
-          striped 
-          bordered 
-          hover 
-          variant="dark" 
-          className="shadow"
-          style={{
-            backgroundColor: '#2C3E50',
-            borderColor: '#34495E',
-            position: 'relative',
-            borderCollapse: 'separate',
-            borderSpacing: 0,
-          }}
-        >
-          <thead style={{
-            position: 'sticky',
-            top: 0,
-            zIndex: 1,
-            backgroundColor: '#34495E',
-          }}>
-            <tr style={{ backgroundColor: '#34495E' }}>
-              <th>Name</th>
-              <th>Label</th>
-              <th>Typ</th>
-              <th>SerialNbr</th>
-              <th>Pfad</th>
-              <th>Batterie</th>
-              <th>FCnt</th>
-              <th>Ventil</th>
-              <th>RSSI</th>
-              <th>SF</th>
-              <th>SNR</th>
-              <th>Status</th>
-              <th>Letzte Aktivität</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredDevices.map((device) => (
-              <tr 
-                key={device.id}
-                onClick={() => handleRowClick(device)}
-                style={{ 
-                  cursor: 'pointer',
-                  '&:hover': {
-                    backgroundColor: '#34495E'
-                  }
-                }}
-              >
-                <td>{device.name}</td>
-                <td>{device.label}</td>
-                <td>{device.type}</td>
-                <td>{getSerialNumber(device)}</td>
-                <td>{device.asset?.pathString || '-'}</td>
-                <td>
-                  {device.telemetry?.batteryVoltage ? (
-                    <div className="text-white">{device.telemetry.batteryVoltage}V</div>
-                  ) : '-'}
-                </td>
-                <td>
-                  {device.telemetry?.fCnt || '-'}
-                </td>
-                <td>
-                  {device.telemetry?.PercentValveOpen !== undefined ? (
-                    <div className="text-white">
-                      {Math.round(device.telemetry.PercentValveOpen)}%
-                    </div>
-                  ) : '-'}
-                </td>
-                <td>
-                  {device.telemetry?.rssi ? (
-                    <div className="text-white">{device.telemetry.rssi}dBm</div>
-                  ) : '-'}
-                </td>
-                <td>
-                  {device.telemetry?.sf || '-'}
-                </td>
-                <td>
-                  {device.telemetry?.snr ? `${device.telemetry.snr}dB` : '-'}
-                </td>
-                <td>
-                  <span className={`badge ${device.active ? 'bg-success' : 'bg-danger'}`}>
-                    {device.active ? 'Aktiv' : 'Inaktiv'}
-                  </span>
-                </td>
-                <td className="text-white">
-                  {device.telemetry?.lastActivityTime ? 
-                    new Date(parseInt(device.telemetry.lastActivityTime)).toLocaleString('de-DE', {
-                      day: '2-digit',
-                      month: '2-digit',
-                      year: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      second: '2-digit'
-                    }) : 
-                    device.lastActivityTime ? 
-                      new Date(parseInt(device.lastActivityTime)).toLocaleString('de-DE', {
+      {/* Filter Row */}
+      <div className="row mb-4 g-3">
+        <div className="col-md-2">
+          <Form.Select 
+            value={selectedType} 
+            onChange={(e) => setSelectedType(e.target.value)}
+            className="form-select-sm"
+          >
+            <option value="all">Alle Typen</option>
+            {Array.from(new Set(displayDevices.map(d => d.type).filter(Boolean))).sort().map(type => (
+              <option key={type} value={type}>{type}</option>
+            ))}
+          </Form.Select>
+        </div>
+        <div className="col-md-2">
+          <Form.Select 
+            value={selectedStatus} 
+            onChange={(e) => setSelectedStatus(e.target.value)}
+            className="form-select-sm"
+          >
+            <option value="all">Alle Status</option>
+            <option value="active">Aktiv</option>
+            <option value="inactive">Inaktiv</option>
+          </Form.Select>
+        </div>
+        <div className="col-md-2">
+          <Form.Select 
+            value={selectedGateway} 
+            onChange={(e) => setSelectedGateway(e.target.value)}
+            className="form-select-sm"
+          >
+            <option value="all">Alle Gateways</option>
+            <option value="withGateway">Mit Gateway</option>
+            <option value="withoutGateway">Ohne Gateway</option>
+            {Array.from(new Set(displayDevices
+              .map(d => d.telemetry?.gatewayId)
+              .filter(Boolean)))
+              .sort()
+              .map(gatewayId => (
+                <option key={gatewayId} value={gatewayId}>
+                  Gateway: {gatewayId}
+                </option>
+              ))}
+          </Form.Select>
+        </div>
+        <div className="col-md-3">
+          <Button
+            variant="outline-secondary"
+            size="sm"
+            onClick={() => {
+              setSearchTerm('');
+              setSelectedType('all');
+              setSelectedStatus('all');
+              setSelectedGateway('all');
+            }}
+            className="w-100"
+          >
+            Filter zurücksetzen
+          </Button>
+        </div>
+      </div>
+
+      {/* Loading State */}
+      {loading && (
+        <div className="text-center py-5">
+          <Spinner animation="border" variant="primary" size="lg" className="me-3" />
+          <div className="mt-3">
+            <h5 className="text-white">Lade Geräte...</h5>
+            <p className="text-muted">Bitte warten Sie, während die Gerätedaten abgerufen werden.</p>
+          </div>
+        </div>
+      )}
+
+      {/* Table - nur anzeigen wenn nicht geladen wird */}
+      {!loading && (
+        <div ref={tableContainerRef} className="table-responsive" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
+          <Table striped bordered hover className="text-start" style={{ marginBottom: 0 }}>
+            <thead style={{ 
+              position: 'sticky', 
+              top: 0, 
+              zIndex: 1, 
+              backgroundColor: 'var(--bs-table-bg)',
+              boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+            }}>
+              <tr>
+                <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Name</th>
+                <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Label</th>
+                <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Typ</th>
+                <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>SerialNbr</th>
+                <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Gateway</th>
+                <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Pfad</th>
+                <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Batterie</th>
+                <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>FCnt</th>
+                <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Ventil</th>
+                <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>RSSI</th>
+                <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>SF</th>
+                <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>SNR</th>
+                <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Signal Quality</th>
+                <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Status</th>
+                <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Letzte Aktivität</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredDevices.map((device) => (
+                <tr 
+                  key={device.id}
+                  onClick={() => handleRowClick(device)}
+                  style={{ cursor: 'pointer' }}
+                >
+                  <td>{device.name}</td>
+                  <td>{device.label}</td>
+                  <td>{device.type}</td>
+                  <td>{getSerialNumber(device)}</td>
+                  <td>
+                    {device.telemetry?.gatewayId || '-'}
+                  </td>
+                  <td>
+                    {device.asset?.fullPath?.labels ? (
+                      <div>
+                        {device.asset.fullPath.labels.join(' / ')}
+                      </div>
+                    ) : device.asset?.pathString ? (
+                      <div>
+                        {device.asset.pathString.startsWith('Asset ') 
+                          ? device.asset.pathString.replace('Asset ', '') 
+                          : device.asset.pathString}
+                      </div>
+                    ) : '-'}
+                  </td>
+                  <td>
+                    {device.telemetry?.batteryVoltage ? (
+                      <div>{device.telemetry.batteryVoltage}V</div>
+                    ) : '-'}
+                  </td>
+                  <td>
+                    {device.telemetry?.fCnt || '-'}
+                  </td>
+                  <td>
+                    {device.telemetry?.PercentValveOpen !== undefined ? (
+                      <div>
+                        {Math.round(device.telemetry.PercentValveOpen)}%
+                      </div>
+                    ) : '-'}
+                  </td>
+                  <td>
+                    {device.telemetry?.rssi ? (
+                      <div>{device.telemetry.rssi}dBm</div>
+                    ) : '-'}
+                  </td>
+                  <td>
+                    {device.telemetry?.sf || '-'}
+                  </td>
+                  <td>
+                    {device.telemetry?.snr ? `${device.telemetry.snr}dB` : '-'}
+                  </td>
+                  <td>
+                    {device.telemetry?.signalQuality || '-'}
+                  </td>
+                  <td>
+                    <span className={`badge ${device.active ? 'bg-success' : 'bg-danger'}`}>
+                      {device.active ? 'Aktiv' : 'Inaktiv'}
+                    </span>
+                  </td>
+                  <td>
+                    {device.telemetry?.lastActivityTime ? 
+                      new Date(parseInt(device.telemetry.lastActivityTime)).toLocaleString('de-DE', {
                         day: '2-digit',
                         month: '2-digit',
                         year: 'numeric',
@@ -426,14 +637,49 @@ function Devices() {
                         minute: '2-digit',
                         second: '2-digit'
                       }) : 
-                      'Nie'
-                  }
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </Table>
-      </div>
+                      device.lastActivityTime ? 
+                        new Date(parseInt(device.lastActivityTime)).toLocaleString('de-DE', {
+                          day: '2-digit',
+                          month: '2-digit',
+                          year: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          second: '2-digit'
+                        }) : 
+                        'Nie'
+                    }
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        </div>
+      )}
+
+      {/* Scroll to Top Button */}
+      <Button
+        variant="primary"
+        size="lg"
+        className="position-fixed"
+        style={{
+          bottom: '30px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 1000,
+          borderRadius: '50%',
+          width: '60px',
+          height: '60px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+          opacity: showScrollToTop ? 1 : 0.3
+        }}
+        onClick={scrollToTop}
+        title="Nach oben scrollen"
+      >
+        <FontAwesomeIcon icon={faArrowUp} />
+      </Button>
 
       <Modal
         show={showModal}
@@ -441,35 +687,20 @@ function Devices() {
         size="lg"
         centered
         backdrop="static"
-        className="custom-modal"
       >
-        <Modal.Header closeButton style={{ backgroundColor: '#2C3E50', color: 'white' }}>
+        <Modal.Header closeButton>
           <Modal.Title>{selectedDevice?.name}</Modal.Title>
         </Modal.Header>
-        <Modal.Body style={{ backgroundColor: '#2C3E50', color: 'white' }}>
+        <Modal.Body>
           <Tab.Container defaultActiveKey="settings">
             <Nav variant="tabs" className="mb-3">
               <Nav.Item>
-                <Nav.Link 
-                  eventKey="settings"
-                  style={{ 
-                    color: 'white',
-                    backgroundColor: 'transparent',
-                    border: '1px solid #34495E'
-                  }}
-                >
+                <Nav.Link eventKey="settings">
                   Einstellungen
                 </Nav.Link>
               </Nav.Item>
               <Nav.Item>
-                <Nav.Link 
-                  eventKey="history"
-                  style={{ 
-                    color: 'white',
-                    backgroundColor: 'transparent',
-                    border: '1px solid #34495E'
-                  }}
-                >
+                <Nav.Link eventKey="history">
                   Historische Daten
                 </Nav.Link>
               </Nav.Item>

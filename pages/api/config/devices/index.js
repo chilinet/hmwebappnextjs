@@ -1,5 +1,7 @@
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../auth/[...nextauth]";
+import { getConnection } from "../../../../lib/db";
+import sql from 'mssql';
 
 async function fetchWithRetry(url, options, retries = 3, delay = 1000) {
   for (let i = 0; i < retries; i++) {
@@ -60,20 +62,37 @@ async function getAssetHierarchy(deviceId, tbToken, session) {
 
     const assetRelation = relations.find(r => r.from.entityType === 'ASSET');
     if (!assetRelation) return '';
-    const treePath = await fetch(`${process.env.NEXTAUTH_URL}/api/treepath/${assetRelation.from.id}?customerId=${session.user.customerid}`, {
-      headers: {
-        'x-api-source': 'backend'
-      }
-    });
-    const treePathData = await treePath.json();
-    //console.log('treePath.pathString:', treePathData.pathString);
-
     
-
-    return {
-      id: assetRelation.to.id,
-      pathString: treePathData.pathString
-    };
+    try {
+      const treePath = await fetch(`${process.env.NEXTAUTH_URL}/api/treepath/${assetRelation.from.id}?customerId=${session.user.customerid}`, {
+        headers: {
+          'x-api-source': 'backend'
+        }
+      });
+      
+      if (treePath.ok) {
+        const treePathData = await treePath.json();
+        //console.log('treePath.pathString:', treePathData.pathString);
+        return {
+          id: assetRelation.to.id,
+          pathString: treePathData.pathString
+        };
+      } else {
+        console.warn(`TreePath API failed for asset ${assetRelation.from.id}: ${treePath.status}`);
+        // Fallback: Gib nur die Asset-ID zurück
+        return {
+          id: assetRelation.from.id,
+          pathString: `Asset ${assetRelation.from.id}`
+        };
+      }
+    } catch (treePathError) {
+      console.warn('TreePath API error, using fallback:', treePathError.message);
+      // Fallback: Gib nur die Asset-ID zurück
+      return {
+        id: assetRelation.from.id,
+        pathString: `Asset ${assetRelation.from.id}`
+      };
+    }
 
   } catch (error) {
     console.error('Error in getAssetHierarchy:', {
@@ -82,6 +101,57 @@ async function getAssetHierarchy(deviceId, tbToken, session) {
       cause: error.cause
     });
     return '';
+  }
+}
+
+async function getSerialNumberFromInventory(deviceId) {
+  try {
+    const pool = await getConnection();
+    
+    // Versuche zuerst die direkte Verknüpfung über tbconnectionid
+    let result = await pool.request()
+      .input('deviceId', sql.VarChar, deviceId)
+      .query(`
+        SELECT serialnbr, deveui, deviceLabel
+        FROM hmcdev.dbo.inventory 
+        WHERE tbconnectionid = @deviceId
+      `);
+    
+    if (result.recordset.length > 0) {
+      console.log(`Found serial number for device ${deviceId}:`, result.recordset[0].serialnbr);
+      return result.recordset[0].serialnbr;
+    }
+    
+    // Fallback: Suche über DevEUI (falls verfügbar)
+    // Hier müssten wir die DevEUI aus den ThingsBoard-Attributen holen
+    console.log(`No inventory record found for device ${deviceId} with tbconnectionid`);
+    return null;
+    
+  } catch (error) {
+    console.error('Error getting serial number from inventory:', error);
+    if (error.code === 'ECONNCLOSED' || error.code === 'ECONNRESET') {
+      console.log('Database connection lost, retrying...');
+      // Kurz warten und nochmal versuchen
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      try {
+        const pool = await getConnection();
+        let result = await pool.request()
+          .input('deviceId', sql.VarChar, deviceId)
+          .query(`
+            SELECT serialnbr, deveui, deviceLabel
+            FROM hmcdev.dbo.inventory 
+            WHERE tbconnectionid = @deviceId
+          `);
+        
+        if (result.recordset.length > 0) {
+          console.log(`Found serial number for device ${deviceId} on retry:`, result.recordset[0].serialnbr);
+          return result.recordset[0].serialnbr;
+        }
+      } catch (retryError) {
+        console.error('Retry failed:', retryError);
+      }
+    }
+    return null;
   }
 }
 
@@ -94,10 +164,12 @@ async function getLatestTelemetry(deviceId, tbToken) {
           'batteryVoltage',
           'channel',
           'fCnt',
+          'gatewayId',
           'PercentValveOpen',
           'rssi',
           'snr',
           'sf',
+          'signalQuality',
           'motorPosition',
           'motorRange',
           'raw',
@@ -201,12 +273,13 @@ export default async function handler(req, res) {
     
     //console.log('tbData: ' + JSON.stringify(tbData, null, 2));
 
-    // Hole Asset- und Telemetrie-Informationen für jedes Gerät
+    // Hole Asset-, Telemetrie- und Seriennummer-Informationen für jedes Gerät
     const devicesWithData = await Promise.all(
       tbData.data.map(async device => {
-        const [asset, telemetry] = await Promise.all([
+        const [asset, telemetry, serialNumber] = await Promise.all([
           getAssetHierarchy(device.id.id, session.tbToken, session),
-          getLatestTelemetry(device.id.id, session.tbToken)
+          getLatestTelemetry(device.id.id, session.tbToken),
+          getSerialNumberFromInventory(device.id.id)
         ]);
        // console.log('device: ' + JSON.stringify(device, null, 2));
        // console.log('asset: ' + JSON.stringify(asset, null, 2));
@@ -221,7 +294,8 @@ export default async function handler(req, res) {
           additionalInfo: device.additionalInfo || {},
           asset: asset,
           telemetry: telemetry,
-          serverAttributes: telemetry // Server-Attribute sind jetzt in telemetry enthalten
+          serverAttributes: telemetry, // Server-Attribute sind jetzt in telemetry enthalten
+          serialNumber: serialNumber // Seriennummer aus der lokalen inventory-Tabelle
         };
       })
     );

@@ -1,32 +1,7 @@
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../auth/[...nextauth]";
 import sql from 'mssql';
-
-// Globaler Connection Pool
-const sqlConfig = {
-  user: process.env.MSSQL_USER,
-  password: process.env.MSSQL_PASSWORD,
-  server: process.env.MSSQL_SERVER,
-  database: process.env.MSSQL_DATABASE,
-  options: {
-    encrypt: true,
-    trustServerCertificate: true,
-  },
-  pool: {
-    max: 10,
-    min: 0,
-    idleTimeoutMillis: 30000
-  }
-};
-
-// Singleton Pool
-let pool = null;
-async function getPool() {
-  if (!pool) {
-    pool = await sql.connect(sqlConfig);
-  }
-  return pool;
-}
+import { getConnection } from '../../../lib/db';
 
 // Funktion zum Finden eines Assets und seines Pfades im Tree
 function findAssetPath(tree, targetId, currentPath = []) {
@@ -74,7 +49,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const pool = await getPool();
+    const pool = await getConnection();
     const customerIdToUse = isBackendCall ? customerId : session.user.customerid;
 
     const result = await pool.request()
@@ -118,9 +93,4 @@ export default async function handler(req, res) {
   }
 }
 
-// Cleanup beim Server-Shutdown
-process.on('SIGTERM', async () => {
-  if (pool) {
-    await pool.close();
-  }
-}); 
+ 

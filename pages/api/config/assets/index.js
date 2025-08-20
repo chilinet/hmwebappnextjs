@@ -65,20 +65,37 @@ export default async function handler(req, res) {
 
       const asset = await assetResponse.json();
       const data = asset;
-      // Weise das Asset dem Customer zu
-      /* const assignResponse = await fetch(`${TB_API_URL}/api/customer/${tbCustomerId}/asset/${asset.id.id}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Authorization': `Bearer ${session.tbToken}`
-        }
-      }); */
- 
-      //if (!assignResponse.ok) {
-      //  throw new Error('Failed to assign asset to customer');
-      //}
 
-      //const data = await assignResponse.json();
+      // Setze den operationalMode als Attribut, falls angegeben
+      if (req.body.operationalMode !== undefined) {
+        try {
+          const attributesBody = {
+            operationalMode: req.body.operationalMode
+          };
+          
+          console.log('Setting operationalMode attribute for new asset:', attributesBody);
+          
+          const attributesResponse = await fetch(`${TB_API_URL}/api/plugins/telemetry/ASSET/${asset.id.id}/attributes/SERVER_SCOPE`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Authorization': `Bearer ${session.tbToken}`
+            },
+            body: JSON.stringify(attributesBody)
+          });
+
+          if (!attributesResponse.ok) {
+            console.error('Error setting operationalMode attribute:', attributesResponse.status);
+            // Nicht kritisch - das Asset wurde bereits erstellt
+          } else {
+            console.log('operationalMode attribute set successfully for new asset');
+          }
+        } catch (error) {
+          console.error('Error setting operationalMode attribute for new asset:', error);
+          // Nicht kritisch - das Asset wurde bereits erstellt
+        }
+      }
+
       return res.status(200).json(data);
 
     } catch (error) {

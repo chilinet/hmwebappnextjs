@@ -16,10 +16,30 @@ export default async function handler(req, res) {
 
   try {
     const { id } = req.query;
-    const pool = await getConnection();
+    
+    // Versuche die Verbindung zu bekommen
+    let pool;
+    try {
+      pool = await getConnection();
+    } catch (connectionError) {
+      console.error('Database connection error:', connectionError);
+      return res.status(503).json({ 
+        error: 'Database connection failed',
+        details: connectionError.message,
+        code: 'DB_CONNECTION_FAILED'
+      });
+    }
+    
+    // Prüfe ob der Pool gültig ist
+    if (!pool) {
+      return res.status(503).json({ 
+        error: 'Database pool is null',
+        code: 'DB_POOL_NULL'
+      });
+    }
     
     const result = await pool.request()
-      .input('id', sql.BigInt, id)
+      .input('deviceid', sql.VarChar, id)
       .query(`
         SELECT i.id, i.devicenbr, i.devicename, i.deveui, i.joineui, i.serialnbr, i.appkey, 
                i.loraversion, i.regionalversion, i.customerid, i.tbconnectionid, i.nwconnectionid, 
@@ -29,7 +49,7 @@ export default async function handler(req, res) {
                i.updated_at, i.status, i.contractId, i.deviceLabel, i.deviceProfileId, i.offerName
         FROM hmcdev.dbo.inventory i
         LEFT JOIN hmcdev.dbo.brand b ON i.brand_id = b.id
-        WHERE i.id = @id
+        WHERE i.deviceid = @deviceid
       `);
     
     if (result.recordset.length === 0) {
@@ -39,6 +59,20 @@ export default async function handler(req, res) {
     res.status(200).json(result.recordset[0]);
   } catch (error) {
     console.error('GET Single Error:', error);
-    res.status(500).json({ error: error.message });
+    
+    // Spezifische Fehlerbehandlung für Datenbankprobleme
+    if (error.code === 'ECONNCLOSED' || error.code === 'ECONNRESET') {
+      return res.status(503).json({ 
+        error: 'Database connection lost',
+        details: error.message,
+        code: 'DB_CONNECTION_LOST'
+      });
+    }
+    
+    res.status(500).json({ 
+      error: 'Internal server error',
+      details: error.message,
+      code: error.code || 'UNKNOWN_ERROR'
+    });
   }
 } 

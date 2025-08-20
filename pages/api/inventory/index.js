@@ -6,23 +6,55 @@ export default async function handler(req, res) {
     case 'GET':
       try {
         const pool = await getConnection();
-        const result = await pool.request()
-          .query(`
-            SELECT i.id, i.devicenbr, i.devicename, i.deveui, i.joineui, i.serialnbr, i.appkey, 
-                   i.loraversion, i.regionalversion, i.customerid, i.tbconnectionid, i.nwconnectionid, 
-                   i.brand_id, b.name as brand_name, i.model_id, i.hardwareversion, i.firmwareversion, 
-                   i.owner_id, i.group_id, i.distributor_id, i.status_id, i.invoicenbr, i.ordernbr, 
-                   i.orderdate, i.installed_at, i.tbconnected_at, i.nwconnected_at, i.created_at, 
-                   i.updated_at, i.status, i.contractId, i.deviceLabel, i.deviceProfileId, i.offerName
-            FROM hmcdev.dbo.inventory i
-            LEFT JOIN hmcdev.dbo.brand b ON i.brand_id = b.id
-            ORDER BY i.id DESC
-          `);
         
-        res.status(200).json(result.recordset);
+        // Customer-Informationen mit JOIN abrufen
+        const devicesWithCustomersQuery = `
+          SELECT i.id, i.devicenbr, i.devicename, i.deveui, i.joineui, i.serialnbr, i.appkey, 
+                 i.loraversion, i.regionalversion, i.customerid, i.tbconnectionid, i.nwconnectionid, 
+                 i.brand_id, b.name as brand_name, i.model_id, m.name as model_name, i.hardwareversion, i.firmwareversion, 
+                 i.owner_id, i.group_id, i.distributor_id, d.name as distributor_name, i.status_id, i.invoicenbr, i.ordernbr, 
+                 i.orderdate, i.installed_at, i.tbconnected_at, i.nwconnected_at, i.created_at, 
+                 i.updated_at, i.status, i.contractId, i.deviceLabel, i.deviceProfileId, i.offerName,
+                 c.name as customer_name, c.title as customer_title,
+                 CASE WHEN i.hasrelation = 1 THEN 1 ELSE 0 END as hasrelation
+          FROM hmcdev.dbo.inventory i
+          LEFT JOIN hmcdev.dbo.brand b ON i.brand_id = b.id
+          LEFT JOIN hmcdev.dbo.model m ON i.model_id = m.id
+          LEFT JOIN hmcdev.dbo.distributor d ON i.distributor_id = d.id
+          LEFT JOIN customers c ON i.customerid = c.id
+          ORDER BY i.id DESC
+        `;
+        
+        const devicesWithCustomersResult = await pool.request().query(devicesWithCustomersQuery);
+        
+        // Daten für die Antwort vorbereiten
+        const devicesWithCustomers = devicesWithCustomersResult.recordset.map(device => ({
+          ...device,
+          customer_name: device.customer_name || 'Keine Zuordnung',
+          customer_title: device.customer_title || ''
+        }));
+        
+        res.status(200).json(devicesWithCustomers);
       } catch (error) {
         console.error('GET Error:', error);
-        res.status(500).json({ error: error.message });
+        
+        // Provide more specific error messages
+        if (error.code === 'ECONNCLOSED') {
+          res.status(503).json({ 
+            error: 'Database connection lost. Please try again.',
+            code: 'DB_CONNECTION_LOST'
+          });
+        } else if (error.code === 'ECONNRESET') {
+          res.status(503).json({ 
+            error: 'Database connection reset. Please try again.',
+            code: 'DB_CONNECTION_RESET'
+          });
+        } else {
+          res.status(500).json({ 
+            error: error.message,
+            code: 'DB_ERROR'
+          });
+        }
       }
       break;
 
