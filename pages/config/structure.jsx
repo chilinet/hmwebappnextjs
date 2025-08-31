@@ -2,7 +2,7 @@ import { useRouter } from 'next/router';
 import { useSession } from 'next-auth/react';
 import { useState, useEffect } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faArrowLeft, faBuilding, faIndustry, faMicrochip, faChevronDown, faChevronRight, faRotateRight, faPlus, faCheck, faXmark, faMinus, faSearch, faTimes } from '@fortawesome/free-solid-svg-icons';
+import { faArrowLeft, faBuilding, faIndustry, faMicrochip, faChevronDown, faChevronRight, faRotateRight, faPlus, faCheck, faXmark, faMinus, faSearch, faTimes, faImage, faUpload, faTrash, faEye, faStar, faEdit } from '@fortawesome/free-solid-svg-icons';
 import { Tree } from '@minoru/react-dnd-treeview';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
@@ -48,6 +48,22 @@ export default function Structure() {
   const [customerPrefix, setCustomerPrefix] = useState('');
   const [lastNodeId, setLastNodeId] = useState(0);
   const [operationalMode, setOperationalMode] = useState('0');
+  
+  // Image upload states
+  const [images, setImages] = useState([]);
+  const [loadingImages, setLoadingImages] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [selectedImage, setSelectedImage] = useState(null);
+  const [showImageModal, setShowImageModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingImage, setEditingImage] = useState(null);
+  const [imageDescription, setImageDescription] = useState('');
+  const [imageFile, setImageFile] = useState(null);
+  const [imageType, setImageType] = useState('Raum');
+  const [imageText, setImageText] = useState('');
+  const [selectedDevice, setSelectedDevice] = useState('');
+  const [heaterDevices, setHeaterDevices] = useState([]);
+  const [operationalDevice, setOperationalDevice] = useState('');
 
   useEffect(() => {
     if (session?.token) {
@@ -77,6 +93,12 @@ export default function Structure() {
   useEffect(() => {
     if (nodeDetails) {
       setEditedDetails(nodeDetails);
+      // Setze den operationalDevice basierend auf den geladenen Daten
+      if (nodeDetails.operationalDevice) {
+        setOperationalDevice(nodeDetails.operationalDevice);
+      } else {
+        setOperationalDevice('');
+      }
     }
   }, [nodeDetails]);
 
@@ -100,6 +122,26 @@ export default function Structure() {
       fetchCustomerSettings();
     }
   }, [customerData]);
+
+  // Load images when a node is selected
+  useEffect(() => {
+    if (selectedNode?.id && !selectedNode.id.startsWith('temp_')) {
+      fetchImages(selectedNode.id);
+    } else {
+      setImages([]);
+    }
+  }, [selectedNode]);
+
+  // Load devices when image type changes to "Heizkörper"
+  useEffect(() => {
+    if (imageType === 'Heizkörper' && selectedNode?.id && !selectedNode.id.startsWith('temp_')) {
+      console.log('Lade Geräte für Node:', selectedNode.id);
+      fetchHeaterDevices(selectedNode.id);
+    } else {
+      setHeaterDevices([]);
+      setSelectedDevice('');
+    }
+  }, [imageType, selectedNode]);
 
   const fetchUserData = async () => {
     try {
@@ -131,12 +173,13 @@ export default function Structure() {
         parent: parentId,
         droppable: true,  // Alle Nodes als droppable markieren, unabhängig von hasChildren
         text: node.label || node.name,
-        data: {
-          type: node.type,
-          hasDevices: node.hasDevices,
-          label: node.label,
-          name: node.name
-        }
+        type: node.type,
+        hasDevices: node.hasDevices,
+        label: node.label,
+        name: node.name,
+        operationalMode: node.operationalMode || '0',
+        operationalDevice: node.operationalDevice || '',
+        relatedDevices: node.relatedDevices || []
       };
       //console.log('Created tree node:', treeNode); // Debug: Konvertierte Daten
       
@@ -256,9 +299,11 @@ export default function Structure() {
       name: generatedName,
       label: '',
       type: '',
-      operationalMode: '0'
+      operationalMode: '0',
+      operationalDevice: ''
     });
     setOperationalMode('0');
+    setOperationalDevice('');
     setIsNewNode(true);
   };
 
@@ -491,6 +536,22 @@ export default function Structure() {
       ...prev,
       operationalMode: value
     }));
+    // Reset device selection when mode changes
+    if (value !== '2' && value !== '10') {
+      setOperationalDevice('');
+      setEditedDetails(prev => ({
+        ...prev,
+        operationalDevice: ''
+      }));
+    }
+  };
+
+  const handleOperationalDeviceChange = (deviceId) => {
+    setOperationalDevice(deviceId);
+    setEditedDetails(prev => ({
+      ...prev,
+      operationalDevice: deviceId
+    }));
   };
 
   const saveChanges = async () => {
@@ -508,7 +569,8 @@ export default function Structure() {
           },
           body: JSON.stringify({
             ...editedDetails,
-            operationalMode: operationalMode
+            operationalMode: operationalMode,
+            operationalDevice: operationalDevice
           })
         });
 
@@ -517,6 +579,24 @@ export default function Structure() {
         }
 
         const newAsset = await assetResponse.json();
+
+        // Speichere die Device-ID als Attribut extTempDevice am Asset
+        if (operationalDevice && (operationalMode === '2' || operationalMode === '10')) {
+          const attributesResponse = await fetch(`/api/config/assets/${newAsset.id.id}`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${session.token}`
+            },
+            body: JSON.stringify({
+              extTempDevice: operationalDevice
+            })
+          });
+
+          if (!attributesResponse.ok) {
+            console.warn('Failed to save extTempDevice attribute, but asset was created');
+          }
+        }
 
         // Create relation to parent node
         const relationResponse = await fetch('/api/config/relations', {
@@ -567,7 +647,8 @@ export default function Structure() {
               name: editedDetails.name,
               type: editedDetails.type,
               label: editedDetails.label,
-              operationalMode: operationalMode
+              operationalMode: operationalMode,
+              operationalDevice: operationalDevice
             }
           })
         });
@@ -587,12 +668,47 @@ export default function Structure() {
           },
           body: JSON.stringify({
             ...editedDetails,
-            operationalMode: operationalMode
+            operationalMode: operationalMode,
+            operationalDevice: operationalDevice
           })
         });
 
         if (!assetResponse.ok) {
           throw new Error('Failed to update asset');
+        }
+
+        // Speichere die Device-ID als Attribut extTempDevice am Asset
+        if (operationalDevice && (operationalMode === '2' || operationalMode === '10')) {
+          const attributesResponse = await fetch(`/api/config/assets/${selectedNode.id}`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${session.token}`
+            },
+            body: JSON.stringify({
+              extTempDevice: operationalDevice
+            })
+          });
+
+          if (!attributesResponse.ok) {
+            console.warn('Failed to save extTempDevice attribute, but asset was updated');
+          }
+        } else {
+          // Wenn kein externes Gerät ausgewählt ist, entferne das Attribut
+          const attributesResponse = await fetch(`/api/config/assets/${selectedNode.id}`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${session.token}`
+            },
+            body: JSON.stringify({
+              extTempDevice: null
+            })
+          });
+
+          if (!attributesResponse.ok) {
+            console.warn('Failed to remove extTempDevice attribute');
+          }
         }
 
         // Update Tree
@@ -607,7 +723,8 @@ export default function Structure() {
             name: editedDetails.name,
             type: editedDetails.type,
             label: editedDetails.label,
-            operationalMode: operationalMode
+            operationalMode: operationalMode,
+            operationalDevice: operationalDevice
           })
         });
 
@@ -981,7 +1098,304 @@ export default function Structure() {
 
   // Neue Funktion zur Validierung der Pflichtfelder
   const isFormValid = () => {
-    return editedDetails?.label && editedDetails?.type && editedDetails?.label.trim() !== '' && editedDetails?.type.trim() !== '';
+    const hasRequiredFields = editedDetails?.label && editedDetails?.type && editedDetails?.label.trim() !== '' && editedDetails?.type.trim() !== '';
+    
+    // Wenn ein externes Gerät ausgewählt ist, muss auch ein Device ausgewählt werden
+    if (operationalMode === '2' || operationalMode === '10') {
+      return hasRequiredFields && operationalDevice && operationalDevice.trim() !== '';
+    }
+    
+    return hasRequiredFields;
+  };
+
+  // Image management functions
+  const fetchImages = async (assetId) => {
+    if (!assetId) return;
+    
+    setLoadingImages(true);
+    try {
+      // Lade sowohl Bilder als auch Geräte parallel
+      const [imagesResponse, devicesResponse] = await Promise.all([
+        fetch(`/api/structure/images/${assetId}`, {
+          headers: {
+            'Authorization': `Bearer ${session.token}`
+          }
+        }),
+        fetch(`/api/config/assets/${assetId}/devices`, {
+          headers: {
+            'Authorization': `Bearer ${session.token}`
+          }
+        })
+      ]);
+
+      if (!imagesResponse.ok) {
+        throw new Error('Failed to fetch images');
+      }
+
+      if (!devicesResponse.ok) {
+        throw new Error('Failed to fetch devices');
+      }
+
+      const imagesData = await imagesResponse.json();
+      const devicesData = await devicesResponse.json();
+      
+      // Setze die Geräte für die Device-Label-Funktion
+      setDevices(devicesData.assigned || []);
+      
+      // Setze die Bilder
+      setImages(imagesData.images || []);
+      
+      console.log('Bilder und Geräte geladen:', {
+        images: imagesData.images,
+        devices: devicesData.assigned
+      });
+      
+    } catch (error) {
+      console.error('Error fetching images:', error);
+      setError('Fehler beim Laden der Bilder');
+    } finally {
+      setLoadingImages(false);
+    }
+  };
+
+  const handleImageUpload = async () => {
+    if (!imageFile || !selectedNode) return;
+
+    // Validierung für Heizkörper-Bilder
+    if (imageType === 'Heizkörper' && !selectedDevice) {
+      setError('Bitte wählen Sie ein Gerät aus');
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('image', imageFile);
+    formData.append('assetId', selectedNode.id);
+    formData.append('description', imageDescription);
+    formData.append('imageType', imageType);
+    formData.append('imageText', imageText);
+    formData.append('selectedDevice', selectedDevice);
+    formData.append('isPrimary', images.length === 0 ? 'true' : 'false'); // Erstes Bild als Hauptbild
+
+    setUploadingImage(true);
+    try {
+      const response = await fetch('/api/structure/upload-image', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.token}`
+        },
+        body: formData
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Upload failed');
+      }
+
+      // Reset form
+      setImageFile(null);
+      setImageDescription('');
+      setImageType('Raum');
+      setImageText('');
+      setSelectedDevice('');
+      setShowImageModal(false);
+      
+      // Reload images
+      await fetchImages(selectedNode.id);
+      
+    } catch (error) {
+      console.error('Error uploading image:', error);
+      setError(`Fehler beim Hochladen: ${error.message}`);
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  const handleImageDelete = async (imageId) => {
+    if (!window.confirm('Möchten Sie dieses Bild wirklich löschen?')) return;
+
+    try {
+      const response = await fetch(`/api/structure/image/${imageId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${session.token}`
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to delete image');
+      }
+
+      // Reload images
+      await fetchImages(selectedNode.id);
+      
+    } catch (error) {
+      console.error('Error deleting image:', error);
+      setError('Fehler beim Löschen des Bildes');
+    }
+  };
+
+  const handleSetPrimaryImage = async (imageId) => {
+    try {
+      const response = await fetch(`/api/structure/image/${imageId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.token}`
+        },
+        body: JSON.stringify({
+          isPrimary: true
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to set primary image');
+      }
+
+      // Reload images
+      await fetchImages(selectedNode.id);
+      
+    } catch (error) {
+      console.error('Error setting primary image:', error);
+      setError('Fehler beim Setzen des Hauptbildes');
+    }
+  };
+
+  const handleFileSelect = (event) => {
+    const file = event.target.files[0];
+    if (file) {
+      // Validate file type
+      if (!['image/jpeg', 'image/png'].includes(file.type)) {
+        setError('Nur JPG und PNG Dateien sind erlaubt');
+        return;
+      }
+      
+      // Validate file size (10MB limit)
+      if (file.size > 10 * 1024 * 1024) {
+        setError('Datei ist zu groß. Maximum 10MB erlaubt.');
+        return;
+      }
+      
+      setImageFile(file);
+    }
+  };
+
+  const handleEditImage = (image) => {
+    setEditingImage(image);
+    setImageType(image.imageType);
+    setImageText(image.imageText || '');
+    setImageDescription(image.description || '');
+    setSelectedDevice(image.selectedDevice || '');
+    setShowEditModal(true);
+  };
+
+  const handleSaveImageEdit = async () => {
+    if (!editingImage) return;
+
+    try {
+      const response = await fetch(`/api/structure/image/${editingImage.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.token}`
+        },
+        body: JSON.stringify({
+          imageType: imageType,
+          imageText: imageText,
+          description: imageDescription,
+          selectedDevice: selectedDevice
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to update image');
+      }
+
+      // Reload images
+      await fetchImages(selectedNode.id);
+      
+      // Reset form and close modal
+      setShowEditModal(false);
+      setEditingImage(null);
+      setImageType('Raum');
+      setImageText('');
+      setImageDescription('');
+      setSelectedDevice('');
+      
+    } catch (error) {
+      console.error('Error updating image:', error);
+      setError('Fehler beim Aktualisieren des Bildes');
+    }
+  };
+
+  // Funktion zum Laden der verfügbaren Geräte für Heizkörper-Bilder
+  const fetchHeaterDevices = async (nodeId) => {
+    if (!nodeId) return;
+    
+    try {
+      const response = await fetch(`/api/config/assets/${nodeId}/devices`, {
+        headers: {
+          'Authorization': `Bearer ${session.token}`
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch devices');
+      }
+
+      const data = await response.json();
+      
+      // Zeige alle verfügbaren Geräte an, nicht nur solche mit "Heizkörper" im Namen
+      // Der Benutzer kann selbst entscheiden, welches Gerät relevant ist
+      const availableDevices = data.assigned || [];
+      setHeaterDevices(availableDevices);
+      
+      // Debug-Ausgabe
+      console.log('Verfügbare Geräte für Node:', nodeId, availableDevices);
+      
+    } catch (error) {
+      console.error('Error fetching devices:', error);
+      setHeaterDevices([]);
+    }
+  };
+
+  // Hilfsfunktion um das Device-Label aus der Device-ID zu finden
+  const getDeviceLabel = (deviceId) => {
+    if (!deviceId) return '';
+    
+    // Suche in den aktuell geladenen Geräten des Nodes
+    if (devices && devices.length > 0) {
+      // Versuche verschiedene ID-Formate
+      let device = devices.find(d => d.id.id === deviceId);
+      if (!device) {
+        device = devices.find(d => d.id === deviceId);
+      }
+      if (!device) {
+        device = devices.find(d => d.deviceId === deviceId);
+      }
+      
+      if (device) {
+        return device.label || device.name || deviceId;
+      }
+    }
+    
+    // Fallback: Suche in den Heizkörper-Geräten (falls geladen)
+    if (heaterDevices && heaterDevices.length > 0) {
+      // Versuche verschiedene ID-Formate
+      let device = heaterDevices.find(d => d.id.id === deviceId);
+      if (!device) {
+        device = heaterDevices.find(d => d.id === deviceId);
+      }
+      if (!device) {
+        device = heaterDevices.find(d => d.deviceId === deviceId);
+      }
+      
+      if (device) {
+        return device.label || device.name || deviceId;
+      }
+    }
+    
+    return deviceId;
   };
 
 
@@ -1139,6 +1553,18 @@ export default function Structure() {
                     Devices
                   </button>
                 </li>
+                <li className="nav-item">
+                  <button 
+                    className={`nav-link ${activeTab === 'images' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('images')}
+                  >
+                    <FontAwesomeIcon icon={faImage} className="me-2" />
+                    Bilder
+                    {images.length > 0 && (
+                      <span className="badge bg-secondary ms-2">{images.length}</span>
+                    )}
+                  </button>
+                </li>
               </ul>
 
               {activeTab === 'details' && (
@@ -1203,7 +1629,7 @@ export default function Structure() {
                               checked={operationalMode === '0'}
                               onChange={(e) => handleOperationalModeChange(e.target.value)}
                             />
-                            <label className="form-check-label" htmlFor="operationalMode0">
+                            <label className="form-check-label text-dark" htmlFor="operationalMode0">
                               Kein
                             </label>
                           </div>
@@ -1217,7 +1643,7 @@ export default function Structure() {
                               checked={operationalMode === '2'}
                               onChange={(e) => handleOperationalModeChange(e.target.value)}
                             />
-                            <label className="form-check-label" htmlFor="operationalMode2">
+                            <label className="form-check-label text-dark" htmlFor="operationalMode2">
                               Externes Wandpanel
                             </label>
                           </div>
@@ -1231,12 +1657,43 @@ export default function Structure() {
                               checked={operationalMode === '10'}
                               onChange={(e) => handleOperationalModeChange(e.target.value)}
                             />
-                            <label className="form-check-label" htmlFor="operationalMode10">
+                            <label className="form-check-label text-dark" htmlFor="operationalMode10">
                               Externes Thermometer
                             </label>
                           </div>
                         </div>
                       </div>
+
+                      {/* Device Selection Dropdown for External Panel/Thermometer */}
+                      {(operationalMode === '2' || operationalMode === '10') && (
+                        <div className="mb-3">
+                          <label className="form-label fw-bold">
+                            {operationalMode === '2' ? 'Wandpanel-Gerät' : 'Thermometer-Gerät'} *
+                          </label>
+                          {devices.length > 0 ? (
+                            <select
+                              className="form-select"
+                              value={operationalDevice}
+                              onChange={(e) => handleOperationalDeviceChange(e.target.value)}
+                              required
+                            >
+                              <option value="">Bitte Gerät auswählen...</option>
+                              {devices.map(device => (
+                                <option key={device.id.id} value={device.id.id}>
+                                  {device.label || device.name} ({device.type})
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <div className="alert alert-warning">
+                              <small>
+                                Keine Geräte in diesem Node gefunden. 
+                                Bitte ordnen Sie zuerst Geräte diesem Node zu.
+                              </small>
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                       <div className="d-flex justify-content-end mt-3">
                         <button
@@ -1582,6 +2039,152 @@ export default function Structure() {
                   </div>
                 </div>
               )}
+
+              {activeTab === 'images' && (
+                <div className="p-3">
+                  {selectedNode ? (
+                    <div>
+                      {/* Upload Button */}
+                      <div className="d-flex justify-content-between align-items-center mb-4">
+                        <h5 className="mb-0">Bilder für {selectedNode.text}</h5>
+                        <button
+                          className="btn btn-primary"
+                          onClick={() => setShowImageModal(true)}
+                          disabled={selectedNode.id.startsWith('temp_')}
+                        >
+                          <FontAwesomeIcon icon={faUpload} className="me-2" />
+                          Bild hochladen
+                        </button>
+                      </div>
+
+                      {/* Images Grid */}
+                      {loadingImages ? (
+                        <div className="text-center py-4">
+                          <div className="spinner-border" role="status">
+                            <span className="visually-hidden">Loading...</span>
+                          </div>
+                        </div>
+                      ) : images.length > 0 ? (
+                        <div className="row g-3">
+                          {images.map((image) => (
+                            <div key={image.id} className="col-md-4 col-lg-3">
+                              <div className="card h-100">
+                                <div className="position-relative">
+                                  <img
+                                    src={image.imageUrl}
+                                    alt={image.filename}
+                                    className="card-img-top"
+                                    style={{
+                                      height: '200px',
+                                      objectFit: 'cover',
+                                      cursor: 'pointer'
+                                    }}
+                                    onClick={() => setSelectedImage(image)}
+                                  />
+                                  {image.isPrimary && (
+                                    <div 
+                                      className="position-absolute top-0 start-0 m-2 badge bg-warning"
+                                      title="Hauptbild"
+                                    >
+                                      <FontAwesomeIcon icon={faStar} />
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="card-body p-2">
+                                  <h6 className="card-title text-truncate" title={image.filename}>
+                                    {image.filename}
+                                  </h6>
+                                  <div className="mb-2">
+                                    <span className={`badge ${
+                                      image.imageType === 'Heizkörper' ? 'bg-danger' :
+                                      image.imageType === 'Raum' ? 'bg-primary' :
+                                      'bg-success'
+                                    }`}>
+                                      {image.imageType}
+                                    </span>
+                                  </div>
+                                  <p className="card-text small text-muted">
+                                    {(image.fileSize / 1024).toFixed(1)} KB
+                                  </p>
+                                  {image.imageText && (
+                                    <p className="card-text small fw-bold">
+                                      {image.imageText}
+                                    </p>
+                                  )}
+                                  {image.selectedDevice && (
+                                    <p className="card-text small text-info">
+                                      <strong>Gerät:</strong> {getDeviceLabel(image.selectedDevice)}
+                                    </p>
+                                  )}
+                                  {image.description && (
+                                    <p className="card-text small text-muted">
+                                      {image.description}
+                                    </p>
+                                  )}
+                                </div>
+                                <div className="card-footer p-2">
+                                  <div className="btn-group w-100" role="group">
+                                    <button
+                                      className="btn btn-sm btn-outline-info"
+                                      onClick={() => setSelectedImage(image)}
+                                      title="Anzeigen"
+                                    >
+                                      <FontAwesomeIcon icon={faEye} />
+                                    </button>
+                                    <button
+                                      className="btn btn-sm btn-outline-secondary"
+                                      onClick={() => handleEditImage(image)}
+                                      title="Bearbeiten"
+                                    >
+                                      <FontAwesomeIcon icon={faEdit} />
+                                    </button>
+                                    {!image.isPrimary && (
+                                      <button
+                                        className="btn btn-sm btn-outline-warning"
+                                        onClick={() => handleSetPrimaryImage(image.id)}
+                                        title="Als Hauptbild setzen"
+                                      >
+                                        <FontAwesomeIcon icon={faStar} />
+                                      </button>
+                                    )}
+                                    <button
+                                      className="btn btn-sm btn-outline-danger"
+                                      onClick={() => handleImageDelete(image.id)}
+                                      title="Löschen"
+                                    >
+                                      <FontAwesomeIcon icon={faTrash} />
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-center py-5">
+                          <FontAwesomeIcon icon={faImage} size="3x" className="text-muted mb-3" />
+                          <h5 className="text-muted">Keine Bilder vorhanden</h5>
+                          <p className="text-muted">Laden Sie Ihr erstes Bild für diesen Node hoch.</p>
+                          <button
+                            className="btn btn-primary"
+                            onClick={() => setShowImageModal(true)}
+                            disabled={selectedNode.id.startsWith('temp_')}
+                          >
+                            <FontAwesomeIcon icon={faUpload} className="me-2" />
+                            Erstes Bild hochladen
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-center text-muted py-5">
+                      <FontAwesomeIcon icon={faImage} size="3x" className="mb-3" />
+                      <h5>Bitte wählen Sie einen Node aus</h5>
+                      <p>Wählen Sie einen Node aus der Baumstruktur aus, um dessen Bilder anzuzeigen.</p>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1604,6 +2207,372 @@ export default function Structure() {
         >
           <div className="spinner-border" role="status">
             <span className="visually-hidden">Loading...</span>
+          </div>
+        </div>
+      )}
+
+      {/* Upload Modal */}
+      {showImageModal && (
+        <div 
+          className="modal show d-block" 
+          style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
+          onClick={() => setShowImageModal(false)}
+        >
+          <div 
+            className="modal-dialog modal-dialog-centered"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">
+                  <FontAwesomeIcon icon={faUpload} className="me-2" />
+                  Bild hochladen
+                </h5>
+                <button 
+                  type="button" 
+                  className="btn-close"
+                  onClick={() => setShowImageModal(false)}
+                ></button>
+              </div>
+              <div className="modal-body">
+                <div className="mb-3">
+                  <label className="form-label">Datei auswählen</label>
+                  <input
+                    type="file"
+                    className="form-control"
+                    accept="image/jpeg,image/png"
+                    onChange={handleFileSelect}
+                  />
+                  <div className="form-text">
+                    Erlaubte Formate: JPG, PNG (max. 10MB)
+                  </div>
+                </div>
+                
+                {imageFile && (
+                  <div className="mb-3">
+                    <div className="alert alert-info">
+                      <strong>Ausgewählte Datei:</strong> {imageFile.name} 
+                      ({(imageFile.size / 1024).toFixed(1)} KB)
+                    </div>
+                  </div>
+                )}
+                
+                <div className="mb-3">
+                  <label className="form-label">Bildtyp *</label>
+                  <select
+                    className="form-select"
+                    value={imageType}
+                    onChange={(e) => setImageType(e.target.value)}
+                    required
+                  >
+                    <option value="Raum">Raum</option>
+                    <option value="Heizkörper">Heizkörper</option>
+                    <option value="Grundriss">Grundriss</option>
+                  </select>
+                </div>
+
+                {imageType === 'Heizkörper' && (
+                  <div className="mb-3">
+                    <label className="form-label">Gerät auswählen *</label>
+                    {heaterDevices.length > 0 ? (
+                      <select
+                        className="form-select"
+                        value={selectedDevice}
+                        onChange={(e) => setSelectedDevice(e.target.value)}
+                        required
+                      >
+                        <option value="">Bitte Gerät auswählen...</option>
+                        {heaterDevices.map(device => (
+                          <option key={device.id.id} value={device.id.id}>
+                            {device.label || device.name} ({device.type})
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className="alert alert-warning">
+                        <small>
+                          Keine Geräte in diesem Node gefunden. 
+                          Bitte ordnen Sie zuerst Geräte diesem Node zu.
+                        </small>
+                      </div>
+                    )}
+                  </div>
+                )}
+                
+                <div className="mb-3">
+                  <label className="form-label">Text (optional)</label>
+                  <textarea
+                    className="form-control"
+                    rows="3"
+                    value={imageText}
+                    onChange={(e) => setImageText(e.target.value)}
+                    placeholder="Text für das Bild..."
+                  />
+                </div>
+                
+                <div className="mb-3">
+                  <label className="form-label">Beschreibung (optional)</label>
+                  <textarea
+                    className="form-control"
+                    rows="3"
+                    value={imageDescription}
+                    onChange={(e) => setImageDescription(e.target.value)}
+                    placeholder="Beschreibung des Bildes..."
+                  />
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button 
+                  type="button" 
+                  className="btn btn-secondary"
+                  onClick={() => setShowImageModal(false)}
+                >
+                  Abbrechen
+                </button>
+                <button 
+                  type="button" 
+                  className="btn btn-primary"
+                  onClick={handleImageUpload}
+                  disabled={!imageFile || uploadingImage || (imageType === 'Heizkörper' && !selectedDevice)}
+                >
+                  {uploadingImage ? (
+                    <>
+                      <div className="spinner-border spinner-border-sm me-2" role="status">
+                        <span className="visually-hidden">Loading...</span>
+                      </div>
+                      Wird hochgeladen...
+                    </>
+                  ) : (
+                    <>
+                      <FontAwesomeIcon icon={faUpload} className="me-2" />
+                      Hochladen
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Image Preview Modal */}
+      {selectedImage && (
+        <div 
+          className="modal show d-block" 
+          style={{ backgroundColor: 'rgba(0,0,0,0.8)' }}
+          onClick={() => setSelectedImage(null)}
+        >
+          <div 
+            className="modal-dialog modal-xl modal-dialog-centered"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-content">
+                              <div className="modal-header">
+                  <h5 className="modal-title">
+                    <FontAwesomeIcon icon={faEye} className="me-2" />
+                    {selectedImage.filename}
+                    <span className={`badge ms-2 ${
+                      selectedImage.imageType === 'Heizkörper' ? 'bg-danger' :
+                      selectedImage.imageType === 'Raum' ? 'bg-primary' :
+                      'bg-success'
+                    }`}>
+                      {selectedImage.imageType}
+                    </span>
+                    {selectedImage.isPrimary && (
+                      <span className="badge bg-warning ms-2">
+                        <FontAwesomeIcon icon={faStar} /> Hauptbild
+                      </span>
+                    )}
+                  </h5>
+                <button 
+                  type="button" 
+                  className="btn-close"
+                  onClick={() => setSelectedImage(null)}
+                ></button>
+              </div>
+              <div className="modal-body text-center">
+                <img
+                  src={selectedImage.imageUrl}
+                  alt={selectedImage.filename}
+                  className="img-fluid"
+                  style={{ maxHeight: '70vh' }}
+                />
+                
+                {selectedImage.imageText && (
+                  <div className="mt-3">
+                    <p className="fw-bold">{selectedImage.imageText}</p>
+                  </div>
+                )}
+                
+                {selectedImage.selectedDevice && (
+                  <div className="mt-3">
+                    <p className="text-info">
+                      <strong>Gerät:</strong> {getDeviceLabel(selectedImage.selectedDevice)}
+                    </p>
+                  </div>
+                )}
+                
+                {selectedImage.description && (
+                  <div className="mt-3">
+                    <p className="text-muted">{selectedImage.description}</p>
+                  </div>
+                )}
+                
+                <div className="mt-3">
+                  <small className="text-muted">
+                    Größe: {(selectedImage.fileSize / 1024).toFixed(1)} KB | 
+                    Hochgeladen: {new Date(selectedImage.uploadedAt).toLocaleString('de-DE')}
+                    {selectedImage.uploadedBy && (
+                      <> | von: {selectedImage.uploadedBy}</>
+                    )}
+                  </small>
+                </div>
+              </div>
+              <div className="modal-footer">
+                {!selectedImage.isPrimary && (
+                  <button 
+                    type="button" 
+                    className="btn btn-warning"
+                    onClick={() => {
+                      handleSetPrimaryImage(selectedImage.id);
+                      setSelectedImage(null);
+                    }}
+                  >
+                    <FontAwesomeIcon icon={faStar} className="me-2" />
+                    Als Hauptbild setzen
+                  </button>
+                )}
+                <button 
+                  type="button" 
+                  className="btn btn-danger"
+                  onClick={() => {
+                    handleImageDelete(selectedImage.id);
+                    setSelectedImage(null);
+                  }}
+                >
+                  <FontAwesomeIcon icon={faTrash} className="me-2" />
+                  Löschen
+                </button>
+                <button 
+                  type="button" 
+                  className="btn btn-secondary"
+                  onClick={() => setSelectedImage(null)}
+                >
+                  Schließen
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Image Modal */}
+      {showEditModal && editingImage && (
+        <div 
+          className="modal show d-block" 
+          style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
+          onClick={() => setShowEditModal(false)}
+        >
+          <div 
+            className="modal-dialog modal-dialog-centered"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">
+                  <FontAwesomeIcon icon={faEdit} className="me-2" />
+                  Bild bearbeiten: {editingImage.filename}
+                </h5>
+                <button 
+                  type="button" 
+                  className="btn-close"
+                  onClick={() => setShowEditModal(false)}
+                ></button>
+              </div>
+              <div className="modal-body">
+                <div className="mb-3">
+                  <label className="form-label">Bildtyp *</label>
+                  <select
+                    className="form-select"
+                    value={imageType}
+                    onChange={(e) => setImageType(e.target.value)}
+                    required
+                  >
+                    <option value="Raum">Raum</option>
+                    <option value="Heizkörper">Heizkörper</option>
+                    <option value="Grundriss">Grundriss</option>
+                  </select>
+                </div>
+
+                {imageType === 'Heizkörper' && (
+                  <div className="mb-3">
+                    <label className="form-label">Gerät auswählen *</label>
+                    {heaterDevices.length > 0 ? (
+                      <select
+                        className="form-select"
+                        value={selectedDevice}
+                        onChange={(e) => setSelectedDevice(e.target.value)}
+                        required
+                      >
+                        <option value="">Bitte Gerät auswählen...</option>
+                        {heaterDevices.map(device => (
+                          <option key={device.id.id} value={device.id.id}>
+                            {device.label || device.name} ({device.type})
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className="alert alert-warning">
+                        <small>
+                          Keine Geräte in diesem Node gefunden. 
+                          Bitte ordnen Sie zuerst Geräte diesem Node zu.
+                        </small>
+                      </div>
+                    )}
+                  </div>
+                )}
+                
+                <div className="mb-3">
+                  <label className="form-label">Text</label>
+                  <textarea
+                    className="form-control"
+                    rows="3"
+                    value={imageText}
+                    onChange={(e) => setImageText(e.target.value)}
+                    placeholder="Text für das Bild..."
+                  />
+                </div>
+                
+                <div className="mb-3">
+                  <label className="form-label">Beschreibung</label>
+                  <textarea
+                    className="form-control"
+                    rows="3"
+                    value={imageDescription}
+                    onChange={(e) => setImageDescription(e.target.value)}
+                    placeholder="Beschreibung des Bildes..."
+                  />
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button 
+                  type="button" 
+                  className="btn btn-secondary"
+                  onClick={() => setShowEditModal(false)}
+                >
+                  Abbrechen
+                </button>
+                <button 
+                  type="button" 
+                  className="btn btn-primary"
+                  onClick={handleSaveImageEdit}
+                  disabled={imageType === 'Heizkörper' && !selectedDevice}
+                >
+                  <FontAwesomeIcon icon={faCheck} className="me-2" />
+                  Speichern
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

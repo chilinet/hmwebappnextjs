@@ -64,7 +64,7 @@ export default async function handler(req, res) {
 
     case 'PUT':
       try {
-        const { nodeId, name, type, label, operationalMode } = req.body;
+        const { nodeId, name, type, label, operationalMode, operationalDevice } = req.body;
         if (!nodeId) {
           return res.status(400).json({ message: 'Node ID is required' });
         }
@@ -101,7 +101,8 @@ export default async function handler(req, res) {
                   ...node.data,
                   type: type || node.data?.type,
                   label: label || node.data?.label,
-                  operationalMode: operationalMode !== undefined ? operationalMode : node.data?.operationalMode
+                  operationalMode: operationalMode !== undefined ? operationalMode : node.data?.operationalMode,
+                  operationalDevice: operationalDevice !== undefined ? operationalDevice : node.data?.operationalDevice
                 }
               };
             }
@@ -184,7 +185,8 @@ export default async function handler(req, res) {
                   data: {
                     type: nodeData.type,
                     label: nodeData.label,
-                    operationalMode: nodeData.operationalMode || '0'
+                    operationalMode: nodeData.operationalMode || '0',
+                    operationalDevice: nodeData.operationalDevice || ''
                   }
                 }]
               };

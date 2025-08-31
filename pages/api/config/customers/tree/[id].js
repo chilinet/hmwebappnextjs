@@ -39,10 +39,11 @@ async function fetchAssetTree(customerId, tbToken) {
         id: asset.id.id,
         name: asset.name,
         type: asset.type,
-        label: asset.label || asset.name,
+        label: asset.label,
         children: [],
         parentId: null,
-        hasDevices: false // Initialisiere hasDevices mit false
+        hasDevices: false, // Initialisiere hasDevices mit false
+        relatedDevices: [] // Initialisiere relatedDevices als leeres Array
       });
     });
 
@@ -55,25 +56,90 @@ async function fetchAssetTree(customerId, tbToken) {
             'X-Authorization': `Bearer ${tbToken}`
           }
         }).then(res => res.json()),
-        // Device-Beziehungen
-        fetch(`${process.env.THINGSBOARD_URL}/api/relations/info?fromId=${asset.id.id}&fromType=ASSET&relationType=CONTAINS&toType=DEVICE`, {
+        // Device-Beziehungen - verwende relations/info für Entity-Informationen, aber filtere nach DEVICE
+        fetch(`${process.env.THINGSBOARD_URL}/api/relations/info?fromId=${asset.id.id}&fromType=ASSET&relationType=Contains&toType=DEVICE`, {
           headers: {
             'X-Authorization': `Bearer ${tbToken}`
           }
-        }).then(res => res.json())
+        }).then(res => res.json()).then(relations => {
+          // Filtere nur Device-Entities heraus
+          return relations.filter(relation => relation.to && relation.to.entityType === 'DEVICE');
+        })
       ]);
     });
 
     const relationsResults = await Promise.all(relationPromises);
+
+    // Sammle alle Device-IDs für Batch-Abruf
+    const allDeviceIds = new Set();
+    relationsResults.forEach(([assetRelations, deviceRelations]) => {
+      if (deviceRelations && deviceRelations.length > 0) {
+        deviceRelations.forEach(relation => {
+          if (relation.to && relation.to.id) {
+            allDeviceIds.add(relation.to.id);
+          }
+        });
+      }
+    });
+
+    console.log('All device IDs found:', Array.from(allDeviceIds));
+
+    // Hole alle Device-Details in einem Batch
+    const deviceDetailsMap = new Map();
+    if (allDeviceIds.size > 0) {
+      console.log(`Fetching details for ${allDeviceIds.size} devices...`);
+      const deviceDetailsPromises = Array.from(allDeviceIds).map(deviceId =>
+        fetch(`${process.env.THINGSBOARD_URL}/api/device/${deviceId}`, {
+          headers: {
+            'X-Authorization': `Bearer ${tbToken}`
+          }
+        }).then(res => res.json()).catch(err => {
+          console.error(`Error fetching device ${deviceId}:`, err);
+          return null;
+        })
+      );
+
+      const deviceDetails = await Promise.all(deviceDetailsPromises);
+      console.log('Device details received:', deviceDetails.length);
+      deviceDetails.forEach(device => {
+        if (device && device.id) {
+          deviceDetailsMap.set(device.id.id, device);
+          console.log(`Device ${device.id.id}: ${device.name} (${device.label})`);
+        }
+      });
+    }
+
+    console.log('Device details map size:', deviceDetailsMap.size);
 
     // Verarbeite die Beziehungen
     relationsResults.forEach(([assetRelations, deviceRelations], index) => {
       const asset = assets[index];
       const assetInMap = assetMap.get(asset.id.id);
 
-      // Setze hasDevices basierend auf vorhandenen Device-Beziehungen
+      console.log(`Processing asset ${asset.name}: ${deviceRelations ? deviceRelations.length : 0} device relations`);
+
+      // Setze hasDevices und relatedDevices nur wenn tatsächlich Devices vorhanden sind
       if (deviceRelations && deviceRelations.length > 0) {
         assetInMap.hasDevices = true;
+        // Sammle Device-Informationen mit Details
+        assetInMap.relatedDevices = deviceRelations.map(relation => {
+          const deviceId = relation.to.id;
+          const deviceDetails = deviceDetailsMap.get(deviceId);
+          
+          console.log(`Device relation: ${deviceId}, details:`, deviceDetails);
+          
+          return {
+            id: deviceId,
+            name: deviceDetails?.name || 'Unbekannt',
+            type: deviceDetails?.type || 'Unbekannt',
+            label: deviceDetails?.label || 'Unbekannt'
+          };
+        });
+        console.log(`Asset ${asset.name} has ${assetInMap.relatedDevices.length} devices`);
+      } else {
+        // Keine Devices vorhanden
+        assetInMap.hasDevices = false;
+        assetInMap.relatedDevices = [];
       }
 
       // Verarbeite Asset-Beziehungen
@@ -112,6 +178,12 @@ function buildSubTree(asset, assetMap) {
       .map(child => buildSubTree(child, assetMap))
       .sort((a, b) => a.name.localeCompare(b.name))
   };
+  
+  // Füge relatedDevices nur hinzu, wenn es tatsächlich Devices gibt
+  if (asset.hasDevices && asset.relatedDevices && asset.relatedDevices.length > 0) {
+    node.relatedDevices = asset.relatedDevices;
+  }
+  
   return node;
 }
 

@@ -33,6 +33,7 @@ function Devices() {
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [refreshInterval, setRefreshInterval] = useState(null);
   const [showScrollToTop, setShowScrollToTop] = useState(false);
+  const [openDropdown, setOpenDropdown] = useState(null);
   const tableContainerRef = useRef(null);
 
   // Load cached data on component mount
@@ -117,6 +118,20 @@ function Devices() {
       };
     }
   }, [devices]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (openDropdown && !event.target.closest('.dropdown')) {
+        setOpenDropdown(null);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [openDropdown]);
 
   const loadCachedDevices = useCallback(() => {
     try {
@@ -372,6 +387,188 @@ function Devices() {
     setShowModal(true);
   };
 
+  const handleDeviceAction = async (device, action, event) => {
+    // Event-Propagation stoppen, damit nicht die Tabellenzeile geklickt wird
+    if (event) {
+      event.stopPropagation();
+    }
+
+    if (!device?.id) {
+      alert('Keine gültige Geräte-ID gefunden');
+      return;
+    }
+
+    // Bestätigung vom Benutzer einholen
+    const actionNames = {
+      'reset': 'Reset',
+      'recalibrate': 'Rekalibrierung'
+    };
+    
+    const confirmed = window.confirm(
+      `Möchten Sie wirklich eine ${actionNames[action]} für das Gerät "${device.name}" durchführen?`
+    );
+    
+    if (!confirmed) return;
+
+    try {
+      // Extrahiere die korrekte Device-ID
+      let deviceId;
+      if (typeof device.id === 'string') {
+        deviceId = device.id;
+      } else if (device.id && typeof device.id === 'object' && device.id.id) {
+        deviceId = device.id.id;
+      } else if (device.id) {
+        deviceId = device.id;
+      } else {
+        alert('Keine gültige Geräte-ID gefunden');
+        return;
+      }
+
+      // Debug-Logging
+      console.log('Frontend Debug - Device object:', device);
+      console.log('Frontend Debug - Extracted deviceId:', deviceId);
+      console.log('Frontend Debug - Action:', action);
+      console.log('Frontend Debug - Session token:', session.token);
+
+      const requestBody = {
+        action: action,
+        device: device,
+        parameters: {
+          deviceName: device.name,
+          deviceType: device.type,
+          timestamp: new Date().toISOString()
+        }
+      };
+      
+      console.log('Frontend Debug - Request body:', requestBody);
+
+      const response = await fetch(`/api/config/devices/${deviceId}/actions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.token}`
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const result = await response.json();
+      
+      if (result.success) {
+        alert(`${actionNames[action]} erfolgreich für Gerät "${device.name}" ausgelöst!`);
+        console.log('Action result:', result);
+      } else {
+        alert(`Fehler bei der ${actionNames[action]}: ${result.error || 'Unbekannter Fehler'}`);
+      }
+
+    } catch (error) {
+      console.error(`Error executing ${action} action:`, error);
+      alert(`Fehler bei der ${actionNames[action]}: ${error.message}`);
+    }
+  };
+
+  const testMelitaAPI = async (device, event) => {
+    // Event-Propagation stoppen
+    if (event) {
+      event.stopPropagation();
+    }
+
+    if (!device?.name) {
+      alert('Keine gültige Geräte-ID gefunden');
+      return;
+    }
+
+    // Bestätigung vom Benutzer einholen
+    const confirmed = window.confirm(
+      `Möchten Sie die Melita.io API für das Gerät "${device.name}" testen?\n\nDies wird eine Test-Downlink-Nachricht senden.`
+    );
+    
+    if (!confirmed) return;
+
+    try {
+      // Extrahiere die korrekte Device-ID
+      let deviceId;
+      if (typeof device.id === 'string') {
+        deviceId = device.id;
+      } else if (device.id && typeof device.id === 'object' && device.id.id) {
+        deviceId = device.id.id;
+      } else if (device.id) {
+        deviceId = device.id;
+      } else {
+        alert('Keine gültige Geräte-ID gefunden');
+        return;
+      }
+
+      // Extrahiere die devEUI aus den Gerätedaten
+      let devEUI = device.name;
+      
+      // Falls keine devEUI gefunden, verwende die Device-ID (falls es eine gültige EUI ist)
+      if (!devEUI) {
+        // Prüfe ob die Device-ID eine gültige 16-Zeichen Hex-EUI ist
+        if (/^[0-9a-fA-F]{16}$/i.test(deviceId)) {
+          devEUI = deviceId;
+        } else {
+          alert(`Keine gültige Device EUI gefunden für Gerät "${device.name}".\n\nErwartet: 16-Zeichen Hex-String (z.B. 70b3d52dd3027742)\nGefunden: ${deviceId}\n\nBitte prüfen Sie die Gerätekonfiguration.`);
+          return;
+        }
+      }
+
+      // Test-Payload für Melita.io API (korrekte Struktur)
+      const testPayload = {
+        deviceEui: devEUI,
+        payload: "MA==", // "0" in Base64
+        priority: "LOW",
+        confirmed: false,
+        fPort: 2
+      };
+
+      console.log('Melita API Test - Request:', testPayload);
+      console.log('Device EUI format check:', /^[0-9a-fA-F]{16}$/i.test(devEUI) ? 'Valid 16-char hex' : 'Invalid format');
+      console.log('Original device ID:', deviceId);
+      console.log('Extracted devEUI:', devEUI);
+
+      const response = await fetch('/api/melita/downlink', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.token}`
+        },
+        body: JSON.stringify(testPayload)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        let errorMessage = `HTTP error! status: ${response.status}`;
+        
+        if (errorData.error) {
+          errorMessage += ` - ${errorData.error}`;
+        }
+        
+        if (errorData.details) {
+          errorMessage += `\n\nDetails: ${errorData.details}`;
+        }
+        
+        throw new Error(errorMessage);
+      }
+
+      const result = await response.json();
+      
+      if (result.success) {
+        alert(`Melita.io API Test erfolgreich!\n\nGerät: ${device.name}\nDevice EUI: ${devEUI}\nPayload: ${testPayload.payload}\nAntwort: ${result.message}`);
+        console.log('Melita API Test result:', result);
+      } else {
+        alert(`Melita.io API Test fehlgeschlagen: ${result.error || 'Unbekannter Fehler'}`);
+      }
+
+    } catch (error) {
+      console.error('Error testing Melita API:', error);
+      alert(`Fehler beim Melita.io API Test: ${error.message}`);
+    }
+  };
+
   const formatLastUpdate = (timestamp) => {
     if (!timestamp) return 'Nie';
     return new Date(timestamp).toLocaleString('de-DE');
@@ -558,20 +755,21 @@ function Devices() {
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Batterie</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>FCnt</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Ventil</th>
+                <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Motor Position</th>
+                <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Motor Range</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>RSSI</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>SF</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>SNR</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Signal Quality</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Status</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Letzte Aktivität</th>
+                <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Aktionen</th>
               </tr>
             </thead>
             <tbody>
               {filteredDevices.map((device) => (
                 <tr 
                   key={device.id}
-                  onClick={() => handleRowClick(device)}
-                  style={{ cursor: 'pointer' }}
                 >
                   <td>{device.name}</td>
                   <td>{device.label}</td>
@@ -606,6 +804,16 @@ function Devices() {
                       <div>
                         {Math.round(device.telemetry.PercentValveOpen)}%
                       </div>
+                    ) : '-'}
+                  </td>
+                  <td>
+                    {device.telemetry?.motorPosition !== undefined ? (
+                      <div>{Math.round(device.telemetry.motorPosition)}</div>
+                    ) : '-'}
+                  </td>
+                  <td>
+                    {device.telemetry?.motorRange !== undefined ? (
+                      <div>{Math.round(device.telemetry.motorRange)}</div>
                     ) : '-'}
                   </td>
                   <td>
@@ -648,6 +856,78 @@ function Devices() {
                         }) : 
                         'Nie'
                     }
+                  </td>
+                  <td>
+                    <div className="dropdown position-relative">
+                      <Button
+                        variant="outline-primary"
+                        size="sm"
+                        className="dropdown-toggle"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpenDropdown(openDropdown === device.id ? null : device.id);
+                        }}
+                      >
+                        Aktionen
+                      </Button>
+                      {openDropdown === device.id && (
+                        <ul className="dropdown-menu show position-absolute" style={{ zIndex: 1000 }}>
+                          <li>
+                            <button
+                              className="dropdown-item"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeviceAction(device, 'recalibrate', e);
+                                setOpenDropdown(null);
+                              }}
+                            >
+                              <FontAwesomeIcon icon={faSync} className="me-2" />
+                              Rekalibrierung
+                            </button>
+                          </li>
+                          <li>
+                            <button
+                              className="dropdown-item"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeviceAction(device, 'reset', e);
+                                setOpenDropdown(null);
+                              }}
+                            >
+                              <FontAwesomeIcon icon={faTrash} className="me-2" />
+                              Reset
+                            </button>
+                          </li>
+                          <li><hr className="dropdown-divider" /></li>
+                          <li>
+                            <button
+                              className="dropdown-item"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                testMelitaAPI(device, e);
+                                setOpenDropdown(null);
+                              }}
+                            >
+                              <FontAwesomeIcon icon={faUpload} className="me-2" />
+                              Melita API Test
+                            </button>
+                          </li>
+                          <li>
+                            <button
+                              className="dropdown-item"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRowClick(device);
+                                setOpenDropdown(null);
+                              }}
+                            >
+                              <FontAwesomeIcon icon={faEdit} className="me-2" />
+                              Details anzeigen
+                            </button>
+                          </li>
+                        </ul>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

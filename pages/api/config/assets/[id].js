@@ -111,7 +111,8 @@ export default async function handler(req, res) {
           additionalInfo: assetData.additionalInfo,
           createdTime: assetData.createdTime,
           attributes: assetAttributes,
-          operationalMode: assetAttributes.operationalMode || '0'
+          operationalMode: assetAttributes.operationalMode || '0',
+          operationalDevice: assetAttributes.extTempDevice || ''
         });
       } catch (error) {
         console.error('Error in asset details API:', error);
@@ -139,7 +140,7 @@ export default async function handler(req, res) {
         const currentAsset = await getResponse.json();
         
         // Wenn nur Attribute gesetzt werden, aktualisiere nur die Attribute
-        if ((req.body.runStatus || req.body.fixValue || req.body.schedulerPlan || req.body.childLock !== undefined || req.body.minTemp !== undefined || req.body.maxTemp !== undefined || req.body.overruleMinutes !== undefined || req.body.operationalMode !== undefined) && !req.body.name && !req.body.type && !req.body.label) {
+        if ((req.body.runStatus || req.body.fixValue || req.body.schedulerPlan || req.body.childLock !== undefined || req.body.minTemp !== undefined || req.body.maxTemp !== undefined || req.body.overruleMinutes !== undefined || req.body.operationalMode !== undefined || req.body.extTempDevice !== undefined) && !req.body.name && !req.body.type && !req.body.label) {
                       try {
               const attributesBody = {
                 ...(req.body.runStatus && { runStatus: req.body.runStatus }),
@@ -149,7 +150,8 @@ export default async function handler(req, res) {
                 ...(req.body.minTemp !== undefined && { minTemp: req.body.minTemp }),
                 ...(req.body.maxTemp !== undefined && { maxTemp: req.body.maxTemp }),
                 ...(req.body.overruleMinutes !== undefined && { overruleMinutes: req.body.overruleMinutes }),
-                ...(req.body.operationalMode !== undefined && { operationalMode: req.body.operationalMode })
+                ...(req.body.operationalMode !== undefined && { operationalMode: req.body.operationalMode }),
+                ...(req.body.extTempDevice !== undefined && { extTempDevice: req.body.extTempDevice })
               };
               
               console.log('Updating asset attributes with:', attributesBody);
@@ -217,7 +219,8 @@ export default async function handler(req, res) {
                 additionalInfo: assetData.additionalInfo,
                 createdTime: assetData.createdTime,
                 attributes: assetAttributes,
-                operationalMode: assetAttributes.operationalMode || '0'
+                operationalMode: assetAttributes.operationalMode || '0',
+                operationalDevice: assetAttributes.extTempDevice || ''
               });
             }
           } catch (error) {
@@ -265,6 +268,37 @@ export default async function handler(req, res) {
           } catch (error) {
             console.error('Error updating operationalMode attribute:', error);
             throw new Error(`Failed to update operationalMode attribute: ${error.message}`);
+          }
+        }
+
+        // Wenn extTempDevice gesetzt ist, aktualisiere ihn als Attribut
+        if (req.body.extTempDevice !== undefined) {
+          try {
+            const attributesBody = {
+              extTempDevice: req.body.extTempDevice
+            };
+            
+            console.log('Updating extTempDevice attribute with:', attributesBody);
+            
+            const attributesResponse = await makeThingsBoardRequest(`${TB_API_URL}/api/plugins/telemetry/ASSET/${id}/attributes/SERVER_SCOPE`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Authorization': `Bearer ${session.tbToken}`
+              },
+              body: JSON.stringify(attributesBody)
+            }, session);
+
+            if (!attributesResponse.ok) {
+              const errorText = await attributesResponse.text();
+              console.error('Error updating extTempDevice attribute:', attributesResponse.status, errorText);
+              throw new Error(`Failed to update extTempDevice attribute: ${attributesResponse.statusText}`);
+            } else {
+              console.log('extTempDevice attribute updated successfully in ThingsBoard');
+            }
+          } catch (error) {
+            console.error('Error updating extTempDevice attribute:', error);
+            throw new Error(`Failed to update extTempDevice attribute: ${error.message}`);
           }
         }
 
@@ -379,7 +413,8 @@ export default async function handler(req, res) {
           additionalInfo: updatedData.additionalInfo,
           createdTime: updatedData.createdTime,
           attributes: assetAttributes,
-          operationalMode: assetAttributes.operationalMode || '0'
+          operationalMode: assetAttributes.operationalMode || '0',
+          operationalDevice: assetAttributes.extTempDevice || ''
         });
 
       } catch (error) {

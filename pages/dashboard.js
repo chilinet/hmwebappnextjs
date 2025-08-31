@@ -21,7 +21,9 @@ import {
   faLayerGroup,
   faHome,
   faDoorOpen,
-  faBug
+  faBug,
+  faImage,
+  faStar
 } from '@fortawesome/free-solid-svg-icons';
 import { Tree } from '@minoru/react-dnd-treeview';
 import { DndProvider } from 'react-dnd';
@@ -98,6 +100,11 @@ export default function Dashboard() {
   const [showTelemetryModal, setShowTelemetryModal] = useState(false);
   const [selectedDeviceForTelemetry, setSelectedDeviceForTelemetry] = useState(null);
   const [telemetryModalData, setTelemetryModalData] = useState([]);
+  
+  // Image display states (read-only)
+  const [images, setImages] = useState([]);
+  const [loadingImages, setLoadingImages] = useState(false);
+  const [selectedImage, setSelectedImage] = useState(null);
   const [loadingTelemetryModal, setLoadingTelemetryModal] = useState(false);
 
   // Tab navigation
@@ -529,6 +536,25 @@ export default function Dashboard() {
       setDevices([]);
     }
   }, [selectedNode]);
+
+  useEffect(() => {
+    if (selectedNode?.id && !selectedNode.id.startsWith('temp_')) {
+      setLoadingImages(true);
+      fetchImages(selectedNode.id)
+        .finally(() => setLoadingImages(false));
+    } else {
+      setImages([]);
+    }
+  }, [selectedNode]);
+
+  // Wenn der aktive Tab "Bilder" ist und sich der Node ändert, aktualisiere den Inhalt
+  useEffect(() => {
+    if (activeTab === 'images' && selectedNode?.id && !selectedNode.id.startsWith('temp_')) {
+      setLoadingImages(true);
+      fetchImages(selectedNode.id)
+        .finally(() => setLoadingImages(false));
+    }
+  }, [activeTab, selectedNode]);
 
   useEffect(() => {
     if (selectedNode?.id && !selectedNode.id.startsWith('temp_')) {
@@ -1172,6 +1198,74 @@ export default function Dashboard() {
     } finally {
       setLoadingDevices(false);
     }
+  };
+
+  // Funktion zum Laden der Bilder (read-only)
+  const fetchImages = async (assetId) => {
+    if (!assetId) return;
+    
+    setLoadingImages(true);
+    try {
+      // Lade sowohl Bilder als auch Geräte parallel für Device-Labels
+      const [imagesResponse, devicesResponse] = await Promise.all([
+        fetch(`/api/structure/images/${assetId}`, {
+          headers: {
+            'Authorization': `Bearer ${session.token}`
+          }
+        }),
+        fetch(`/api/config/assets/${assetId}/devices`, {
+          headers: {
+            'Authorization': `Bearer ${session.token}`
+          }
+        })
+      ]);
+
+      if (!imagesResponse.ok) {
+        throw new Error('Failed to fetch images');
+      }
+
+      if (!devicesResponse.ok) {
+        throw new Error('Failed to fetch devices');
+      }
+
+      const imagesData = await imagesResponse.json();
+      const devicesData = await devicesResponse.json();
+      
+      // Setze die Bilder
+      setImages(imagesData.images || []);
+      
+      // Aktualisiere die Geräte für Device-Labels
+      setDevices(devicesData.assigned || []);
+      
+    } catch (error) {
+      console.error('Error fetching images:', error);
+      setImages([]);
+    } finally {
+      setLoadingImages(false);
+    }
+  };
+
+  // Hilfsfunktion um das Device-Label aus der Device-ID zu finden
+  const getDeviceLabel = (deviceId) => {
+    if (!deviceId) return '';
+    
+    // Suche in den aktuell geladenen Geräten des Nodes
+    if (devices && devices.length > 0) {
+      // Versuche verschiedene ID-Formate
+      let device = devices.find(d => d.id.id === deviceId);
+      if (!device) {
+        device = devices.find(d => d.id === deviceId);
+      }
+      if (!device) {
+        device = devices.find(d => d.deviceId === deviceId);
+      }
+      
+      if (device) {
+        return device.label || device.name || deviceId;
+      }
+    }
+    
+    return deviceId;
   };
 
   const fetchTelemetryForDevices = async (devices) => {
@@ -2486,6 +2580,22 @@ export default function Dashboard() {
                     >
                       Devices
                     </button>
+                    <button
+                      className={`nav-link ${activeTab === 'images' ? 'active' : ''}`}
+                      onClick={() => {
+                        setActiveTab('images');
+                        // Load images if not already loaded and we have a selected node
+                        if (selectedNode?.id && !loadingImages) {
+                          fetchImages(selectedNode.id);
+                        }
+                      }}
+                    >
+                      <FontAwesomeIcon icon={faImage} className="me-2" />
+                      Bilder
+                      {images.length > 0 && (
+                        <span className="badge bg-secondary ms-2">{images.length}</span>
+                      )}
+                    </button>
                   </div>
 
                   {/* Save/Cancel Buttons (shown above tabs if there are unsaved changes) */}
@@ -3723,6 +3833,117 @@ export default function Dashboard() {
                       </div>
                     )}
 
+                    {/* Bilder Tab */}
+                    {activeTab === 'images' && (
+                      <div className="tab-pane fade show active">
+                        <div className="col-12">
+                          <div className="card bg-light text-dark">
+                            <div className="card-header d-flex justify-content-between align-items-center">
+                              <h6 className="mb-0">
+                                <FontAwesomeIcon icon={faImage} className="me-2" />
+                                Bilder für {selectedNode?.text || 'diesen Node'}
+                              </h6>
+                              <div className="d-flex gap-2">
+                                {!loadingImages && (
+                                  <button
+                                    className="btn btn-outline-secondary btn-sm"
+                                    onClick={() => {
+                                      if (selectedNode?.id) {
+                                        fetchImages(selectedNode.id);
+                                      }
+                                    }}
+                                    disabled={!selectedNode?.id}
+                                    title="Bilder neu laden"
+                                  >
+                                    <FontAwesomeIcon icon={faRotateRight} className="me-1" />
+                                    Neu laden
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                            <div className="card-body">
+                              {loadingImages ? (
+                                <div className="text-center py-4">
+                                  <div className="spinner-border text-secondary" role="status">
+                                    <span className="visually-hidden">Loading...</span>
+                                  </div>
+                                  <p className="mt-2 text-muted">Lade Bilder...</p>
+                                </div>
+                              ) : images.length > 0 ? (
+                                <div className="row g-3">
+                                  {images.map((image) => (
+                                    <div key={image.id} className="col-md-4 col-lg-3">
+                                      <div className="card h-100">
+                                        <div className="position-relative">
+                                          <img
+                                            src={image.imageUrl}
+                                            alt={image.filename}
+                                            className="card-img-top"
+                                            style={{
+                                              height: '200px',
+                                              objectFit: 'cover',
+                                              cursor: 'pointer'
+                                            }}
+                                            onClick={() => setSelectedImage(image)}
+                                          />
+                                          {image.isPrimary && (
+                                            <div 
+                                              className="position-absolute top-0 start-0 m-2 badge bg-warning"
+                                              title="Hauptbild"
+                                            >
+                                              <FontAwesomeIcon icon={faStar} />
+                                            </div>
+                                          )}
+                                        </div>
+                                        <div className="card-body p-2">
+                                          <h6 className="card-title text-truncate" title={image.filename}>
+                                            {image.filename}
+                                          </h6>
+                                          <div className="mb-2">
+                                            <span className={`badge ${
+                                              image.imageType === 'Heizkörper' ? 'bg-danger' :
+                                              image.imageType === 'Raum' ? 'bg-primary' :
+                                              'bg-success'
+                                            }`}>
+                                              {image.imageType}
+                                            </span>
+                                          </div>
+                                          <p className="card-text small text-muted">
+                                            {(image.fileSize / 1024).toFixed(1)} KB
+                                          </p>
+                                          {image.imageText && (
+                                            <p className="card-text small fw-bold">
+                                              {image.imageText}
+                                            </p>
+                                          )}
+                                          {image.selectedDevice && (
+                                            <p className="card-text small text-info">
+                                              <strong>Gerät:</strong> {getDeviceLabel(image.selectedDevice)}
+                                            </p>
+                                          )}
+                                          {image.description && (
+                                            <p className="card-text small text-muted">
+                                              {image.description}
+                                            </p>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="text-center py-4">
+                                  <FontAwesomeIcon icon={faImage} size="3x" className="text-muted mb-3" />
+                                  <h6 className="mb-0">Keine Bilder vorhanden</h6>
+                                  <p className="text-muted mb-0">Dieser Node hat keine Bilder.</p>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                   </div>
                 </div>
               ) : (
@@ -3747,6 +3968,93 @@ export default function Dashboard() {
         telemetryData={selectedDeviceForTelemetry?.telemetry?.rawData}
         isLoading={false}
       />
+
+      {/* Image Preview Modal */}
+      {selectedImage && (
+        <div 
+          className="modal show d-block" 
+          style={{ backgroundColor: 'rgba(0,0,0,0.8)' }}
+          onClick={() => setSelectedImage(null)}
+        >
+          <div 
+            className="modal-dialog modal-xl modal-dialog-centered"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">
+                  <FontAwesomeIcon icon={faImage} className="me-2" />
+                  {selectedImage.filename}
+                  <span className={`badge ms-2 ${
+                    selectedImage.imageType === 'Heizkörper' ? 'bg-danger' :
+                    selectedImage.imageType === 'Raum' ? 'bg-primary' :
+                    'bg-success'
+                  }`}>
+                    {selectedImage.imageType}
+                  </span>
+                  {selectedImage.isPrimary && (
+                    <span className="badge bg-warning ms-2">
+                      <FontAwesomeIcon icon={faStar} /> Hauptbild
+                    </span>
+                  )}
+                </h5>
+                <button 
+                  type="button" 
+                  className="btn-close"
+                  onClick={() => setSelectedImage(null)}
+                ></button>
+              </div>
+              <div className="modal-body text-center">
+                <img
+                  src={selectedImage.imageUrl}
+                  alt={selectedImage.filename}
+                  className="img-fluid"
+                  style={{ maxHeight: '70vh' }}
+                />
+                
+                {selectedImage.imageText && (
+                  <div className="mt-3">
+                    <p className="fw-bold">{selectedImage.imageText}</p>
+                  </div>
+                )}
+                
+                {selectedImage.selectedDevice && (
+                  <div className="mt-3">
+                    <p className="text-info">
+                      <strong>Gerät:</strong> {getDeviceLabel(selectedImage.selectedDevice)}
+                  </p>
+                  </div>
+                )}
+                
+                {selectedImage.description && (
+                  <div className="mt-3">
+                    <p className="text-muted">{selectedImage.description}</p>
+                  </div>
+                )}
+                
+                <div className="mt-3">
+                  <small className="text-muted">
+                    Größe: {(selectedImage.fileSize / 1024).toFixed(1)} KB | 
+                    Hochgeladen: {new Date(selectedImage.uploadedAt).toLocaleString('de-DE')}
+                    {selectedImage.uploadedBy && (
+                      <> | von: {selectedImage.uploadedBy}</>
+                    )}
+                  </small>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button 
+                  type="button" 
+                  className="btn btn-secondary"
+                  onClick={() => setSelectedImage(null)}
+                >
+                  Schließen
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Time Range Selection Modal */}
       {showTimeRangeModal && (
