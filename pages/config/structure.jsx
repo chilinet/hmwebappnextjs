@@ -9,12 +9,56 @@ import { HTML5Backend } from 'react-dnd-html5-backend';
 
 export default function Structure() {
   const router = useRouter();
-  const { data: session } = useSession({
+  const { data: session, status } = useSession({
     required: true,
     onUnauthenticated() {
       router.push('/auth/signin');
     },
   });
+
+  // Check if user has Superadmin role
+  useEffect(() => {
+    if (status === 'loading') return;
+    
+    if (!session) {
+      router.push('/auth/signin');
+      return;
+    }
+
+    // Check if user has Superadmin role (role = 1)
+    if (session.user?.role !== 1) {
+      router.push('/config');
+      return;
+    }
+  }, [session, status, router]);
+
+  // Show loading or access denied if not Superadmin
+  if (status === 'loading') {
+    return (
+      <div className="d-flex justify-content-center align-items-center" style={{ minHeight: '400px' }}>
+        <div className="spinner-border" role="status">
+          <span className="visually-hidden">Loading...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!session || session.user?.role !== 1) {
+    return (
+      <div className="d-flex justify-content-center align-items-center" style={{ minHeight: '400px' }}>
+        <div className="text-center">
+          <h3>Keine Berechtigung</h3>
+          <p>Sie haben keine Berechtigung, diese Seite aufzurufen.</p>
+          <button 
+            className="btn btn-primary"
+            onClick={() => router.push('/config')}
+          >
+            Zurück zur Konfiguration
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);

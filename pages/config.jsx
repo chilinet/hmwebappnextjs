@@ -90,26 +90,28 @@ export default function Config() {
           </div>
         </div>
 
-        {/* Objektstruktur Kachel */}
-        <div className="col-md-4">
-          <div className="card h-100 text-center p-4" 
-               style={{ 
-                 cursor: 'pointer',
-                 backgroundColor: '#2C3E50',
-                 transition: 'background-color 0.3s'
-               }}
-               onMouseOver={e => e.currentTarget.style.backgroundColor = '#1a252f'}
-               onMouseOut={e => e.currentTarget.style.backgroundColor = '#2C3E50'}
-               onClick={() => router.push('/config/structure')}>
-            <div className="card-body">
-              <FontAwesomeIcon icon={faSitemap} size="3x" className="mb-3 text-white" />
-              <h5 className="card-title text-white">Objektstruktur</h5>
-              <p className="card-text text-white-50">
-                Gebäude und Anlagenstruktur verwalten
-              </p>
+        {/* Objektstruktur Kachel - nur für Superadmin */}
+        {isSuperAdmin && (
+          <div className="col-md-4">
+            <div className="card h-100 text-center p-4" 
+                 style={{ 
+                   cursor: 'pointer',
+                   backgroundColor: '#2C3E50',
+                   transition: 'background-color 0.3s'
+                 }}
+                 onMouseOver={e => e.currentTarget.style.backgroundColor = '#1a252f'}
+                 onMouseOut={e => e.currentTarget.style.backgroundColor = '#2C3E50'}
+                 onClick={() => router.push('/config/structure')}>
+              <div className="card-body">
+                <FontAwesomeIcon icon={faSitemap} size="3x" className="mb-3 text-white" />
+                <h5 className="card-title text-white">Objektstruktur</h5>
+                <p className="card-text text-white-50">
+                  Gebäude und Anlagenstruktur verwalten
+                </p>
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         {/* Rollen und Berechtigungen Kachel - nur für Superadmin */}
         {isSuperAdmin && (
@@ -180,30 +182,32 @@ export default function Config() {
           </div>
         </div>
 
-        <div className="col-md-4">
-          <div className="card h-100 text-center p-4" 
-               style={{ 
-                 cursor: 'pointer',
-                 backgroundColor: '#2C3E50',
-                 transition: 'background-color 0.3s'
-               }}
-               onMouseOver={e => e.currentTarget.style.backgroundColor = '#1a252f'}
-               onMouseOut={e => e.currentTarget.style.backgroundColor = '#2C3E50'}
-               onClick={() => router.push('/config/inventory')}>
-            <div className="card-body">
-              <FontAwesomeIcon 
-                icon={faBoxes} 
-                className="mb-3 text-white" 
-                style={{ fontSize: '2rem' }}
-              />
-              <h5 className="card-title text-white">Inventar</h5>
-              <p className="card-text text-white-50">
-                Inventar verwalten
-              </p>
+        {/* Inventar Kachel - nur für Superadmin */}
+        {isSuperAdmin && (
+          <div className="col-md-4">
+            <div className="card h-100 text-center p-4" 
+                 style={{ 
+                   cursor: 'pointer',
+                   backgroundColor: '#2C3E50',
+                   transition: 'background-color 0.3s'
+                 }}
+                 onMouseOver={e => e.currentTarget.style.backgroundColor = '#1a252f'}
+                 onMouseOut={e => e.currentTarget.style.backgroundColor = '#2C3E50'}
+                 onClick={() => router.push('/config/inventory')}>
+              <div className="card-body">
+                <FontAwesomeIcon 
+                  icon={faBoxes} 
+                  className="mb-3 text-white" 
+                  style={{ fontSize: '2rem' }}
+                />
+                <h5 className="card-title text-white">Inventar</h5>
+                <p className="card-text text-white-50">
+                  Inventar verwalten
+                </p>
+              </div>
             </div>
           </div>
-        </div>
-
+        )}
 
 
       </div>

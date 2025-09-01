@@ -1,4 +1,5 @@
 import { useSession } from "next-auth/react";
+import { useRouter } from "next/router";
 import { Table, Spinner, Button, Modal, Nav, Tab, Form, InputGroup } from "react-bootstrap";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faEdit, faTrash, faPlus, faSearch, faEllipsisV, faUserEdit, faExclamationTriangle, faArrowUp } from "@fortawesome/free-solid-svg-icons";
@@ -6,7 +7,54 @@ import Layout from "@/components/Layout";
 import { useState, useMemo, useEffect, useRef } from 'react';
 
 function Inventory() {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
+  const router = useRouter();
+
+  // Check if user has Superadmin role
+  useEffect(() => {
+    if (status === 'loading') return;
+    
+    if (!session) {
+      router.push('/auth/signin');
+      return;
+    }
+
+    // Check if user has Superadmin role (role = 1)
+    if (session.user?.role !== 1) {
+      router.push('/config');
+      return;
+    }
+  }, [session, status, router]);
+
+  // Show loading or access denied if not Superadmin
+  if (status === 'loading') {
+    return (
+      <Layout>
+        <div className="d-flex justify-content-center align-items-center" style={{ minHeight: '400px' }}>
+          <Spinner animation="border" role="status">
+            <span className="visually-hidden">Loading...</span>
+          </Spinner>
+        </div>
+      </Layout>
+    );
+  }
+
+  if (!session || session.user?.role !== 1) {
+    return (
+      <Layout>
+        <div className="d-flex justify-content-center align-items-center" style={{ minHeight: '400px' }}>
+          <div className="text-center">
+            <h3>Keine Berechtigung</h3>
+            <p>Sie haben keine Berechtigung, diese Seite aufzurufen.</p>
+            <Button onClick={() => router.push('/config')} variant="primary">
+              Zurück zur Konfiguration
+            </Button>
+          </div>
+        </div>
+      </Layout>
+    );
+  }
+
   const [devices, setDevices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);

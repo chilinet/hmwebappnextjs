@@ -81,44 +81,41 @@ export default function Navigation() {
                                         <Link 
                                             href="/dashboard" 
                                             className={`dropdown-item d-flex align-items-center ${
-                                                router.pathname === '/dashboard' ? 'active' : ''
+                                                router.pathname === '/dashboard' ? 'active-menu-item' : ''
                                             }`}
                                         >
-                                            <FontAwesomeIcon icon={faTachometerAlt} className="me-2 text-muted" />
+                                            <FontAwesomeIcon icon={faTachometerAlt} className="me-2" />
                                             Dashboard
                                         </Link>
-                                        <Link 
-                                            href="/control" 
-                                            className={`dropdown-item d-flex align-items-center ${
-                                                router.pathname === '/control' ? 'active' : ''
-                                            }`}
-                                        >
-                                            <FontAwesomeIcon icon={faSliders} className="me-2 text-muted" />
-                                            Steuerung
-                                        </Link>
                                         <div className="dropdown-divider"></div>
-                                        <Link href="/profile" className="dropdown-item d-flex align-items-center">
-                                            <FontAwesomeIcon icon={faUser} className="me-2 text-muted" />
+                                        <Link href="/profile" className={`dropdown-item d-flex align-items-center ${
+                                            router.pathname === '/profile' ? 'active-menu-item' : ''
+                                        }`}
+                                        >
+                                            <FontAwesomeIcon icon={faUser} className="me-2" />
                                             Profil
                                         </Link>
                                         <Link 
                                             href="/config" 
                                             className={`dropdown-item d-flex align-items-center ${
-                                                router.pathname.startsWith('/config') ? 'active' : ''
+                                                router.pathname.startsWith('/config') ? 'active-menu-item' : ''
                                             }`}
                                         >
-                                            <FontAwesomeIcon icon={faCog} className="me-2 text-muted" />
+                                            <FontAwesomeIcon icon={faCog} className="me-2" />
                                             Konfiguration
                                         </Link>
-                                        <Link 
+                                        {/* Customer-Sync Admin-Menüpunkt - nur für Superadmin */}
+                                        {session.user?.role === 1 && (
+                                          <Link 
                                             href="/admin/customer-sync" 
                                             className={`dropdown-item d-flex align-items-center ${
-                                                router.pathname === '/admin/customer-sync' ? 'active' : ''
+                                              router.pathname === '/admin/customer-sync' ? 'active-menu-item' : ''
                                             }`}
-                                        >
-                                            <FontAwesomeIcon icon={faUsers} className="me-2 text-muted" />
+                                          >
+                                            <FontAwesomeIcon icon={faUsers} className="me-2" />
                                             Customer-Sync
-                                        </Link>
+                                          </Link>
+                                        )}
                                         <div className="dropdown-divider"></div>
                                         <button 
                                             onClick={handleSignOut}
@@ -142,6 +139,33 @@ export default function Navigation() {
                     </div>
                 </div>
             </div>
+            
+            <style jsx>{`
+                /* Hohe Spezifität für aktive Menüpunkte */
+                .dropdown-menu .dropdown-item.active-menu-item {
+                    background-color: #fd7e14 !important;
+                    color: white !important;
+                }
+                
+                .dropdown-menu .dropdown-item.active-menu-item:hover {
+                    background-color: #e96c11 !important;
+                    color: white !important;
+                }
+                
+                .dropdown-menu .dropdown-item.active-menu-item .fa,
+                .dropdown-menu .dropdown-item.active-menu-item svg {
+                    color: white !important;
+                }
+                
+                /* Überschreibe alle Bootstrap-Standards */
+                .dropdown-menu .dropdown-item.active-menu-item,
+                .dropdown-menu .dropdown-item.active-menu-item:focus,
+                .dropdown-menu .dropdown-item.active-menu-item:active {
+                    background-color: #fd7e14 !important;
+                    color: white !important;
+                    border-color: #fd7e14 !important;
+                }
+            `}</style>
         </nav>
     );
 }

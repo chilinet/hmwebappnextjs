@@ -54,6 +54,7 @@ export const authOptions = {
                 u.email,
                 u.password,
                 u.customerid,
+                u.role,
                 cs.tb_username,
                 cs.tb_password,
                 cs.tb_url
@@ -100,11 +101,13 @@ export const authOptions = {
             email: user.email,
             userid: user.userid,
             customerid: user.customerid,
+            role: user.role,
             token: jwt.sign(
               { 
                 username: user.username,
                 userid: user.userid,
                 customerid: user.customerid,
+                role: user.role,
               },
               process.env.NEXTAUTH_SECRET,
               { expiresIn: '8h' }
@@ -129,6 +132,7 @@ export const authOptions = {
           email: user.email,
           userid: user.userid,
           customerid: user.customerid,
+          role: user.role,
         }
       }
       return token
@@ -143,6 +147,7 @@ export const authOptions = {
         email: token.email,
         userid: token.userid,
         customerid: token.customerid,
+        role: token.role,
       }
       session.token = token.token
       session.tbToken = token.tbToken
