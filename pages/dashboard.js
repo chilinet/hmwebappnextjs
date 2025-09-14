@@ -1387,6 +1387,94 @@ export default function Dashboard() {
     };
   };
 
+  // Helper function to determine operational mode logic for chart data aggregation
+  const getOperationalModeLogic = (node) => {
+    const operationalMode = node?.operationalMode;
+    const extTempDevice = node?.extTempDevice;
+    
+    return {
+      mode: operationalMode || "0",
+      extTempDevice: extTempDevice,
+      // Rules:
+      // "0" or empty: average of all devices with sensorTemperature
+      // "2" (Wandpanel): sensorTemperature and targetTemperature from extTempDevice, average PercentValveOpen
+      // "10" (externer Temperaturfühler): sensorTemperature from extTempDevice, average targetTemperature and PercentValveOpen
+    };
+  };
+
+  // Helper function to aggregate telemetry data based on operational mode
+  const aggregateTelemetryData = (deviceDataArray, key, operationalMode, extTempDevice) => {
+    if (!deviceDataArray || deviceDataArray.length === 0) {
+      return [];
+    }
+
+    // For operational mode "2" (Wandpanel) and "10" (externer Temperaturfühler)
+    // and sensorTemperature key, use data from extTempDevice
+    if ((operationalMode === "2" || operationalMode === "10") && key === "sensorTemperature" && extTempDevice) {
+      const extDeviceData = deviceDataArray.find(deviceData => 
+        deviceData.deviceId === extTempDevice
+      );
+      if (extDeviceData) {
+        return [extDeviceData];
+      }
+    }
+
+    // For operational mode "2" (Wandpanel) and targetTemperature key,
+    // use data from extTempDevice
+    if (operationalMode === "2" && key === "targetTemperature" && extTempDevice) {
+      const extDeviceData = deviceDataArray.find(deviceData => 
+        deviceData.deviceId === extTempDevice
+      );
+      if (extDeviceData) {
+        return [extDeviceData];
+      }
+    }
+
+    // For all other cases, calculate average of all devices with the key
+    const validDevices = deviceDataArray.filter(deviceData => 
+      deviceData.data && deviceData.data.length > 0
+    );
+
+    if (validDevices.length === 0) {
+      return [];
+    }
+
+    if (validDevices.length === 1) {
+      return validDevices;
+    }
+
+    // Calculate average for multiple devices
+    const timePoints = new Map();
+    
+    validDevices.forEach(deviceData => {
+      deviceData.data.forEach(point => {
+        const timestamp = parseInt(point.ts);
+        if (!timePoints.has(timestamp)) {
+          timePoints.set(timestamp, { values: [], count: 0 });
+        }
+        timePoints.get(timestamp).values.push(parseFloat(point.value));
+        timePoints.get(timestamp).count++;
+      });
+    });
+
+    const averagedData = Array.from(timePoints.entries())
+      .map(([timestamp, { values, count }]) => {
+        const averageValue = values.reduce((sum, val) => sum + val, 0) / count;
+        return {
+          ts: timestamp,
+          value: averageValue
+        };
+      })
+      .sort((a, b) => a.ts - b.ts);
+
+    return [{
+      deviceId: 'aggregated',
+      key: key,
+      data: averagedData,
+      isCurrentValue: false
+    }];
+  };
+
   // Funktion zum Generieren von Server-Thumbnails
   const generateServerThumbnails = async (imagesList) => {
     if (!imagesList || imagesList.length === 0) return;
@@ -1679,13 +1767,23 @@ export default function Dashboard() {
       // Convert PostgreSQL data format to expected format
       const formattedData = Object.entries(telemetryResult.data || {}).map(([deviceId, data]) => ({
         deviceId: deviceId,
+        key: 'sensorTemperature',
         data: data.map(point => ({
           ts: parseInt(point.ts), // Ensure ts is a number
           value: parseFloat(point.value) // Ensure value is a number
         }))
       }));
+
+      // Apply operational mode logic to aggregate data
+      const operationalMode = getOperationalModeLogic(selectedNode);
+      const aggregatedData = aggregateTelemetryData(
+        formattedData, 
+        'sensorTemperature', 
+        operationalMode.mode, 
+        operationalMode.extTempDevice
+      );
       
-      setTelemetryData(formattedData);
+      setTelemetryData(aggregatedData);
     } catch (error) {
       if (error.name === 'AbortError') {
         console.log('Telemetry request was cancelled');
@@ -1750,13 +1848,23 @@ export default function Dashboard() {
       // Convert PostgreSQL data format to expected format
       const formattedData = Object.entries(telemetryResult.data || {}).map(([deviceId, data]) => ({
         deviceId: deviceId,
+        key: 'targetTemperature',
         data: data.map(point => ({
           ts: parseInt(point.ts), // Ensure ts is a number
           value: parseFloat(point.value) // Ensure value is a number
         }))
       }));
+
+      // Apply operational mode logic to aggregate data
+      const operationalMode = getOperationalModeLogic(selectedNode);
+      const aggregatedData = aggregateTelemetryData(
+        formattedData, 
+        'targetTemperature', 
+        operationalMode.mode, 
+        operationalMode.extTempDevice
+      );
       
-      setTargetTelemetryData(formattedData);
+      setTargetTelemetryData(aggregatedData);
     } catch (error) {
       if (error.name === 'AbortError') {
         console.log('Target telemetry request was cancelled');
@@ -1819,13 +1927,23 @@ export default function Dashboard() {
       // Convert PostgreSQL data format to expected format
       const formattedData = Object.entries(telemetryResult.data || {}).map(([deviceId, data]) => ({
         deviceId: deviceId,
+        key: 'PercentValveOpen',
         data: data.map(point => ({
           ts: parseInt(point.ts), // Ensure ts is a number
           value: parseFloat(point.value) // Ensure value is a number
         }))
       }));
+
+      // Apply operational mode logic to aggregate data
+      const operationalMode = getOperationalModeLogic(selectedNode);
+      const aggregatedData = aggregateTelemetryData(
+        formattedData, 
+        'PercentValveOpen', 
+        operationalMode.mode, 
+        operationalMode.extTempDevice
+      );
       
-      setValveTelemetryData(formattedData);
+      setValveTelemetryData(aggregatedData);
     } catch (error) {
       if (error.name === 'AbortError') {
         console.log('Valve telemetry request was cancelled');
@@ -2132,11 +2250,10 @@ export default function Dashboard() {
     const series = [];
     const colors = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#feca57', '#ff9ff3', '#54a0ff', '#5f27cd'];
 
+    // Since we now have aggregated data, we show only one series per node
     telemetryData.forEach((deviceData, index) => {
-      const device = devices.find(d => d.id?.id === deviceData.deviceId || d.id === deviceData.deviceId);
-      // Use device label if available, otherwise use name, fallback to device ID
-      const deviceName = device ? (device.label || device.name || `Device ${deviceData.deviceId}`) : `Device ${deviceData.deviceId}`;
-      const keyName = deviceData.key || 'temperature';
+      const nodeName = selectedNode?.label || selectedNode?.text || 'Node';
+      const keyName = deviceData.key || 'sensorTemperature';
       
       const data = deviceData.data.map(point => [
         parseInt(point.ts), // Use timestamp directly for time axis
@@ -2145,17 +2262,28 @@ export default function Dashboard() {
 
       const isCurrentValue = deviceData.isCurrentValue;
       
+      // Determine series name based on operational mode
+      let seriesName = nodeName;
+      if (deviceData.deviceId === 'aggregated') {
+        seriesName = `${nodeName} (Mittelwert)`;
+      } else {
+        // For specific device (extTempDevice), show device name
+        const device = devices.find(d => d.id?.id === deviceData.deviceId || d.id === deviceData.deviceId);
+        const deviceName = device ? (device.label || device.name || `Device ${deviceData.deviceId}`) : `Device ${deviceData.deviceId}`;
+        seriesName = `${nodeName} (${deviceName})`;
+      }
+      
       series.push({
-        name: `${deviceName}${isCurrentValue ? ' - Aktueller Wert' : ''}`,
+        name: `${seriesName}${isCurrentValue ? ' - Aktueller Wert' : ''}`,
         type: 'line',
         data: data,
         smooth: true,
         lineStyle: {
-          color: colors[index % colors.length],
+          color: colors[0], // Use first color for single series
           width: isCurrentValue ? 3 : 2
         },
         itemStyle: {
-          color: colors[index % colors.length]
+          color: colors[0]
         },
         symbol: 'circle',
         symbolSize: isCurrentValue ? 8 : 6,
@@ -2295,10 +2423,10 @@ export default function Dashboard() {
     const series = [];
     const colors = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#feca57', '#ff9ff3', '#54a0ff', '#5f27cd'];
 
+    // Since we now have aggregated data, we show only one series per node
     targetTelemetryData.forEach((deviceData, index) => {
-      const device = devices.find(d => d.id?.id === deviceData.deviceId || d.id === deviceData.deviceId);
-      // Use device label if available, otherwise use name, fallback to device ID
-      const deviceName = device ? (device.label || device.name || `Device ${deviceData.deviceId}`) : `Device ${deviceData.deviceId}`;
+      const nodeName = selectedNode?.label || selectedNode?.text || 'Node';
+      const keyName = deviceData.key || 'targetTemperature';
       
       const data = deviceData.data.map(point => [
         parseInt(point.ts), // Use timestamp directly for time axis
@@ -2307,17 +2435,28 @@ export default function Dashboard() {
 
       const isCurrentValue = deviceData.isCurrentValue;
       
+      // Determine series name based on operational mode
+      let seriesName = nodeName;
+      if (deviceData.deviceId === 'aggregated') {
+        seriesName = `${nodeName} (Mittelwert)`;
+      } else {
+        // For specific device (extTempDevice), show device name
+        const device = devices.find(d => d.id?.id === deviceData.deviceId || d.id === deviceData.deviceId);
+        const deviceName = device ? (device.label || device.name || `Device ${deviceData.deviceId}`) : `Device ${deviceData.deviceId}`;
+        seriesName = `${nodeName} (${deviceName})`;
+      }
+      
       series.push({
-        name: `${deviceName}${isCurrentValue ? ' - Aktueller Wert' : ''}`,
+        name: `${seriesName}${isCurrentValue ? ' - Aktueller Wert' : ''}`,
         type: 'line',
         data: data,
         smooth: true,
         lineStyle: {
-          color: colors[index % colors.length],
+          color: colors[1], // Use second color for target temperature
           width: isCurrentValue ? 3 : 2
         },
         itemStyle: {
-          color: colors[index % colors.length]
+          color: colors[1]
         },
         symbol: 'circle',
         symbolSize: isCurrentValue ? 8 : 6,
@@ -2457,10 +2596,10 @@ export default function Dashboard() {
     const series = [];
     const colors = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#feca57', '#ff9ff3', '#54a0ff', '#5f27cd'];
 
+    // Since we now have aggregated data, we show only one series per node
     valveTelemetryData.forEach((deviceData, index) => {
-      const device = devices.find(d => d.id?.id === deviceData.deviceId || d.id === deviceData.deviceId);
-      // Use device label if available, otherwise use name, fallback to device ID
-      const deviceName = device ? (device.label || device.name || `Device ${deviceData.deviceId}`) : `Device ${deviceData.deviceId}`;
+      const nodeName = selectedNode?.label || selectedNode?.text || 'Node';
+      const keyName = deviceData.key || 'PercentValveOpen';
       
       const data = deviceData.data.map(point => [
         parseInt(point.ts), // Use timestamp directly for time axis
@@ -2469,17 +2608,28 @@ export default function Dashboard() {
 
       const isCurrentValue = deviceData.isCurrentValue;
       
+      // Determine series name based on operational mode
+      let seriesName = nodeName;
+      if (deviceData.deviceId === 'aggregated') {
+        seriesName = `${nodeName} (Mittelwert)`;
+      } else {
+        // For specific device (extTempDevice), show device name
+        const device = devices.find(d => d.id?.id === deviceData.deviceId || d.id === deviceData.deviceId);
+        const deviceName = device ? (device.label || device.name || `Device ${deviceData.deviceId}`) : `Device ${deviceData.deviceId}`;
+        seriesName = `${nodeName} (${deviceName})`;
+      }
+      
       series.push({
-        name: `${deviceName}${isCurrentValue ? ' - Aktueller Wert' : ''}`,
+        name: `${seriesName}${isCurrentValue ? ' - Aktueller Wert' : ''}`,
         type: 'line',
         data: data,
         smooth: true,
         lineStyle: {
-          color: colors[index % colors.length],
+          color: colors[2], // Use third color for valve data
           width: isCurrentValue ? 3 : 2
         },
         itemStyle: {
-          color: colors[index % colors.length]
+          color: colors[2]
         },
         symbol: 'circle',
         symbolSize: isCurrentValue ? 8 : 6,
