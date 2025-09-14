@@ -1609,6 +1609,15 @@ export default function Structure() {
                     )}
                   </button>
                 </li>
+                <li className="nav-item">
+                  <button 
+                    className={`nav-link ${activeTab === 'grundriss' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('grundriss')}
+                  >
+                    <FontAwesomeIcon icon={faBuilding} className="me-2" />
+                    Grundriss
+                  </button>
+                </li>
               </ul>
 
               {activeTab === 'details' && (
@@ -2225,6 +2234,135 @@ export default function Structure() {
                       <FontAwesomeIcon icon={faImage} size="3x" className="mb-3" />
                       <h5>Bitte wählen Sie einen Node aus</h5>
                       <p>Wählen Sie einen Node aus der Baumstruktur aus, um dessen Bilder anzuzeigen.</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {activeTab === 'grundriss' && (
+                <div className="p-3">
+                  {selectedNode ? (
+                    <div>
+                      {/* Upload Button */}
+                      <div className="d-flex justify-content-between align-items-center mb-4">
+                        <h5 className="mb-0">Grundriss für {selectedNode.text}</h5>
+                        <button
+                          className="btn btn-primary"
+                          onClick={() => setShowImageModal(true)}
+                          disabled={selectedNode.id.startsWith('temp_')}
+                        >
+                          <FontAwesomeIcon icon={faUpload} className="me-2" />
+                          Grundriss hochladen
+                        </button>
+                      </div>
+
+                      {/* Grundriss Images Grid - Zeige nur Bilder vom Typ "Grundriss" */}
+                      {loadingImages ? (
+                        <div className="text-center py-4">
+                          <div className="spinner-border" role="status">
+                            <span className="visually-hidden">Loading...</span>
+                          </div>
+                        </div>
+                      ) : (() => {
+                        const grundrissImages = images.filter(image => image.imageType === 'Grundriss');
+                        return grundrissImages.length > 0 ? (
+                          <div className="grundriss-container">
+                            {grundrissImages.map((image) => (
+                              <div key={image.id} className="grundriss-item">
+                                <div className="position-relative grundriss-image-container">
+                                  <img
+                                    src={image.imageUrl}
+                                    alt={image.filename}
+                                    className="grundriss-image"
+                                    onClick={() => setSelectedImage(image)}
+                                  />
+                                  {image.isPrimary && (
+                                    <div 
+                                      className="position-absolute top-0 start-0 m-2 badge bg-warning"
+                                      title="Hauptgrundriss"
+                                    >
+                                      <FontAwesomeIcon icon={faStar} />
+                                    </div>
+                                  )}
+                                  {/* Aktions-Buttons über dem Bild */}
+                                  <div className="position-absolute top-0 end-0 m-2 grundriss-actions">
+                                    <div className="btn-group-vertical" role="group">
+                                      <button
+                                        className="btn btn-sm btn-outline-info"
+                                        onClick={() => setSelectedImage(image)}
+                                        title="Anzeigen"
+                                      >
+                                        <FontAwesomeIcon icon={faEye} />
+                                      </button>
+                                      <button
+                                        className="btn btn-sm btn-outline-secondary"
+                                        onClick={() => handleEditImage(image)}
+                                        title="Bearbeiten"
+                                      >
+                                        <FontAwesomeIcon icon={faEdit} />
+                                      </button>
+                                      {!image.isPrimary && (
+                                        <button
+                                          className="btn btn-sm btn-outline-warning"
+                                          onClick={() => handleSetPrimaryImage(image.id)}
+                                          title="Als Hauptgrundriss setzen"
+                                        >
+                                          <FontAwesomeIcon icon={faStar} />
+                                        </button>
+                                      )}
+                                      <button
+                                        className="btn btn-sm btn-outline-danger"
+                                        onClick={() => handleImageDelete(image.id)}
+                                        title="Löschen"
+                                      >
+                                        <FontAwesomeIcon icon={faTrash} />
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                                {/* Bildinformationen unter dem Bild */}
+                                <div className="grundriss-info mt-2">
+                                  <div className="d-flex justify-content-between align-items-center">
+                                    <h6 className="mb-1">{image.filename}</h6>
+                                    <span className="badge bg-success">Grundriss</span>
+                                  </div>
+                                  <p className="text-muted small mb-1">
+                                    {(image.fileSize / 1024).toFixed(1)} KB
+                                  </p>
+                                  {image.imageText && (
+                                    <p className="fw-bold mb-1">{image.imageText}</p>
+                                  )}
+                                  {image.description && (
+                                    <p className="text-muted small">{image.description}</p>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-center py-5">
+                            <FontAwesomeIcon icon={faBuilding} size="3x" className="text-muted mb-3" />
+                            <h5 className="text-muted">Keine Grundrisse vorhanden</h5>
+                            <p className="text-muted">
+                              Laden Sie Ihren ersten Grundriss für {selectedNode.text} hoch.
+                            </p>
+                            <button
+                              className="btn btn-primary"
+                              onClick={() => setShowImageModal(true)}
+                              disabled={selectedNode.id.startsWith('temp_')}
+                            >
+                              <FontAwesomeIcon icon={faUpload} className="me-2" />
+                              Ersten Grundriss hochladen
+                            </button>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  ) : (
+                    <div className="text-center text-muted py-5">
+                      <FontAwesomeIcon icon={faBuilding} size="3x" className="mb-3" />
+                      <h5>Bitte wählen Sie einen Node aus</h5>
+                      <p>Wählen Sie einen Node aus der Baumstruktur aus, um dessen Grundriss anzuzeigen.</p>
                     </div>
                   )}
                 </div>
