@@ -34,6 +34,7 @@
     "react-dnd": "^16.0.1",
     "react-dnd-html5-backend": "^16.0.1",
     "react-dom": "18.2.0",
+    "sharp": "^0.33.5",
     "swagger-ui-dist": "^5.20.1",
     "swagger-ui-react": "^5.20.1",
     "xlsx": "^0.18.5"
