@@ -132,6 +132,7 @@ export default function Dashboard() {
   const CHART_INTERVAL_MS = 3600000; // 1 hour = 60 * 60 * 1000 ms
 
   // Helper function to convert time range to milliseconds
+  // Konvertiert Zeitbereichsauswahl in Millisekunden
   const getTimeRangeInMs = (timeRange) => {
     const timeMap = {
       '1h': 60 * 60 * 1000,
@@ -146,17 +147,19 @@ export default function Dashboard() {
     return timeMap[timeRange] || timeMap['7d'];
   };
 
-  // Helper function to get display label for time range
+  // Gibt das Anzeigelabel für den Zeitbereich zurück
   const getTimeRangeLabel = (timeRange) => {
     const option = timeRangeOptions.find(opt => opt.value === timeRange);
     return option ? option.label : '7 Tage';
   };
 
+  // Aktualisiert den Laufstatus und markiert Änderungen als ausstehend
   const updateRunStatus = (newStatus) => {
     setPendingRunStatus(newStatus);
     setHasUnsavedChanges(true);
   };
 
+  // Aktualisiert den Fixwert und markiert Änderungen als ausstehend
   const updateFixValue = (newValue) => {
     setPendingFixValue(newValue);
     setHasUnsavedChanges(true);
@@ -196,6 +199,7 @@ export default function Dashboard() {
     }
   };
 
+  // Behandelt Änderungen an Tagesplänen
   const handlePlanChange = (dayIndex, planIndex) => {
     // Update local state only
     setSelectedDayPlans(prev => ({
@@ -207,6 +211,7 @@ export default function Dashboard() {
     setHasUnsavedChanges(true);
   };
 
+  // Speichert alle ausstehenden Änderungen
   const saveChanges = async () => {
     if (!selectedNode?.id) return;
 
@@ -303,6 +308,7 @@ export default function Dashboard() {
     }
   };
 
+  // Bricht alle ausstehenden Änderungen ab
   const cancelChanges = () => {
     setSelectedDayPlans({});
     setPendingRunStatus(null);
@@ -329,16 +335,19 @@ export default function Dashboard() {
     }
   };
 
+  // Startet die Bearbeitung eines Node-Labels
   const startEditingLabel = (node) => {
     setEditingNodeId(node.id);
     setEditingNodeLabel(node.text);
   };
 
+  // Bricht die Label-Bearbeitung ab
   const cancelEditingLabel = () => {
     setEditingNodeId(null);
     setEditingNodeLabel('');
   };
 
+  // Speichert das bearbeitete Node-Label
   const saveNodeLabel = async () => {
     if (!editingNodeId || !editingNodeLabel.trim() || updatingNodeLabel) return;
 
@@ -384,6 +393,7 @@ export default function Dashboard() {
     }
   };
 
+  // Lädt die aktuelle Temperatur für einen Node
   const fetchCurrentTemperature = async (nodeId) => {
     if (!nodeId) return;
     
@@ -562,6 +572,16 @@ export default function Dashboard() {
       setValveTelemetryData([]);
     }
   }, [selectedNode, abortController, selectedTimeRange]);
+
+  // Reload telemetry data when nodeDetails changes (to get operational mode info)
+  useEffect(() => {
+    if (selectedNode?.id && !selectedNode.id.startsWith('temp_') && nodeDetails) {
+      console.log('Node details loaded, reloading telemetry data with operational mode info');
+      fetchTelemetryData(selectedNode.id, abortController);
+      fetchTargetTelemetryData(selectedNode.id, abortController);
+      fetchValveTelemetryData(selectedNode.id, abortController);
+    }
+  }, [nodeDetails, selectedNode?.id, abortController]);
 
   useEffect(() => {
     // If tbToken becomes available and we have a selected node, fetch alarms
@@ -811,6 +831,7 @@ export default function Dashboard() {
     return 'Unbekannt';
   };
 
+  // Lädt Benutzerdaten und Kundendaten
   const fetchUserData = async () => {
     try {
       const response = await fetch('/api/config/users/me', {
@@ -856,6 +877,7 @@ export default function Dashboard() {
     });
   };
 
+  // Lädt die Baumstruktur-Daten vom Server
   const fetchTreeData = async () => {
     try {
       const response = await fetch(`/api/config/customers/${customerData.customerid}/tree`, {
@@ -879,6 +901,7 @@ export default function Dashboard() {
     }
   };
 
+  // Lädt Dashboard-Statistiken und Übersichtsdaten
   const fetchDashboardData = async () => {
     try {
       const response = await fetch(`/api/dashboard/stats?customerId=${customerData.customerid}`, {
@@ -896,6 +919,7 @@ export default function Dashboard() {
     }
   };
 
+  // Bestimmt welche Nodes initial geöffnet werden sollen
   const getInitialOpenNodes = (nodes, level = 0) => {
     if (level >= 2) return [];
     
@@ -918,6 +942,7 @@ export default function Dashboard() {
     }
   }, [treeData]);
 
+  // Lädt detaillierte Informationen für einen spezifischen Node
   const fetchNodeDetails = async (nodeId) => {
     if (!nodeId) return;
     
@@ -999,6 +1024,7 @@ export default function Dashboard() {
     }
   };
 
+  // Lädt Kind-Nodes für einen übergeordneten Node
   const fetchChildNodes = async (nodeId) => {
     if (!nodeId) return;
     
@@ -1040,6 +1066,7 @@ export default function Dashboard() {
     }
   };
 
+  // Behandelt die Auswahl eines Nodes im Baum
   const handleNodeSelect = (node) => {
     // Cancel any ongoing requests
     if (abortController) {
@@ -1085,6 +1112,7 @@ export default function Dashboard() {
     }
   };
 
+  // Lädt alle Geräte für einen Node
   const fetchDevices = async (nodeId) => {
     setLoadingDevices(true);
     try {
@@ -1201,6 +1229,7 @@ export default function Dashboard() {
   };
 
   // Funktion zum Laden der Bilder (read-only)
+  // Lädt Bilder für einen Asset
   const fetchImages = async (assetId) => {
     if (!assetId) return;
     
@@ -1274,6 +1303,7 @@ export default function Dashboard() {
   };
 
   // Hilfsfunktion um das Device-Label aus der Device-ID zu finden
+  // Gibt das Label für ein Gerät basierend auf der ID zurück
   const getDeviceLabel = (deviceId) => {
     if (!deviceId) return '';
     
@@ -1347,6 +1377,7 @@ export default function Dashboard() {
   };
 
   // Funktion zum Abrufen eines gecachten Bildes
+  // Gibt ein gecachtes Bild zurück oder die ursprüngliche URL
   const getCachedImage = (imageUrl, imageId) => {
     if (imageCache.has(imageId)) {
       return imageCache.get(imageId);
@@ -1392,6 +1423,15 @@ export default function Dashboard() {
     const operationalMode = node?.operationalMode;
     const extTempDevice = node?.extTempDevice;
     
+    // Debug logging to see what values we're working with
+    console.log('Node operational mode debug:', {
+      nodeId: node?.id,
+      nodeName: node?.label || node?.text,
+      operationalMode: operationalMode,
+      operationalModeType: typeof operationalMode,
+      extTempDevice: extTempDevice
+    });
+    
     return {
       mode: operationalMode || "0",
       extTempDevice: extTempDevice,
@@ -1408,38 +1448,58 @@ export default function Dashboard() {
       return [];
     }
 
+    // Debug logging
+    console.log('Aggregating telemetry data:', {
+      key: key,
+      operationalMode: operationalMode,
+      operationalModeType: typeof operationalMode,
+      extTempDevice: extTempDevice,
+      deviceCount: deviceDataArray.length
+    });
+
     // For operational mode "2" (Wandpanel) and "10" (externer Temperaturfühler)
     // and sensorTemperature key, use data from extTempDevice
-    if ((operationalMode === "2" || operationalMode === "10") && key === "sensorTemperature" && extTempDevice) {
+    if ((operationalMode === "2" || operationalMode === 2 || operationalMode === "10" || operationalMode === 10) && key === "sensorTemperature" && extTempDevice) {
+      console.log('Using extTempDevice for sensorTemperature');
       const extDeviceData = deviceDataArray.find(deviceData => 
         deviceData.deviceId === extTempDevice
       );
       if (extDeviceData) {
+        console.log('Found extTempDevice data:', extDeviceData);
         return [extDeviceData];
+      } else {
+        console.log('extTempDevice not found in device data');
       }
     }
 
     // For operational mode "2" (Wandpanel) and targetTemperature key,
     // use data from extTempDevice
-    if (operationalMode === "2" && key === "targetTemperature" && extTempDevice) {
+    if ((operationalMode === "2" || operationalMode === 2) && key === "targetTemperature" && extTempDevice) {
+      console.log('Using extTempDevice for targetTemperature');
       const extDeviceData = deviceDataArray.find(deviceData => 
         deviceData.deviceId === extTempDevice
       );
       if (extDeviceData) {
+        console.log('Found extTempDevice data for targetTemperature:', extDeviceData);
         return [extDeviceData];
+      } else {
+        console.log('extTempDevice not found in device data for targetTemperature');
       }
     }
 
     // For all other cases, calculate average of all devices with the key
+    console.log('Using average calculation for all devices');
     const validDevices = deviceDataArray.filter(deviceData => 
       deviceData.data && deviceData.data.length > 0
     );
 
     if (validDevices.length === 0) {
+      console.log('No valid devices found for averaging');
       return [];
     }
 
     if (validDevices.length === 1) {
+      console.log('Only one valid device, returning as is');
       return validDevices;
     }
 
@@ -1531,6 +1591,7 @@ export default function Dashboard() {
     return thumbnailLoadingStates.get(imageId) || false;
   };
 
+  // Lädt Telemetriedaten für eine Liste von Geräten
   const fetchTelemetryForDevices = async (devices) => {
     if (!session?.tbToken || !devices.length) {
       return devices;
@@ -1645,6 +1706,7 @@ export default function Dashboard() {
   };
 
   // Function to fetch raw telemetry data for the last 24 hours
+  // Lädt rohe Telemetriedaten für das Modal
   const fetchRawTelemetryForModal = async (device) => {
     if (!device || !device.telemetry?.rawData) {
       console.warn('No raw telemetry data available for device:', device);
@@ -1703,6 +1765,7 @@ export default function Dashboard() {
     setShowTelemetryModal(true);
   };
 
+  // Lädt Sensortemperatur-Telemetriedaten für einen Node
   const fetchTelemetryData = async (nodeId, controller = null) => {
     setLoadingTelemetry(true);
     //console.log('--------------------------------');
@@ -1775,7 +1838,7 @@ export default function Dashboard() {
       }));
 
       // Apply operational mode logic to aggregate data
-      const operationalMode = getOperationalModeLogic(selectedNode);
+      const operationalMode = getOperationalModeLogic(nodeDetails || selectedNode);
       const aggregatedData = aggregateTelemetryData(
         formattedData, 
         'sensorTemperature', 
@@ -1796,6 +1859,7 @@ export default function Dashboard() {
     }
   };
 
+  // Lädt Zieltemperatur-Telemetriedaten für einen Node
   const fetchTargetTelemetryData = async (nodeId, controller = null) => {
     try {
       // First get all devices under this node (including sub-nodes)
@@ -1856,7 +1920,7 @@ export default function Dashboard() {
       }));
 
       // Apply operational mode logic to aggregate data
-      const operationalMode = getOperationalModeLogic(selectedNode);
+      const operationalMode = getOperationalModeLogic(nodeDetails || selectedNode);
       const aggregatedData = aggregateTelemetryData(
         formattedData, 
         'targetTemperature', 
@@ -1875,6 +1939,7 @@ export default function Dashboard() {
     }
   };
 
+  // Lädt Ventil-Telemetriedaten für einen Node
   const fetchValveTelemetryData = async (nodeId, controller = null) => {
     try {
       // First get all devices under this node (including sub-nodes)
@@ -1935,7 +2000,7 @@ export default function Dashboard() {
       }));
 
       // Apply operational mode logic to aggregate data
-      const operationalMode = getOperationalModeLogic(selectedNode);
+      const operationalMode = getOperationalModeLogic(nodeDetails || selectedNode);
       const aggregatedData = aggregateTelemetryData(
         formattedData, 
         'PercentValveOpen', 
@@ -1954,6 +2019,7 @@ export default function Dashboard() {
     }
   };
 
+  // Lädt Alarme für einen Node
   const fetchAlarms = async (nodeId, controller = null) => {
     if (!nodeId) return;
     
@@ -2190,6 +2256,7 @@ export default function Dashboard() {
     return findNode(nodeId, nodes);
   };
 
+  // Filtert Baumdaten basierend auf Suchbegriff
   const getFilteredTreeData = () => {
     if (!treeSearchTerm) return treeData;
     
@@ -2204,6 +2271,7 @@ export default function Dashboard() {
     return filterNodes(treeData);
   };
 
+  // Gibt das Icon für den Gerätestatus zurück
   const getDeviceStatusIcon = (device) => {
     if (device.active) {
       return <FontAwesomeIcon icon={faCheckCircle} className="text-success" />;
@@ -2212,6 +2280,7 @@ export default function Dashboard() {
     }
   };
 
+  // Gibt den Text für den Gerätestatus zurück
   const getDeviceStatusText = (device) => {
     if (device.active) {
       return 'Aktiv';
@@ -2221,6 +2290,7 @@ export default function Dashboard() {
   };
 
   // ECharts configuration for temperature telemetry
+  // Erstellt die ECharts-Konfiguration für Sensortemperatur-Telemetrie
   const getTelemetryChartOption = () => {
     if (!telemetryData || telemetryData.length === 0) {
       return {
@@ -2394,6 +2464,7 @@ export default function Dashboard() {
   };
 
   // ECharts configuration for target temperature telemetry
+  // Erstellt die ECharts-Konfiguration für Zieltemperatur-Telemetrie
   const getTargetTelemetryChartOption = () => {
     if (!targetTelemetryData || targetTelemetryData.length === 0) {
       return {
@@ -2567,6 +2638,7 @@ export default function Dashboard() {
   };
 
   // ECharts configuration for valve telemetry
+  // Erstellt die ECharts-Konfiguration für Ventil-Telemetrie
   const getValveTelemetryChartOption = () => {
     if (!valveTelemetryData || valveTelemetryData.length === 0) {
       return {

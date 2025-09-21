@@ -1,4 +1,7 @@
 import { getConnection } from '../../../lib/db.js';
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "../auth/[...nextauth]";
+import sql from 'mssql';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -18,13 +21,17 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Node ID must be a valid UUID' });
   }
 
+  // Get customer ID from session
+  const session = await getServerSession(req, res, authOptions);
+  const customerId = session?.user?.customerid || '2EA4BA70-647A-11EF-8CD8-8B580D9AA086';
+
   let connection;
   try {
     // Get MSSQL connection
     connection = await getConnection();
     
-    // Load the tree structure from customer_settings table
-    const treeData = await loadTreeData(connection);
+    // Load the tree structure from customer_settings table for specific customer
+    const treeData = await loadTreeData(connection, customerId);
     
     // Find the node with the given ID
     const targetNode = findNodeById(treeData, id);
@@ -66,23 +73,26 @@ export default async function handler(req, res) {
 }
 
 /**
- * Load tree data from customer_settings table
+ * Load tree data from customer_settings table for specific customer
  * @param {Object} connection - MSSQL connection
+ * @param {string} customerId - Customer ID to filter by
  * @returns {Array} Tree structure data
  */
-async function loadTreeData(connection) {
+async function loadTreeData(connection, customerId) {
   try {
     const query = `
-      SELECT TOP 1 tree 
+      SELECT tree 
       FROM customer_settings 
-      WHERE tree IS NOT NULL
-      ORDER BY id DESC
+      WHERE customer_id = @customerId 
+        AND tree IS NOT NULL
     `;
     
-    const result = await connection.request().query(query);
+    const result = await connection.request()
+      .input('customerId', sql.UniqueIdentifier, customerId)
+      .query(query);
     
     if (result.recordset.length === 0) {
-      throw new Error('No tree data found in customer_settings table');
+      throw new Error(`No tree data found for customer ID: ${customerId}`);
     }
     
     const treeJson = result.recordset[0].tree;

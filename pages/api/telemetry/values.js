@@ -1,4 +1,7 @@
 import { getPgConnection } from '../../../lib/pgdb';
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "../auth/[...nextauth]";
+import axios from 'axios';
 
 // Function to resolve attribute name to key_id
 async function resolveKey(client, key) {
@@ -146,9 +149,112 @@ async function getLatestSensorValues(client, deviceIds, keys) {
   return deviceData;
 }
 
+// Fallback function to get data from ThingsBoard directly
+async function getDataFromThingsBoard(deviceIds, keys, tbToken) {
+  try {
+    const thingsboardUrl = process.env.THINGSBOARD_URL || 'http://localhost:8080';
+    const response = await axios.get(
+      `${thingsboardUrl}/api/plugins/telemetry/DEVICE/${deviceIds}/values/timeseries`,
+      {
+        params: {
+          keys: keys,
+          startTs: Date.now() - (24 * 60 * 60 * 1000), // Letzte 24 Stunden
+          endTs: Date.now(),
+          interval: 0, // Keine Aggregation
+          limit: 1, // Nur den neuesten Wert
+          agg: 'NONE'
+        },
+        headers: {
+          'Authorization': `Bearer ${tbToken}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000 // 10 Sekunden Timeout
+      }
+    );
+
+    if (response.data && Object.keys(response.data).length > 0) {
+      // Konvertiere ThingsBoard Format zu unserem Format
+      const deviceData = {};
+      
+      Object.keys(response.data).forEach(key => {
+        if (response.data[key] && response.data[key].length > 0) {
+          const latestValue = response.data[key][response.data[key].length - 1];
+          deviceData[key] = {
+            value: latestValue.value,
+            value_type: typeof latestValue.value,
+            timestamp: latestValue.ts,
+            timestamp_readable: new Date(latestValue.ts).toISOString(),
+            key_id: null
+          };
+        }
+      });
+      
+      return { [deviceIds]: deviceData };
+    }
+    
+    return {};
+  } catch (error) {
+    console.error('ThingsBoard fallback error:', error);
+    return {};
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  // Authentifizierung prüfen
+  let isAuthenticated = false;
+
+  // Versuche zuerst den Bearer Token
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.split(' ')[1];
+    try {
+      const jwt = require('jsonwebtoken');
+      const decoded = jwt.verify(token, process.env.NEXTAUTH_SECRET);
+      isAuthenticated = true;
+      console.log('Mobile token verified for user:', decoded.username);
+    } catch (err) {
+      console.error('JWT verification failed:', err);
+    }
+  }
+
+  // Wenn kein gültiger Bearer Token, versuche Session
+  if (!isAuthenticated) {
+    const session = await getServerSession(req, res, authOptions);
+    if (session?.user) {
+      isAuthenticated = true;
+      console.log('Session verified for user:', session.user.name);
+    }
+  }
+
+  // Wenn keine Authentifizierung gefunden wurde
+  if (!isAuthenticated) {
+    return res.status(401).json({
+      success: false,
+      error: 'Not authenticated',
+      message: 'Kein gültiger Token gefunden'
+    });
+  }
+
+  // Get ThingsBoard token for fallback
+  let tbToken = null;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.split(' ')[1];
+    try {
+      const jwt = require('jsonwebtoken');
+      const decoded = jwt.verify(token, process.env.NEXTAUTH_SECRET);
+      tbToken = decoded.tbToken;
+    } catch (err) {
+      // Ignore JWT errors here
+    }
+  }
+  
+  if (!tbToken) {
+    const session = await getServerSession(req, res, authOptions);
+    tbToken = session?.user?.tbToken;
   }
 
   try {
@@ -183,11 +289,13 @@ export default async function handler(req, res) {
       }
     }
 
-    // Get PostgreSQL connection
+    // Get PostgreSQL connection with timeout
     const pool = await getPgConnection();
-    const client = await pool.connect();
-
+    let client;
+    
     try {
+      client = await pool.connect();
+      
       // Get latest sensor values for all devices and keys
       const sensorData = await getLatestSensorValues(client, deviceIdList, keyList);
 
@@ -198,8 +306,38 @@ export default async function handler(req, res) {
         data: sensorData
       });
 
+    } catch (dbError) {
+      console.error('PostgreSQL database error:', dbError);
+      
+      // Try ThingsBoard fallback if available
+      if (tbToken) {
+        console.log('Trying ThingsBoard fallback...');
+        try {
+          const fallbackData = await getDataFromThingsBoard(deviceIds, keyList, tbToken);
+          return res.status(200).json({
+            success: true,
+            device_count: deviceIdList.length,
+            requested_keys: keyList,
+            data: fallbackData,
+            source: 'thingsboard_fallback'
+          });
+        } catch (fallbackError) {
+          console.error('ThingsBoard fallback also failed:', fallbackError);
+        }
+      }
+      
+      // Return empty data as last resort
+      res.status(200).json({
+        success: true,
+        device_count: deviceIdList.length,
+        requested_keys: keyList,
+        data: {},
+        warning: 'Database connection failed, returning empty data'
+      });
     } finally {
-      client.release();
+      if (client) {
+        client.release();
+      }
     }
 
   } catch (error) {
