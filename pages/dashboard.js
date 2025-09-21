@@ -421,7 +421,7 @@ export default function Dashboard() {
       
       // Get current temperature values using PostgreSQL API
       const tempResponse = await fetch(
-        `/api/telemetry/device-sensors?deviceIds=${deviceIds}&keys=sensorTemperature`
+        `/api/telemetry/values?deviceIds=${deviceIds}&keys=sensorTemperature`
       );
 
       if (!tempResponse.ok) {
@@ -1618,7 +1618,7 @@ export default function Dashboard() {
 
             // Get latest sensor values using PostgreSQL API
             const latestTelemetryResponse = await fetch(
-              `/api/telemetry/device-sensors?deviceIds=${deviceId}&keys=sensorTemperature,targetTemperature,PercentValveOpen`
+              `/api/telemetry/values?deviceIds=${deviceId}&keys=sensorTemperature,targetTemperature,PercentValveOpen,batteryVoltage,fCnt,rssi,snr,sf`
             );
 
             // Get 24-hour data for the modal using PostgreSQL API
@@ -1645,6 +1645,11 @@ export default function Dashboard() {
                 telemetry.sensorTemperature = deviceData.sensorTemperature?.value || null;
                 telemetry.targetTemperature = deviceData.targetTemperature?.value || null;
                 telemetry.PercentValveOpen = deviceData.PercentValveOpen?.value || null;
+                telemetry.batteryVoltage = deviceData.batteryVoltage?.value || null;
+                telemetry.fCnt = deviceData.fCnt?.value || null;
+                telemetry.rssi = deviceData.rssi?.value || null;
+                telemetry.snr = deviceData.snr?.value || null;
+                telemetry.sf = deviceData.sf?.value || null;
                 
                 // Find the latest timestamp
                 let latestTimestamp = null;
