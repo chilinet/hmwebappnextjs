@@ -53,6 +53,11 @@ export default async function handler(req, res) {
 
   try {
     const pool = await getConnection();
+    
+    if (!pool) {
+      throw new Error('Database connection not available');
+    }
+    
     const result = await pool.request()
       .input('userid', sql.Int, session.user.userid)
       .query(`
@@ -73,6 +78,15 @@ export default async function handler(req, res) {
 
   } catch (error) {
     console.error('Database Error:', error);
+    
+    // Spezifische Fehlerbehandlung
+    if (error.code === 'ECONNCLOSED' || error.code === 'ECONNRESET') {
+      return res.status(503).json({ 
+        message: 'Database connection lost, please try again',
+        error: 'Connection closed'
+      });
+    }
+    
     return res.status(500).json({ 
       message: 'Database error',
       error: error.message 
