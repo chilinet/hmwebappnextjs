@@ -17,6 +17,14 @@ const sqlConfig = {
 
 export const authOptions = {
   secret: process.env.NEXTAUTH_SECRET,
+  // Fix URL configuration for production
+  url: process.env.NEXTAUTH_URL || (process.env.NODE_ENV === 'production' ? 'https://webapptest.heatmanager.cloud' : 'http://localhost:3000'),
+  // Add trustHost for production
+  trustHost: process.env.NODE_ENV === 'production',
+  // Fix internal URL resolution
+  useSecureCookies: process.env.NODE_ENV === 'production',
+  // Add adapter configuration to prevent internal fetch issues
+  adapter: undefined, // Use default JWT adapter
   session: {
     strategy: "jwt",
     maxAge: 8 * 60 * 60, // 8 hours
@@ -29,7 +37,28 @@ export const authOptions = {
         httpOnly: true,
         sameSite: 'lax',
         path: '/',
-        secure: process.env.NODE_ENV === 'production'
+        secure: process.env.NODE_ENV === 'production',
+        domain: process.env.NODE_ENV === 'production' ? '.heatmanager.cloud' : undefined
+      }
+    },
+    callbackUrl: {
+      name: `next-auth.callback-url`,
+      options: {
+        httpOnly: true,
+        sameSite: 'lax',
+        path: '/',
+        secure: process.env.NODE_ENV === 'production',
+        domain: process.env.NODE_ENV === 'production' ? '.heatmanager.cloud' : undefined
+      }
+    },
+    csrfToken: {
+      name: `next-auth.csrf-token`,
+      options: {
+        httpOnly: true,
+        sameSite: 'lax',
+        path: '/',
+        secure: process.env.NODE_ENV === 'production',
+        domain: process.env.NODE_ENV === 'production' ? '.heatmanager.cloud' : undefined
       }
     }
   },
@@ -78,21 +107,29 @@ export const authOptions = {
           }
 
           // ThingsBoard Login
-          const tbResponse = await fetch(`${process.env.THINGSBOARD_URL}/api/auth/login`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              username: user.tb_username,
-              password: user.tb_password
+          let tbData = null;
+          try {
+            const tbResponse = await fetch(`${process.env.THINGSBOARD_URL}/api/auth/login`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                username: user.tb_username,
+                password: user.tb_password
+              })
             })
-          })
 
-          const tbData = await tbResponse.json()
-          
-          if (!tbResponse.ok) {
-            return null
+            tbData = await tbResponse.json()
+            
+            if (!tbResponse.ok) {
+              console.error('ThingsBoard login failed:', tbData);
+              return null
+            }
+          } catch (tbError) {
+            console.error('ThingsBoard connection error:', tbError);
+            // Continue without ThingsBoard token for now
+            tbData = { token: null, refreshToken: null };
           }
           
           return {
@@ -112,9 +149,9 @@ export const authOptions = {
               process.env.NEXTAUTH_SECRET,
               { expiresIn: '8h' }
             ),
-            tbToken: tbData.token,
-            refreshToken: tbData.refreshToken,
-            tbTokenExpires: new Date(Date.now() + 60 * 60 * 1000).toISOString() // Current time + 1 hour
+            tbToken: tbData?.token || null,
+            refreshToken: tbData?.refreshToken || null,
+            tbTokenExpires: tbData?.token ? new Date(Date.now() + 60 * 60 * 1000).toISOString() : null // Current time + 1 hour
           }
         } catch (error) {
           console.error('Auth error:', error)
@@ -160,6 +197,25 @@ export const authOptions = {
     signIn: '/auth/signin'
   },
   debug: process.env.NODE_ENV === 'development',
+  // Add error handling
+  events: {
+    async signIn({ user, account, profile, isNewUser }) {
+      console.log('User signed in:', user?.username);
+    },
+    async signOut({ session, token }) {
+      console.log('User signed out');
+    },
+    async session({ session, token }) {
+      // Log session events for debugging
+      if (process.env.NODE_ENV === 'development') {
+        console.log('Session callback called');
+      }
+    }
+  },
+  // Add error pages
+  error: {
+    error: '/auth/error'
+  }
 }
 
 export default NextAuth(authOptions)
