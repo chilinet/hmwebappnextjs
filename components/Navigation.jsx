@@ -1,7 +1,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faUser, faTachometerAlt, faSliders, faCog, faSignOutAlt, faBars, faUsers } from "@fortawesome/free-solid-svg-icons";
+import { faUser, faTachometerAlt, faSliders, faCog, faSignOutAlt, faBars, faUsers, faThermometerHalf } from "@fortawesome/free-solid-svg-icons";
 import { useSession, signIn, signOut } from "next-auth/react";
 import { useRouter } from 'next/router';
 import { useState, useEffect } from 'react';
@@ -86,6 +86,15 @@ export default function Navigation() {
                                         >
                                             <FontAwesomeIcon icon={faTachometerAlt} className="me-2" />
                                             Dashboard
+                                        </Link>
+                                        <Link 
+                                            href="/heating-control" 
+                                            className={`dropdown-item d-flex align-items-center ${
+                                                router.pathname === '/heating-control' ? 'active-menu-item' : ''
+                                            }`}
+                                        >
+                                            <FontAwesomeIcon icon={faThermometerHalf} className="me-2" />
+                                            Heizungssteuerung
                                         </Link>
                                         <div className="dropdown-divider"></div>
                                         <Link href="/profile" className={`dropdown-item d-flex align-items-center ${
