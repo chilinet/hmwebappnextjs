@@ -16,50 +16,7 @@ export default function Structure() {
     },
   });
 
-  // Check if user has Superadmin role
-  useEffect(() => {
-    if (status === 'loading') return;
-    
-    if (!session) {
-      router.push('/auth/signin');
-      return;
-    }
-
-    // Check if user has Superadmin role (role = 1)
-    if (session.user?.role !== 1) {
-      router.push('/config');
-      return;
-    }
-  }, [session, status, router]);
-
-  // Show loading or access denied if not Superadmin
-  if (status === 'loading') {
-    return (
-      <div className="d-flex justify-content-center align-items-center" style={{ minHeight: '400px' }}>
-        <div className="spinner-border" role="status">
-          <span className="visually-hidden">Loading...</span>
-        </div>
-      </div>
-    );
-  }
-
-  if (!session || session.user?.role !== 1) {
-    return (
-      <div className="d-flex justify-content-center align-items-center" style={{ minHeight: '400px' }}>
-        <div className="text-center">
-          <h3>Keine Berechtigung</h3>
-          <p>Sie haben keine Berechtigung, diese Seite aufzurufen.</p>
-          <button 
-            className="btn btn-primary"
-            onClick={() => router.push('/config')}
-          >
-            Zurück zur Konfiguration
-          </button>
-        </div>
-      </div>
-    );
-  }
-
+  // ALLE useState Hooks MÜSSEN vor den bedingten Returns stehen!
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [treeData, setTreeData] = useState([]);
@@ -109,17 +66,33 @@ export default function Structure() {
   const [heaterDevices, setHeaterDevices] = useState([]);
   const [operationalDevice, setOperationalDevice] = useState('');
 
+  // Check if user has Superadmin role
+  useEffect(() => {
+    if (status === 'loading') return;
+    
+    if (!session) {
+      router.push('/auth/signin');
+      return;
+    }
+
+    // Check if user has Superadmin role (role = 1)
+    if (session.user?.role !== 1) {
+      router.push('/config');
+      return;
+    }
+  }, [session, status, router]);
+
   useEffect(() => {
     if (session?.token) {
       fetchUserData();
     }
-  }, [session]);
+  }, [session?.token]);
 
   useEffect(() => {
     if (customerData?.customerid) {
       fetchTreeData();
     }
-  }, [customerData]);
+  }, [customerData?.customerid]);
 
   useEffect(() => {
     // Initial height
@@ -147,8 +120,10 @@ export default function Structure() {
   }, [nodeDetails]);
 
   useEffect(() => {
-    fetchAssetProfiles();
-  }, [session]);
+    if (session?.token) {
+      fetchAssetProfiles();
+    }
+  }, [session?.token]);
 
   useEffect(() => {
     if (selectedNode?.id && !selectedNode.id.startsWith('temp_')) {
@@ -159,13 +134,13 @@ export default function Structure() {
     } else {
       setDevices([]);
     }
-  }, [selectedNode]);
+  }, [selectedNode?.id]);
 
   useEffect(() => {
     if (customerData?.customerid) {
       fetchCustomerSettings();
     }
-  }, [customerData]);
+  }, [customerData?.customerid]);
 
   // Load images when a node is selected
   useEffect(() => {
@@ -174,7 +149,7 @@ export default function Structure() {
     } else {
       setImages([]);
     }
-  }, [selectedNode]);
+  }, [selectedNode?.id]);
 
   // Load devices when image type changes to "Heizkörper"
   useEffect(() => {
@@ -185,7 +160,56 @@ export default function Structure() {
       setHeaterDevices([]);
       setSelectedDevice('');
     }
-  }, [imageType, selectedNode]);
+  }, [imageType, selectedNode?.id]);
+
+  // Setze die offenen Nodes nach dem Laden der Daten
+  useEffect(() => {
+    if (treeData.length > 0 && !treeSearchTerm) {
+      const initialOpenNodes = getInitialOpenNodes(treeData);
+      setOpenNodes(initialOpenNodes);
+    }
+  }, [treeData.length, treeSearchTerm]);
+
+  // Separater useEffect für die Suchfunktion
+  useEffect(() => {
+    if (treeSearchTerm && treeData.length > 0) {
+      const matchingNodes = treeData.filter(node => nodeMatchesSearch(node, treeSearchTerm));
+      const parentIds = new Set();
+      matchingNodes.forEach(node => {
+        findParentPath(node.id, treeData).forEach(id => parentIds.add(id));
+      });
+      const nodesToOpen = [...parentIds, ...matchingNodes.map(node => node.id)];
+      setOpenNodes((prev) => Array.from(new Set([...prev, ...nodesToOpen])));
+    }
+  }, [treeSearchTerm, treeData.length]);
+
+  // Show loading or access denied if not Superadmin
+  if (status === 'loading') {
+    return (
+      <div className="d-flex justify-content-center align-items-center" style={{ minHeight: '400px' }}>
+        <div className="spinner-border" role="status">
+          <span className="visually-hidden">Loading...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!session || session.user?.role !== 1) {
+    return (
+      <div className="d-flex justify-content-center align-items-center" style={{ minHeight: '400px' }}>
+        <div className="text-center">
+          <h3>Keine Berechtigung</h3>
+          <p>Sie haben keine Berechtigung, diese Seite aufzurufen.</p>
+          <button 
+            className="btn btn-primary"
+            onClick={() => router.push('/config')}
+          >
+            Zurück zur Konfiguration
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const fetchUserData = async () => {
     try {
@@ -276,14 +300,6 @@ export default function Structure() {
       return result;
     }, []);
   };
-
-  // Setze die offenen Nodes nach dem Laden der Daten
-  useEffect(() => {
-    if (treeData.length > 0) {
-      const initialOpenNodes = getInitialOpenNodes(treeData);
-      setOpenNodes(initialOpenNodes);
-    }
-  }, [treeData]);
 
   const fetchNodeDetails = async (nodeId) => {
     if (!nodeId) return;
@@ -1071,22 +1087,6 @@ export default function Structure() {
     );
   };
 
-  // Neuer useEffect für das Aufklappen der Nodes
-  useEffect(() => {
-    if (treeSearchTerm) {
-      const matchingNodes = treeData.filter(node => nodeMatchesSearch(node, treeSearchTerm));
-      const parentIds = new Set();
-      matchingNodes.forEach(node => {
-        findParentPath(node.id, treeData).forEach(id => parentIds.add(id));
-      });
-      const nodesToOpen = [...parentIds, ...matchingNodes.map(node => node.id)];
-      setOpenNodes((prev) => Array.from(new Set([...prev, ...nodesToOpen])));
-    } else {
-      // Wenn die Suche leer ist, setze auf die ursprünglichen offenen Nodes zurück
-      const initialOpenNodes = getInitialOpenNodes(treeData);
-      setOpenNodes(initialOpenNodes);
-    }
-  }, [treeSearchTerm, treeData]); // Abhängigkeiten des Effects
 
   const fetchCustomerSettings = async () => {
     try {

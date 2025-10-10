@@ -106,6 +106,12 @@ export default function Dashboard() {
   const [loadingImages, setLoadingImages] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
   const [loadingTelemetryModal, setLoadingTelemetryModal] = useState(false);
+  
+  // Image cache state
+  const [imageCache, setImageCache] = useState(new Map());
+  const [imageLoadingStates, setImageLoadingStates] = useState(new Map());
+  const [thumbnailCache, setThumbnailCache] = useState(new Map());
+  const [thumbnailLoadingStates, setThumbnailLoadingStates] = useState(new Map());
 
   // Tab navigation
   const [activeTab, setActiveTab] = useState('verlauf'); // Default: Verlauf tab
@@ -126,6 +132,7 @@ export default function Dashboard() {
   const CHART_INTERVAL_MS = 3600000; // 1 hour = 60 * 60 * 1000 ms
 
   // Helper function to convert time range to milliseconds
+  // Konvertiert Zeitbereichsauswahl in Millisekunden
   const getTimeRangeInMs = (timeRange) => {
     const timeMap = {
       '1h': 60 * 60 * 1000,
@@ -140,17 +147,19 @@ export default function Dashboard() {
     return timeMap[timeRange] || timeMap['7d'];
   };
 
-  // Helper function to get display label for time range
+  // Gibt das Anzeigelabel für den Zeitbereich zurück
   const getTimeRangeLabel = (timeRange) => {
     const option = timeRangeOptions.find(opt => opt.value === timeRange);
     return option ? option.label : '7 Tage';
   };
 
+  // Aktualisiert den Laufstatus und markiert Änderungen als ausstehend
   const updateRunStatus = (newStatus) => {
     setPendingRunStatus(newStatus);
     setHasUnsavedChanges(true);
   };
 
+  // Aktualisiert den Fixwert und markiert Änderungen als ausstehend
   const updateFixValue = (newValue) => {
     setPendingFixValue(newValue);
     setHasUnsavedChanges(true);
@@ -190,6 +199,7 @@ export default function Dashboard() {
     }
   };
 
+  // Behandelt Änderungen an Tagesplänen
   const handlePlanChange = (dayIndex, planIndex) => {
     // Update local state only
     setSelectedDayPlans(prev => ({
@@ -201,6 +211,7 @@ export default function Dashboard() {
     setHasUnsavedChanges(true);
   };
 
+  // Speichert alle ausstehenden Änderungen
   const saveChanges = async () => {
     if (!selectedNode?.id) return;
 
@@ -297,6 +308,7 @@ export default function Dashboard() {
     }
   };
 
+  // Bricht alle ausstehenden Änderungen ab
   const cancelChanges = () => {
     setSelectedDayPlans({});
     setPendingRunStatus(null);
@@ -323,16 +335,19 @@ export default function Dashboard() {
     }
   };
 
+  // Startet die Bearbeitung eines Node-Labels
   const startEditingLabel = (node) => {
     setEditingNodeId(node.id);
     setEditingNodeLabel(node.text);
   };
 
+  // Bricht die Label-Bearbeitung ab
   const cancelEditingLabel = () => {
     setEditingNodeId(null);
     setEditingNodeLabel('');
   };
 
+  // Speichert das bearbeitete Node-Label
   const saveNodeLabel = async () => {
     if (!editingNodeId || !editingNodeLabel.trim() || updatingNodeLabel) return;
 
@@ -378,6 +393,7 @@ export default function Dashboard() {
     }
   };
 
+  // Lädt die aktuelle Temperatur für einen Node
   const fetchCurrentTemperature = async (nodeId) => {
     if (!nodeId) return;
     
@@ -403,17 +419,9 @@ export default function Dashboard() {
 
       const deviceIds = devicesData.data.map(device => device.id?.id || device.id).join(',');
       
-      // Get current temperature values (last 5 minutes)
-      const endTime = Date.now();
-      const startTime = endTime - (5 * 60 * 1000); // 5 minutes ago
-      
+      // Get current temperature values using PostgreSQL API
       const tempResponse = await fetch(
-        `/api/thingsboard/devices/telemetry/aggregated?deviceIds=${deviceIds}&startTs=${startTime}&endTs=${endTime}&interval=300000&attribute=sensorTemperature`,
-        {
-          headers: {
-            'Authorization': `Bearer ${session.token}`
-          }
-        }
+        `/api/telemetry/values?deviceIds=${deviceIds}&keys=sensorTemperature`
       );
 
       if (!tempResponse.ok) {
@@ -422,19 +430,15 @@ export default function Dashboard() {
 
       const tempResult = await tempResponse.json();
       
-      if (tempResult.data && tempResult.data.length > 0) {
+      if (tempResult.success && tempResult.data) {
         // Calculate average of latest temperature readings
         let totalTemp = 0;
         let deviceCount = 0;
         
-        tempResult.data.forEach(deviceData => {
-          if (deviceData.data && deviceData.data.length > 0) {
-            // Get the latest temperature reading for this device
-            const latestReading = deviceData.data[deviceData.data.length - 1];
-            if (latestReading && latestReading.value !== null && latestReading.value !== undefined) {
-              totalTemp += parseFloat(latestReading.value);
-              deviceCount++;
-            }
+        Object.values(tempResult.data).forEach(deviceData => {
+          if (deviceData.sensorTemperature && deviceData.sensorTemperature.value !== null && deviceData.sensorTemperature.value !== undefined) {
+            totalTemp += parseFloat(deviceData.sensorTemperature.value);
+            deviceCount++;
           }
         });
         
@@ -568,6 +572,16 @@ export default function Dashboard() {
       setValveTelemetryData([]);
     }
   }, [selectedNode, abortController, selectedTimeRange]);
+
+  // Reload telemetry data when nodeDetails changes (to get operational mode info)
+  useEffect(() => {
+    if (selectedNode?.id && !selectedNode.id.startsWith('temp_') && nodeDetails) {
+      console.log('Node details loaded, reloading telemetry data with operational mode info');
+      fetchTelemetryData(selectedNode.id, abortController);
+      fetchTargetTelemetryData(selectedNode.id, abortController);
+      fetchValveTelemetryData(selectedNode.id, abortController);
+    }
+  }, [nodeDetails, selectedNode?.id, abortController]);
 
   useEffect(() => {
     // If tbToken becomes available and we have a selected node, fetch alarms
@@ -817,6 +831,7 @@ export default function Dashboard() {
     return 'Unbekannt';
   };
 
+  // Lädt Benutzerdaten und Kundendaten
   const fetchUserData = async () => {
     try {
       const response = await fetch('/api/config/users/me', {
@@ -862,6 +877,7 @@ export default function Dashboard() {
     });
   };
 
+  // Lädt die Baumstruktur-Daten vom Server
   const fetchTreeData = async () => {
     try {
       const response = await fetch(`/api/config/customers/${customerData.customerid}/tree`, {
@@ -885,6 +901,7 @@ export default function Dashboard() {
     }
   };
 
+  // Lädt Dashboard-Statistiken und Übersichtsdaten
   const fetchDashboardData = async () => {
     try {
       const response = await fetch(`/api/dashboard/stats?customerId=${customerData.customerid}`, {
@@ -902,6 +919,7 @@ export default function Dashboard() {
     }
   };
 
+  // Bestimmt welche Nodes initial geöffnet werden sollen
   const getInitialOpenNodes = (nodes, level = 0) => {
     if (level >= 2) return [];
     
@@ -924,6 +942,7 @@ export default function Dashboard() {
     }
   }, [treeData]);
 
+  // Lädt detaillierte Informationen für einen spezifischen Node
   const fetchNodeDetails = async (nodeId) => {
     if (!nodeId) return;
     
@@ -1005,6 +1024,7 @@ export default function Dashboard() {
     }
   };
 
+  // Lädt Kind-Nodes für einen übergeordneten Node
   const fetchChildNodes = async (nodeId) => {
     if (!nodeId) return;
     
@@ -1046,6 +1066,7 @@ export default function Dashboard() {
     }
   };
 
+  // Behandelt die Auswahl eines Nodes im Baum
   const handleNodeSelect = (node) => {
     // Cancel any ongoing requests
     if (abortController) {
@@ -1062,6 +1083,12 @@ export default function Dashboard() {
     // Reset alarms state immediately to prevent stale data
     setAlarms([]);
     setLoadingAlarms(false);
+    
+    // Clear image and thumbnail cache when switching nodes to free memory
+    setImageCache(new Map());
+    setImageLoadingStates(new Map());
+    setThumbnailCache(new Map());
+    setThumbnailLoadingStates(new Map());
     
     fetchNodeDetails(node.id, newAbortController);
     fetchChildNodes(node.id);
@@ -1085,6 +1112,7 @@ export default function Dashboard() {
     }
   };
 
+  // Lädt alle Geräte für einen Node
   const fetchDevices = async (nodeId) => {
     setLoadingDevices(true);
     try {
@@ -1201,6 +1229,7 @@ export default function Dashboard() {
   };
 
   // Funktion zum Laden der Bilder (read-only)
+  // Lädt Bilder für einen Asset
   const fetchImages = async (assetId) => {
     if (!assetId) return;
     
@@ -1231,11 +1260,39 @@ export default function Dashboard() {
       const imagesData = await imagesResponse.json();
       const devicesData = await devicesResponse.json();
       
+      const imagesList = imagesData.images || [];
+      
       // Setze die Bilder
-      setImages(imagesData.images || []);
+      setImages(imagesList);
       
       // Aktualisiere die Geräte für Device-Labels
       setDevices(devicesData.assigned || []);
+      
+      // Starte das Generieren von Server-Thumbnails im Hintergrund
+      if (imagesList.length > 0) {
+        console.log(`Starting to generate server thumbnails for ${imagesList.length} images for asset ${assetId}`);
+        
+        // Setze Loading-States für alle Bilder
+        const loadingStates = new Map();
+        imagesList.forEach(image => {
+          loadingStates.set(image.id, true);
+        });
+        setThumbnailLoadingStates(loadingStates);
+        
+        // Generiere Thumbnails
+        generateServerThumbnails(imagesList).then(() => {
+          console.log(`Finished generating server thumbnails for asset ${assetId}`);
+        }).catch(error => {
+          console.warn('Error generating server thumbnails:', error);
+        });
+        
+        // Zusätzlich: Starte das Vorladen der Originalbilder im Hintergrund (für Modal)
+        preloadImages(imagesList).then(() => {
+          console.log(`Finished preloading original images for asset ${assetId}`);
+        }).catch(error => {
+          console.warn('Error preloading original images:', error);
+        });
+      }
       
     } catch (error) {
       console.error('Error fetching images:', error);
@@ -1246,6 +1303,7 @@ export default function Dashboard() {
   };
 
   // Hilfsfunktion um das Device-Label aus der Device-ID zu finden
+  // Gibt das Label für ein Gerät basierend auf der ID zurück
   const getDeviceLabel = (deviceId) => {
     if (!deviceId) return '';
     
@@ -1268,6 +1326,272 @@ export default function Dashboard() {
     return deviceId;
   };
 
+  // Funktion zum Cachen von Bildern
+  const cacheImage = (imageUrl, imageId) => {
+    return new Promise((resolve, reject) => {
+      // Prüfe ob Bild bereits im Cache ist
+      if (imageCache.has(imageId)) {
+        resolve(imageCache.get(imageId));
+        return;
+      }
+
+      // Setze Loading-Status
+      setImageLoadingStates(prev => new Map(prev.set(imageId, true)));
+
+      const img = new Image();
+      img.crossOrigin = 'anonymous'; // Für CORS-Unterstützung
+      
+      img.onload = () => {
+        try {
+          // Erstelle Canvas um Bild zu konvertieren
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
+          
+          canvas.width = img.width;
+          canvas.height = img.height;
+          ctx.drawImage(img, 0, 0);
+          
+          // Konvertiere zu Data URL
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.8); // 80% Qualität für kleinere Größe
+          
+          // Speichere im Cache
+          setImageCache(prev => new Map(prev.set(imageId, dataUrl)));
+          setImageLoadingStates(prev => new Map(prev.set(imageId, false)));
+          
+          resolve(dataUrl);
+        } catch (error) {
+          console.error('Error caching image:', error);
+          setImageLoadingStates(prev => new Map(prev.set(imageId, false)));
+          reject(error);
+        }
+      };
+      
+      img.onerror = (error) => {
+        console.error('Error loading image:', error);
+        setImageLoadingStates(prev => new Map(prev.set(imageId, false)));
+        reject(error);
+      };
+      
+      img.src = imageUrl;
+    });
+  };
+
+  // Funktion zum Abrufen eines gecachten Bildes
+  // Gibt ein gecachtes Bild zurück oder die ursprüngliche URL
+  const getCachedImage = (imageUrl, imageId) => {
+    if (imageCache.has(imageId)) {
+      return imageCache.get(imageId);
+    }
+    return imageUrl; // Fallback zur ursprünglichen URL
+  };
+
+  // Funktion zum Vorladen aller Bilder
+  const preloadImages = async (imagesList) => {
+    const preloadPromises = imagesList.map(async (image) => {
+      try {
+        await cacheImage(image.imageUrl, image.id);
+      } catch (error) {
+        console.warn(`Failed to cache image ${image.id}:`, error);
+      }
+    });
+    
+    await Promise.allSettled(preloadPromises);
+  };
+
+  // Funktion zum Leeren des Bildcaches
+  const clearImageCache = () => {
+    setImageCache(new Map());
+    setImageLoadingStates(new Map());
+    setThumbnailCache(new Map());
+    setThumbnailLoadingStates(new Map());
+    console.log('Image and thumbnail cache cleared');
+  };
+
+  // Funktion zum Abrufen der Cache-Statistiken
+  const getCacheStats = () => {
+    return {
+      cachedImages: imageCache.size,
+      loadingImages: Array.from(imageLoadingStates.values()).filter(Boolean).length,
+      totalImages: images.length,
+      thumbnailsCached: thumbnailCache.size,
+      thumbnailsLoading: Array.from(thumbnailLoadingStates.values()).filter(Boolean).length
+    };
+  };
+
+  // Helper function to determine operational mode logic for chart data aggregation
+  const getOperationalModeLogic = (node) => {
+    const operationalMode = node?.operationalMode;
+    const extTempDevice = node?.extTempDevice;
+    
+    // Debug logging to see what values we're working with
+    console.log('Node operational mode debug:', {
+      nodeId: node?.id,
+      nodeName: node?.label || node?.text,
+      operationalMode: operationalMode,
+      operationalModeType: typeof operationalMode,
+      extTempDevice: extTempDevice
+    });
+    
+    return {
+      mode: operationalMode || "0",
+      extTempDevice: extTempDevice,
+      // Rules:
+      // "0" or empty: average of all devices with sensorTemperature
+      // "2" (Wandpanel): sensorTemperature and targetTemperature from extTempDevice, average PercentValveOpen
+      // "10" (externer Temperaturfühler): sensorTemperature from extTempDevice, average targetTemperature and PercentValveOpen
+    };
+  };
+
+  // Helper function to aggregate telemetry data based on operational mode
+  const aggregateTelemetryData = (deviceDataArray, key, operationalMode, extTempDevice) => {
+    if (!deviceDataArray || deviceDataArray.length === 0) {
+      return [];
+    }
+
+    // Debug logging
+    console.log('Aggregating telemetry data:', {
+      key: key,
+      operationalMode: operationalMode,
+      operationalModeType: typeof operationalMode,
+      extTempDevice: extTempDevice,
+      deviceCount: deviceDataArray.length
+    });
+
+    // For operational mode "2" (Wandpanel) and "10" (externer Temperaturfühler)
+    // and sensorTemperature key, use data from extTempDevice
+    if ((operationalMode === "2" || operationalMode === 2 || operationalMode === "10" || operationalMode === 10) && key === "sensorTemperature" && extTempDevice) {
+      console.log('Using extTempDevice for sensorTemperature');
+      const extDeviceData = deviceDataArray.find(deviceData => 
+        deviceData.deviceId === extTempDevice
+      );
+      if (extDeviceData) {
+        console.log('Found extTempDevice data:', extDeviceData);
+        return [extDeviceData];
+      } else {
+        console.log('extTempDevice not found in device data');
+      }
+    }
+
+    // For operational mode "2" (Wandpanel) and targetTemperature key,
+    // use data from extTempDevice
+    if ((operationalMode === "2" || operationalMode === 2) && key === "targetTemperature" && extTempDevice) {
+      console.log('Using extTempDevice for targetTemperature');
+      const extDeviceData = deviceDataArray.find(deviceData => 
+        deviceData.deviceId === extTempDevice
+      );
+      if (extDeviceData) {
+        console.log('Found extTempDevice data for targetTemperature:', extDeviceData);
+        return [extDeviceData];
+      } else {
+        console.log('extTempDevice not found in device data for targetTemperature');
+      }
+    }
+
+    // For all other cases, calculate average of all devices with the key
+    console.log('Using average calculation for all devices');
+    const validDevices = deviceDataArray.filter(deviceData => 
+      deviceData.data && deviceData.data.length > 0
+    );
+
+    if (validDevices.length === 0) {
+      console.log('No valid devices found for averaging');
+      return [];
+    }
+
+    if (validDevices.length === 1) {
+      console.log('Only one valid device, returning as is');
+      return validDevices;
+    }
+
+    // Calculate average for multiple devices
+    const timePoints = new Map();
+    
+    validDevices.forEach(deviceData => {
+      deviceData.data.forEach(point => {
+        const timestamp = parseInt(point.ts);
+        if (!timePoints.has(timestamp)) {
+          timePoints.set(timestamp, { values: [], count: 0 });
+        }
+        timePoints.get(timestamp).values.push(parseFloat(point.value));
+        timePoints.get(timestamp).count++;
+      });
+    });
+
+    const averagedData = Array.from(timePoints.entries())
+      .map(([timestamp, { values, count }]) => {
+        const averageValue = values.reduce((sum, val) => sum + val, 0) / count;
+        return {
+          ts: timestamp,
+          value: averageValue
+        };
+      })
+      .sort((a, b) => a.ts - b.ts);
+
+    return [{
+      deviceId: 'aggregated',
+      key: key,
+      data: averagedData,
+      isCurrentValue: false
+    }];
+  };
+
+  // Funktion zum Generieren von Server-Thumbnails
+  const generateServerThumbnails = async (imagesList) => {
+    if (!imagesList || imagesList.length === 0) return;
+
+    try {
+      console.log(`Generating server thumbnails for ${imagesList.length} images`);
+      
+      const response = await fetch('/api/structure/images/thumbnails-batch', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.token}`
+        },
+        body: JSON.stringify({ images: imagesList })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to generate thumbnails: ${response.status}`);
+      }
+
+      const result = await response.json();
+      console.log('Thumbnail generation result:', result.statistics);
+
+      // Aktualisiere Thumbnail-Cache
+      const newThumbnailCache = new Map();
+      result.thumbnails.forEach(thumb => {
+        if (thumb.success) {
+          newThumbnailCache.set(thumb.imageId, {
+            url: thumb.thumbnailUrl,
+            cached: thumb.cached
+          });
+        }
+      });
+      
+      setThumbnailCache(prev => new Map([...prev, ...newThumbnailCache]));
+      setThumbnailLoadingStates(new Map()); // Alle Loading-States zurücksetzen
+
+    } catch (error) {
+      console.error('Error generating server thumbnails:', error);
+    }
+  };
+
+  // Funktion zum Abrufen eines Thumbnails
+  const getThumbnailUrl = (image) => {
+    const thumbnail = thumbnailCache.get(image.id);
+    if (thumbnail) {
+      return thumbnail.url;
+    }
+    return image.imageUrl; // Fallback zur ursprünglichen URL
+  };
+
+  // Funktion zum Prüfen ob Thumbnail geladen wird
+  const isThumbnailLoading = (imageId) => {
+    return thumbnailLoadingStates.get(imageId) || false;
+  };
+
+  // Lädt Telemetriedaten für eine Liste von Geräten
   const fetchTelemetryForDevices = async (devices) => {
     if (!session?.tbToken || !devices.length) {
       return devices;
@@ -1292,27 +1616,17 @@ export default function Dashboard() {
               return device;
             }
 
-            // First get the latest values without time range to determine last update
+            // Get latest sensor values using PostgreSQL API
             const latestTelemetryResponse = await fetch(
-              `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=fCnt,sensorTemperature,targetTemperature,batteryVoltage,PercentValveOpen,rssi,snr,sf,signalQuality`,
-              {
-                headers: {
-                  'Authorization': `Bearer ${session.token}`
-                }
-              }
+              `/api/telemetry/values?deviceIds=${deviceId}&keys=sensorTemperature,targetTemperature,PercentValveOpen,batteryVoltage,fCnt,rssi,snr,sf`
             );
 
-            // Then get the full 24-hour data for the modal
+            // Get 24-hour data for the modal using PostgreSQL API
             const endTime = Date.now();
             const startTime = endTime - (24 * 60 * 60 * 1000); // 24 hours ago
             
             const telemetryResponse = await fetch(
-              `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=fCnt,sensorTemperature,targetTemperature,batteryVoltage,PercentValveOpen,rssi,snr,sf,signalQuality&startTs=${startTime}&endTs=${endTime}`,
-              {
-                headers: {
-                  'Authorization': `Bearer ${session.token}`
-                }
-              }
+              `/api/telemetry/device-sensors-aggregated?deviceIds=${deviceId}&key=sensorTemperature&startTs=${startTime}&endTs=${endTime}&interval=3600000`
             );
 
             if (telemetryResponse.ok && latestTelemetryResponse.ok) {
@@ -1322,62 +1636,45 @@ export default function Dashboard() {
               console.log(`Device ${deviceId} raw telemetry (24h):`, telemetryData);
               console.log(`Device ${deviceId} latest telemetry:`, latestTelemetryData);
               
-              // Log the number of data points for each attribute
-              Object.keys(telemetryData).forEach(key => {
-                if (telemetryData[key] && Array.isArray(telemetryData[key])) {
-                  console.log(`Attribute ${key} (24h): ${telemetryData[key].length} data points`);
-                }
-              });
-
-              // Extract the latest values for each attribute from the latest data
+              // Extract the latest values from PostgreSQL API response
               const telemetry = {};
               
-              // Helper function to get latest value for an attribute
-              const getLatestValue = (attributeName) => {
-                const attributeData = latestTelemetryData[attributeName];
-                if (attributeData && Array.isArray(attributeData) && attributeData.length > 0) {
-                  // Get the latest reading (last in array)
-                  const latestReading = attributeData[attributeData.length - 1];
-                  return latestReading && latestReading.value !== null && latestReading.value !== undefined 
-                    ? latestReading.value 
-                    : null;
-                }
-                return null;
-              };
-
-              // Extract all attributes from latest data
-              telemetry.batteryVoltage = getLatestValue('batteryVoltage');
-              telemetry.fCnt = getLatestValue('fCnt');
-              telemetry.PercentValveOpen = getLatestValue('PercentValveOpen');
-              telemetry.rssi = getLatestValue('rssi');
-              telemetry.sensorTemperature = getLatestValue('sensorTemperature');
-              telemetry.targetTemperature = getLatestValue('targetTemperature');
-              telemetry.sf = getLatestValue('sf');
-              telemetry.signalQuality = getLatestValue('signalQuality');
-              telemetry.snr = getLatestValue('snr');
-
-              // Find the latest timestamp from the latest telemetry data (not the 24h data)
-              let latestTimestamp = null;
-              Object.keys(latestTelemetryData).forEach(key => {
-                if (latestTelemetryData[key] && Array.isArray(latestTelemetryData[key]) && latestTelemetryData[key].length > 0) {
-                  const lastEntry = latestTelemetryData[key][latestTelemetryData[key].length - 1];
-                  if (lastEntry && lastEntry.ts) {
-                    const ts = lastEntry.ts;
+              // Get device data from PostgreSQL response
+              const deviceData = latestTelemetryData.data?.[deviceId];
+              if (deviceData) {
+                telemetry.sensorTemperature = deviceData.sensorTemperature?.value || null;
+                telemetry.targetTemperature = deviceData.targetTemperature?.value || null;
+                telemetry.PercentValveOpen = deviceData.PercentValveOpen?.value || null;
+                telemetry.batteryVoltage = deviceData.batteryVoltage?.value || null;
+                telemetry.fCnt = deviceData.fCnt?.value || null;
+                telemetry.rssi = deviceData.rssi?.value || null;
+                telemetry.snr = deviceData.snr?.value || null;
+                telemetry.sf = deviceData.sf?.value || null;
+                
+                // Find the latest timestamp
+                let latestTimestamp = null;
+                Object.values(deviceData).forEach(sensorData => {
+                  if (sensorData && sensorData.timestamp) {
+                    const ts = sensorData.timestamp;
                     if (!latestTimestamp || ts > latestTimestamp) {
                       latestTimestamp = ts;
                     }
                   }
-                }
-              });
+                });
+                telemetry.lastUpdate = latestTimestamp;
+              }
 
-              // Add the latest timestamp to telemetry data
-              telemetry.lastUpdate = latestTimestamp;
-
-              // Store raw telemetry data for modal display
-              telemetry.rawData = telemetryData;
+              // Store raw telemetry data for modal display (convert PostgreSQL format)
+              const rawData = {};
+              if (telemetryData.data?.[deviceId]) {
+                rawData.sensorTemperature = telemetryData.data[deviceId].map(point => ({
+                  ts: point.ts,
+                  value: point.value
+                }));
+              }
+              telemetry.rawData = rawData;
 
               // Update device active status based on telemetry data
-              // If we have recent telemetry data, the device is definitely active
               let updatedActive = device.active;
               if (Object.values(telemetry).some(value => value !== null && value !== undefined)) {
                 updatedActive = true;
@@ -1414,6 +1711,7 @@ export default function Dashboard() {
   };
 
   // Function to fetch raw telemetry data for the last 24 hours
+  // Lädt rohe Telemetriedaten für das Modal
   const fetchRawTelemetryForModal = async (device) => {
     if (!device || !device.telemetry?.rawData) {
       console.warn('No raw telemetry data available for device:', device);
@@ -1472,6 +1770,7 @@ export default function Dashboard() {
     setShowTelemetryModal(true);
   };
 
+  // Lädt Sensortemperatur-Telemetriedaten für einen Node
   const fetchTelemetryData = async (nodeId, controller = null) => {
     setLoadingTelemetry(true);
     //console.log('--------------------------------');
@@ -1516,13 +1815,10 @@ export default function Dashboard() {
         duration: getTimeRangeLabel(selectedTimeRange)
       });*/
 
-      // Fetch telemetry data using centralized interval
+      // Fetch telemetry data using PostgreSQL API
       const telemetryResponse = await fetch(
-        `/api/thingsboard/devices/telemetry/aggregated?deviceIds=${deviceIds}&startTs=${startTime}&endTs=${endTime}&interval=${CHART_INTERVAL_MS}&attribute=sensorTemperature`,
+        `/api/telemetry/device-sensors-aggregated?deviceIds=${deviceIds}&key=sensorTemperature&startTs=${startTime}&endTs=${endTime}&interval=${CHART_INTERVAL_MS}`,
         {
-          headers: {
-            'Authorization': `Bearer ${session.token}`
-          },
           signal: controller?.signal
         }
       );
@@ -1534,8 +1830,28 @@ export default function Dashboard() {
       }
 
       const telemetryResult = await telemetryResponse.json();
-      //console.log('Telemetry data received:', telemetryResult.data?.length || 0, 'devices');
-      setTelemetryData(telemetryResult.data || []);
+      console.log('Telemetry data received:', telemetryResult);
+      
+      // Convert PostgreSQL data format to expected format
+      const formattedData = Object.entries(telemetryResult.data || {}).map(([deviceId, data]) => ({
+        deviceId: deviceId,
+        key: 'sensorTemperature',
+        data: data.map(point => ({
+          ts: parseInt(point.ts), // Ensure ts is a number
+          value: parseFloat(point.value) // Ensure value is a number
+        }))
+      }));
+
+      // Apply operational mode logic to aggregate data
+      const operationalMode = getOperationalModeLogic(nodeDetails || selectedNode);
+      const aggregatedData = aggregateTelemetryData(
+        formattedData, 
+        'sensorTemperature', 
+        operationalMode.mode, 
+        operationalMode.extTempDevice
+      );
+      
+      setTelemetryData(aggregatedData);
     } catch (error) {
       if (error.name === 'AbortError') {
         console.log('Telemetry request was cancelled');
@@ -1548,6 +1864,7 @@ export default function Dashboard() {
     }
   };
 
+  // Lädt Zieltemperatur-Telemetriedaten für einen Node
   const fetchTargetTelemetryData = async (nodeId, controller = null) => {
     try {
       // First get all devices under this node (including sub-nodes)
@@ -1580,13 +1897,10 @@ export default function Dashboard() {
       const endTime = Date.now();
       const startTime = endTime - getTimeRangeInMs(selectedTimeRange);
 
-      // Fetch target telemetry data using centralized interval
+      // Fetch target telemetry data using PostgreSQL API
       const telemetryResponse = await fetch(
-        `/api/thingsboard/devices/telemetry/aggregated?deviceIds=${deviceIds}&startTs=${startTime}&endTs=${endTime}&interval=${CHART_INTERVAL_MS}&attribute=targetTemperature`,
+        `/api/telemetry/device-sensors-aggregated?deviceIds=${deviceIds}&key=targetTemperature&startTs=${startTime}&endTs=${endTime}&interval=${CHART_INTERVAL_MS}`,
         {
-          headers: {
-            'Authorization': `Bearer ${session.token}`
-          },
           signal: controller?.signal
         }
       );
@@ -1598,8 +1912,28 @@ export default function Dashboard() {
       }
 
       const telemetryResult = await telemetryResponse.json();
-      //console.log('Target telemetry data received:', telemetryResult.data?.length || 0, 'devices');
-      setTargetTelemetryData(telemetryResult.data || []);
+      console.log('Target telemetry data received:', telemetryResult);
+      
+      // Convert PostgreSQL data format to expected format
+      const formattedData = Object.entries(telemetryResult.data || {}).map(([deviceId, data]) => ({
+        deviceId: deviceId,
+        key: 'targetTemperature',
+        data: data.map(point => ({
+          ts: parseInt(point.ts), // Ensure ts is a number
+          value: parseFloat(point.value) // Ensure value is a number
+        }))
+      }));
+
+      // Apply operational mode logic to aggregate data
+      const operationalMode = getOperationalModeLogic(nodeDetails || selectedNode);
+      const aggregatedData = aggregateTelemetryData(
+        formattedData, 
+        'targetTemperature', 
+        operationalMode.mode, 
+        operationalMode.extTempDevice
+      );
+      
+      setTargetTelemetryData(aggregatedData);
     } catch (error) {
       if (error.name === 'AbortError') {
         console.log('Target telemetry request was cancelled');
@@ -1610,6 +1944,7 @@ export default function Dashboard() {
     }
   };
 
+  // Lädt Ventil-Telemetriedaten für einen Node
   const fetchValveTelemetryData = async (nodeId, controller = null) => {
     try {
       // First get all devices under this node (including sub-nodes)
@@ -1642,13 +1977,10 @@ export default function Dashboard() {
       const endTime = Date.now();
       const startTime = endTime - getTimeRangeInMs(selectedTimeRange);
 
-      // Fetch valve telemetry data using centralized interval
+      // Fetch valve telemetry data using PostgreSQL API
       const telemetryResponse = await fetch(
-        `/api/thingsboard/devices/telemetry/aggregated?deviceIds=${deviceIds}&startTs=${startTime}&endTs=${endTime}&interval=${CHART_INTERVAL_MS}&attribute=PercentValveOpen`,
+        `/api/telemetry/device-sensors-aggregated?deviceIds=${deviceIds}&key=PercentValveOpen&startTs=${startTime}&endTs=${endTime}&interval=${CHART_INTERVAL_MS}`,
         {
-          headers: {
-            'Authorization': `Bearer ${session.token}`
-          },
           signal: controller?.signal
         }
       );
@@ -1660,8 +1992,28 @@ export default function Dashboard() {
       }
 
       const telemetryResult = await telemetryResponse.json();
-      //console.log('Valve telemetry data received:', telemetryResult.data?.length || 0, 'devices');
-      setValveTelemetryData(telemetryResult.data || []);
+      console.log('Valve telemetry data received:', telemetryResult);
+      
+      // Convert PostgreSQL data format to expected format
+      const formattedData = Object.entries(telemetryResult.data || {}).map(([deviceId, data]) => ({
+        deviceId: deviceId,
+        key: 'PercentValveOpen',
+        data: data.map(point => ({
+          ts: parseInt(point.ts), // Ensure ts is a number
+          value: parseFloat(point.value) // Ensure value is a number
+        }))
+      }));
+
+      // Apply operational mode logic to aggregate data
+      const operationalMode = getOperationalModeLogic(nodeDetails || selectedNode);
+      const aggregatedData = aggregateTelemetryData(
+        formattedData, 
+        'PercentValveOpen', 
+        operationalMode.mode, 
+        operationalMode.extTempDevice
+      );
+      
+      setValveTelemetryData(aggregatedData);
     } catch (error) {
       if (error.name === 'AbortError') {
         console.log('Valve telemetry request was cancelled');
@@ -1672,6 +2024,7 @@ export default function Dashboard() {
     }
   };
 
+  // Lädt Alarme für einen Node
   const fetchAlarms = async (nodeId, controller = null) => {
     if (!nodeId) return;
     
@@ -1908,6 +2261,7 @@ export default function Dashboard() {
     return findNode(nodeId, nodes);
   };
 
+  // Filtert Baumdaten basierend auf Suchbegriff
   const getFilteredTreeData = () => {
     if (!treeSearchTerm) return treeData;
     
@@ -1922,6 +2276,7 @@ export default function Dashboard() {
     return filterNodes(treeData);
   };
 
+  // Gibt das Icon für den Gerätestatus zurück
   const getDeviceStatusIcon = (device) => {
     if (device.active) {
       return <FontAwesomeIcon icon={faCheckCircle} className="text-success" />;
@@ -1930,6 +2285,7 @@ export default function Dashboard() {
     }
   };
 
+  // Gibt den Text für den Gerätestatus zurück
   const getDeviceStatusText = (device) => {
     if (device.active) {
       return 'Aktiv';
@@ -1939,6 +2295,7 @@ export default function Dashboard() {
   };
 
   // ECharts configuration for temperature telemetry
+  // Erstellt die ECharts-Konfiguration für Sensortemperatur-Telemetrie
   const getTelemetryChartOption = () => {
     if (!telemetryData || telemetryData.length === 0) {
       return {
@@ -1968,35 +2325,40 @@ export default function Dashboard() {
     const series = [];
     const colors = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#feca57', '#ff9ff3', '#54a0ff', '#5f27cd'];
 
+    // Since we now have aggregated data, we show only one series per node
     telemetryData.forEach((deviceData, index) => {
-      const device = devices.find(d => d.id?.id === deviceData.deviceId || d.id === deviceData.deviceId);
-      // Use device label if available, otherwise use name, fallback to device ID
-      const deviceName = device ? (device.label || device.name || `Device ${deviceData.deviceId}`) : `Device ${deviceData.deviceId}`;
-      const keyName = deviceData.key || 'temperature';
+      const nodeName = selectedNode?.label || selectedNode?.text || 'Node';
+      const keyName = deviceData.key || 'sensorTemperature';
       
       const data = deviceData.data.map(point => [
-        new Date(point.ts).toLocaleString('de-DE', {
-          day: '2-digit',
-          month: '2-digit',
-          hour: '2-digit',
-          minute: '2-digit'
-        }),
-        point.value
+        parseInt(point.ts), // Use timestamp directly for time axis
+        parseFloat(point.value)
       ]);
 
       const isCurrentValue = deviceData.isCurrentValue;
       
+      // Determine series name based on operational mode
+      let seriesName = nodeName;
+      if (deviceData.deviceId === 'aggregated') {
+        seriesName = `${nodeName} (Mittelwert)`;
+      } else {
+        // For specific device (extTempDevice), show device name
+        const device = devices.find(d => d.id?.id === deviceData.deviceId || d.id === deviceData.deviceId);
+        const deviceName = device ? (device.label || device.name || `Device ${deviceData.deviceId}`) : `Device ${deviceData.deviceId}`;
+        seriesName = `${nodeName} (${deviceName})`;
+      }
+      
       series.push({
-        name: `${deviceName}${isCurrentValue ? ' - Aktueller Wert' : ''}`,
+        name: `${seriesName}${isCurrentValue ? ' - Aktueller Wert' : ''}`,
         type: 'line',
         data: data,
         smooth: true,
         lineStyle: {
-          color: colors[index % colors.length],
+          color: colors[0], // Use first color for single series
           width: isCurrentValue ? 3 : 2
         },
         itemStyle: {
-          color: colors[index % colors.length]
+          color: colors[0]
         },
         symbol: 'circle',
         symbolSize: isCurrentValue ? 8 : 6,
@@ -2013,7 +2375,15 @@ export default function Dashboard() {
           color: '#333'
         },
         formatter: function(params) {
-          let result = `<div style="font-weight: bold; margin-bottom: 5px; color: #333;">${params[0].axisValue}</div>`;
+          const timestamp = params[0].axisValue;
+          const formattedTime = new Date(timestamp).toLocaleString('de-DE', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+          let result = `<div style="font-weight: bold; margin-bottom: 5px; color: #333;">${formattedTime}</div>`;
           params.forEach(param => {
             result += `<div style="margin: 3px 0; color: #333;">
               <span style="display: inline-block; width: 10px; height: 10px; background: ${param.color}; margin-right: 5px;"></span>
@@ -2061,9 +2431,8 @@ export default function Dashboard() {
         containLabel: true
       },
       xAxis: {
-        type: 'category',
+        type: 'time',
         boundaryGap: false,
-        data: series.length > 0 ? series[0].data.map(item => item[0]) : [],
         axisLabel: {
           color: '#333',
           rotate: 45
@@ -2100,6 +2469,7 @@ export default function Dashboard() {
   };
 
   // ECharts configuration for target temperature telemetry
+  // Erstellt die ECharts-Konfiguration für Zieltemperatur-Telemetrie
   const getTargetTelemetryChartOption = () => {
     if (!targetTelemetryData || targetTelemetryData.length === 0) {
       return {
@@ -2129,34 +2499,40 @@ export default function Dashboard() {
     const series = [];
     const colors = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#feca57', '#ff9ff3', '#54a0ff', '#5f27cd'];
 
+    // Since we now have aggregated data, we show only one series per node
     targetTelemetryData.forEach((deviceData, index) => {
-      const device = devices.find(d => d.id?.id === deviceData.deviceId || d.id === deviceData.deviceId);
-      // Use device label if available, otherwise use name, fallback to device ID
-      const deviceName = device ? (device.label || device.name || `Device ${deviceData.deviceId}`) : `Device ${deviceData.deviceId}`;
+      const nodeName = selectedNode?.label || selectedNode?.text || 'Node';
+      const keyName = deviceData.key || 'targetTemperature';
       
       const data = deviceData.data.map(point => [
-        new Date(point.ts).toLocaleString('de-DE', {
-          day: '2-digit',
-          month: '2-digit',
-          hour: '2-digit',
-          minute: '2-digit'
-        }),
-        point.value
+        parseInt(point.ts), // Use timestamp directly for time axis
+        parseFloat(point.value)
       ]);
 
       const isCurrentValue = deviceData.isCurrentValue;
       
+      // Determine series name based on operational mode
+      let seriesName = nodeName;
+      if (deviceData.deviceId === 'aggregated') {
+        seriesName = `${nodeName} (Mittelwert)`;
+      } else {
+        // For specific device (extTempDevice), show device name
+        const device = devices.find(d => d.id?.id === deviceData.deviceId || d.id === deviceData.deviceId);
+        const deviceName = device ? (device.label || device.name || `Device ${deviceData.deviceId}`) : `Device ${deviceData.deviceId}`;
+        seriesName = `${nodeName} (${deviceName})`;
+      }
+      
       series.push({
-        name: `${deviceName}${isCurrentValue ? ' - Aktueller Wert' : ''}`,
+        name: `${seriesName}${isCurrentValue ? ' - Aktueller Wert' : ''}`,
         type: 'line',
         data: data,
         smooth: true,
         lineStyle: {
-          color: colors[index % colors.length],
+          color: colors[1], // Use second color for target temperature
           width: isCurrentValue ? 3 : 2
         },
         itemStyle: {
-          color: colors[index % colors.length]
+          color: colors[1]
         },
         symbol: 'circle',
         symbolSize: isCurrentValue ? 8 : 6,
@@ -2173,7 +2549,15 @@ export default function Dashboard() {
           color: '#333'
         },
         formatter: function(params) {
-          let result = `<div style="font-weight: bold; margin-bottom: 5px; color: #333;">${params[0].axisValue}</div>`;
+          const timestamp = params[0].axisValue;
+          const formattedTime = new Date(timestamp).toLocaleString('de-DE', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+          let result = `<div style="font-weight: bold; margin-bottom: 5px; color: #333;">${formattedTime}</div>`;
           params.forEach(param => {
             result += `<div style="margin: 3px 0; color: #333;">
               <span style="display: inline-block; width: 10px; height: 10px; background: ${param.color}; margin-right: 5px;"></span>
@@ -2221,9 +2605,8 @@ export default function Dashboard() {
         containLabel: true
       },
       xAxis: {
-        type: 'category',
+        type: 'time',
         boundaryGap: false,
-        data: series.length > 0 ? series[0].data.map(item => item[0]) : [],
         axisLabel: {
           color: '#333',
           rotate: 45
@@ -2260,6 +2643,7 @@ export default function Dashboard() {
   };
 
   // ECharts configuration for valve telemetry
+  // Erstellt die ECharts-Konfiguration für Ventil-Telemetrie
   const getValveTelemetryChartOption = () => {
     if (!valveTelemetryData || valveTelemetryData.length === 0) {
       return {
@@ -2289,34 +2673,40 @@ export default function Dashboard() {
     const series = [];
     const colors = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#feca57', '#ff9ff3', '#54a0ff', '#5f27cd'];
 
+    // Since we now have aggregated data, we show only one series per node
     valveTelemetryData.forEach((deviceData, index) => {
-      const device = devices.find(d => d.id?.id === deviceData.deviceId || d.id === deviceData.deviceId);
-      // Use device label if available, otherwise use name, fallback to device ID
-      const deviceName = device ? (device.label || device.name || `Device ${deviceData.deviceId}`) : `Device ${deviceData.deviceId}`;
+      const nodeName = selectedNode?.label || selectedNode?.text || 'Node';
+      const keyName = deviceData.key || 'PercentValveOpen';
       
       const data = deviceData.data.map(point => [
-        new Date(point.ts).toLocaleString('de-DE', {
-          day: '2-digit',
-          month: '2-digit',
-          hour: '2-digit',
-          minute: '2-digit'
-        }),
-        point.value
+        parseInt(point.ts), // Use timestamp directly for time axis
+        parseFloat(point.value)
       ]);
 
       const isCurrentValue = deviceData.isCurrentValue;
       
+      // Determine series name based on operational mode
+      let seriesName = nodeName;
+      if (deviceData.deviceId === 'aggregated') {
+        seriesName = `${nodeName} (Mittelwert)`;
+      } else {
+        // For specific device (extTempDevice), show device name
+        const device = devices.find(d => d.id?.id === deviceData.deviceId || d.id === deviceData.deviceId);
+        const deviceName = device ? (device.label || device.name || `Device ${deviceData.deviceId}`) : `Device ${deviceData.deviceId}`;
+        seriesName = `${nodeName} (${deviceName})`;
+      }
+      
       series.push({
-        name: `${deviceName}${isCurrentValue ? ' - Aktueller Wert' : ''}`,
+        name: `${seriesName}${isCurrentValue ? ' - Aktueller Wert' : ''}`,
         type: 'line',
         data: data,
         smooth: true,
         lineStyle: {
-          color: colors[index % colors.length],
+          color: colors[2], // Use third color for valve data
           width: isCurrentValue ? 3 : 2
         },
         itemStyle: {
-          color: colors[index % colors.length]
+          color: colors[2]
         },
         symbol: 'circle',
         symbolSize: isCurrentValue ? 8 : 6,
@@ -2381,9 +2771,8 @@ export default function Dashboard() {
         containLabel: true
       },
       xAxis: {
-        type: 'category',
+        type: 'time',
         boundaryGap: false,
-        data: series.length > 0 ? series[0].data.map(item => item[0]) : [],
         axisLabel: {
           color: '#333',
           rotate: 45
@@ -3842,6 +4231,22 @@ export default function Dashboard() {
                               <h6 className="mb-0">
                                 <FontAwesomeIcon icon={faImage} className="me-2" />
                                 Bilder für {selectedNode?.text || 'diesen Node'}
+                                {images.length > 0 && (
+                                  <span className="badge bg-secondary ms-2">
+                                    {images.length} Bilder
+                                  </span>
+                                )}
+                                {(() => {
+                                  const stats = getCacheStats();
+                                  if (stats.thumbnailsCached > 0 || stats.thumbnailsLoading > 0) {
+                                    return (
+                                      <span className="badge bg-info ms-1" title={`${stats.thumbnailsCached} Thumbnails gecacht, ${stats.thumbnailsLoading} generieren`}>
+                                        {stats.thumbnailsCached}/{stats.totalImages} Thumbnails
+                                      </span>
+                                    );
+                                  }
+                                  return null;
+                                })()}
                               </h6>
                               <div className="d-flex gap-2">
                                 {!loadingImages && (
@@ -3859,6 +4264,16 @@ export default function Dashboard() {
                                     Neu laden
                                   </button>
                                 )}
+                                {imageCache.size > 0 && (
+                                  <button
+                                    className="btn btn-outline-warning btn-sm"
+                                    onClick={clearImageCache}
+                                    title="Bildcache leeren"
+                                  >
+                                    <FontAwesomeIcon icon={faTimes} className="me-1" />
+                                    Cache leeren
+                                  </button>
+                                )}
                               </div>
                             </div>
                             <div className="card-body">
@@ -3871,30 +4286,69 @@ export default function Dashboard() {
                                 </div>
                               ) : images.length > 0 ? (
                                 <div className="row g-3">
-                                  {images.map((image) => (
-                                    <div key={image.id} className="col-md-4 col-lg-3">
-                                      <div className="card h-100">
-                                        <div className="position-relative">
-                                          <img
-                                            src={image.imageUrl}
-                                            alt={image.filename}
-                                            className="card-img-top"
-                                            style={{
-                                              height: '200px',
-                                              objectFit: 'cover',
-                                              cursor: 'pointer'
-                                            }}
-                                            onClick={() => setSelectedImage(image)}
-                                          />
-                                          {image.isPrimary && (
-                                            <div 
-                                              className="position-absolute top-0 start-0 m-2 badge bg-warning"
-                                              title="Hauptbild"
-                                            >
-                                              <FontAwesomeIcon icon={faStar} />
-                                            </div>
-                                          )}
-                                        </div>
+                                  {images.map((image) => {
+                                    const thumbnailLoading = isThumbnailLoading(image.id);
+                                    const thumbnailUrl = getThumbnailUrl(image);
+                                    const thumbnail = thumbnailCache.get(image.id);
+                                    
+                                    return (
+                                      <div key={image.id} className="col-md-4 col-lg-3">
+                                        <div className="card h-100">
+                                          <div className="position-relative">
+                                            {thumbnailLoading ? (
+                                              <div 
+                                                className="d-flex align-items-center justify-content-center"
+                                                style={{
+                                                  height: '200px',
+                                                  backgroundColor: '#f8f9fa',
+                                                  border: '1px solid #dee2e6'
+                                                }}
+                                              >
+                                                <div className="text-center">
+                                                  <div className="spinner-border text-primary mb-2" role="status">
+                                                    <span className="visually-hidden">Loading...</span>
+                                                  </div>
+                                                  <div className="small text-muted">Generiere Thumbnail...</div>
+                                                </div>
+                                              </div>
+                                            ) : (
+                                              <div className="position-relative">
+                                                <img
+                                                  src={thumbnailUrl}
+                                                  alt={image.filename}
+                                                  className="card-img-top"
+                                                  style={{
+                                                    height: '200px',
+                                                    objectFit: 'cover',
+                                                    cursor: 'pointer'
+                                                  }}
+                                                  onClick={() => setSelectedImage(image)}
+                                                  onError={(e) => {
+                                                    // Fallback zur ursprünglichen URL bei Fehlern
+                                                    if (e.target.src !== image.imageUrl) {
+                                                      e.target.src = image.imageUrl;
+                                                    }
+                                                  }}
+                                                />
+                                                {thumbnail?.cached && (
+                                                  <div 
+                                                    className="position-absolute top-0 end-0 m-1 badge bg-success"
+                                                    title="Server-Thumbnail (schnell)"
+                                                  >
+                                                    <FontAwesomeIcon icon={faCheckCircle} size="sm" />
+                                                  </div>
+                                                )}
+                                              </div>
+                                            )}
+                                            {image.isPrimary && (
+                                              <div 
+                                                className="position-absolute top-0 start-0 m-2 badge bg-warning"
+                                                title="Hauptbild"
+                                              >
+                                                <FontAwesomeIcon icon={faStar} />
+                                              </div>
+                                            )}
+                                          </div>
                                         <div className="card-body p-2">
                                           <h6 className="card-title text-truncate" title={image.filename}>
                                             {image.filename}
@@ -3929,7 +4383,8 @@ export default function Dashboard() {
                                         </div>
                                       </div>
                                     </div>
-                                  ))}
+                                  );
+                                })}
                                 </div>
                               ) : (
                                 <div className="text-center py-4">
@@ -4006,10 +4461,16 @@ export default function Dashboard() {
               </div>
               <div className="modal-body text-center">
                 <img
-                  src={selectedImage.imageUrl}
+                  src={getCachedImage(selectedImage.imageUrl, selectedImage.id)}
                   alt={selectedImage.filename}
                   className="img-fluid"
                   style={{ maxHeight: '70vh' }}
+                  onError={(e) => {
+                    // Fallback zur ursprünglichen URL bei Fehlern
+                    if (e.target.src !== selectedImage.imageUrl) {
+                      e.target.src = selectedImage.imageUrl;
+                    }
+                  }}
                 />
                 
                 {selectedImage.imageText && (
