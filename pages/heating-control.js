@@ -36,7 +36,8 @@ import {
   faChalkboardTeacher,
   faCrown,
   faTowerObservation,
-  faTree
+  faTree,
+  faBullseye
 } from '@fortawesome/free-solid-svg-icons';
 import { Tree } from '@minoru/react-dnd-treeview';
 import { DndProvider } from 'react-dnd';
@@ -62,12 +63,19 @@ export default function HeatingControl() {
   const [selectedNode, setSelectedNode] = useState(null);
   const [nodeDetails, setNodeDetails] = useState(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
+  const [loadingNodeData, setLoadingNodeData] = useState(false);
   const [treeSearchTerm, setTreeSearchTerm] = useState('');
+  const [loadingTemperature, setLoadingTemperature] = useState(false);
+  const [temperatureHistory, setTemperatureHistory] = useState([]);
+  const [targetTemperatureHistory, setTargetTemperatureHistory] = useState([]);
+  const [loadingTemperatureHistory, setLoadingTemperatureHistory] = useState(false);
+  const [activeTab, setActiveTab] = useState('overview');
   const [devices, setDevices] = useState([]);
   const [loadingDevices, setLoadingDevices] = useState(false);
   const [telemetryData, setTelemetryData] = useState([]);
   const [loadingTelemetry, setLoadingTelemetry] = useState(false);
   const [currentTemperature, setCurrentTemperature] = useState(null);
+  const [currentTargetTemperature, setCurrentTargetTemperature] = useState(null);
   const [loadingCurrentTemp, setLoadingCurrentTemp] = useState(false);
   const [alarms, setAlarms] = useState([]);
   const [loadingAlarms, setLoadingAlarms] = useState(false);
@@ -76,7 +84,8 @@ export default function HeatingControl() {
   const [images, setImages] = useState([]);
   const [loadingImages, setLoadingImages] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
-
+  const [ws, setWs] = useState(null);
+  
   // Temperature state (API only)
   const [deviceTemperatures, setDeviceTemperatures] = useState({});
 
@@ -302,6 +311,720 @@ export default function HeatingControl() {
     }
   };
 
+  const fetchTemperature = async (node) => {
+    if (!node || !session?.token) return;
+    
+    try {
+      setLoadingTemperature(true);
+      setCurrentTemperature(null);
+      
+      const operationalMode = node.data?.operationalMode || node.operationalMode;
+      const extTempDevice = node.data?.extTempDevice || node.extTempDevice;
+      
+      console.log('Fetching temperature for operationalMode:', operationalMode, 'extTempDevice:', extTempDevice);
+      
+      if (operationalMode === 2) {
+        // Use external temperature device for both temperature and target temperature
+        if (extTempDevice) {
+          // Fetch sensor temperature with AVG
+          const sensorResponse = await fetch(
+            `/api/thingsboard/devices/telemetry?deviceId=${extTempDevice}&keys=sensorTemperature&interval=600000&agg=AVG&limit=2000`,
+            {
+              headers: {
+                'Authorization': `Bearer ${session.token}`
+              }
+            }
+          );
+          
+          // Fetch target temperature with MAX
+          const targetResponse = await fetch(
+            `/api/thingsboard/devices/telemetry?deviceId=${extTempDevice}&keys=targetTemperature&interval=600000&agg=MAX&limit=2000`,
+            {
+              headers: {
+                'Authorization': `Bearer ${session.token}`
+              }
+            }
+          );
+          
+          if (sensorResponse.ok && targetResponse.ok) {
+            const sensorData = await sensorResponse.json();
+            const targetData = await targetResponse.json();
+            const temperature = sensorData.sensorTemperature?.[0]?.value;
+            const targetTemperature = targetData.targetTemperature?.[0]?.value;
+            console.log('External temperature raw value:', temperature);
+            console.log('External target temperature raw value:', targetTemperature);
+            
+            if (temperature !== undefined) {
+              const numTemp = Number(temperature);
+              console.log('External temperature converted:', numTemp);
+              
+              if (!isNaN(numTemp) && numTemp > -50 && numTemp < 100) {
+                setCurrentTemperature({
+                  value: numTemp,
+                  source: 'external',
+                  deviceId: extTempDevice
+                });
+              } else {
+                console.warn('External temperature out of reasonable range:', numTemp);
+              }
+            }
+            
+            if (targetTemperature !== undefined) {
+              const numTargetTemp = Number(targetTemperature);
+              console.log('External target temperature converted:', numTargetTemp);
+              
+              if (!isNaN(numTargetTemp) && numTargetTemp > -50 && numTargetTemp < 100) {
+                setCurrentTargetTemperature({
+                  value: numTargetTemp,
+                  source: 'external',
+                  deviceId: extTempDevice
+                });
+              } else {
+                console.warn('External target temperature out of reasonable range:', numTargetTemp);
+              }
+            }
+          }
+        }
+      } else if (operationalMode === 10) {
+        // Use external temperature device for temperature only, MAX for target temperature
+        if (extTempDevice) {
+          const response = await fetch(
+            `/api/thingsboard/devices/telemetry?deviceId=${extTempDevice}&keys=sensorTemperature&interval=600000&agg=AVG&limit=2000`,
+            {
+              headers: {
+                'Authorization': `Bearer ${session.token}`
+              }
+            }
+          );
+          
+          if (response.ok) {
+            const data = await response.json();
+            const temperature = data.sensorTemperature?.[0]?.value;
+            console.log('External temperature raw value:', temperature);
+            
+            if (temperature !== undefined) {
+              const numTemp = Number(temperature);
+              console.log('External temperature converted:', numTemp);
+              
+              if (!isNaN(numTemp) && numTemp > -50 && numTemp < 100) {
+                setCurrentTemperature({
+                  value: numTemp,
+                  source: 'external',
+                  deviceId: extTempDevice
+                });
+              } else {
+                console.warn('External temperature out of reasonable range:', numTemp);
+              }
+            }
+          }
+        }
+        
+        // Load target temperature from related devices (average)
+        const relatedDevices = node.relatedDevices || node.data?.relatedDevices || [];
+        if (relatedDevices.length > 0) {
+          const deviceIds = relatedDevices.map(device => {
+            if (typeof device.id === 'object' && device.id?.id) {
+              return device.id.id;
+            }
+            return device.id;
+          }).filter(id => id);
+          
+          if (deviceIds.length > 0) {
+            const targetTemperaturePromises = deviceIds.map(async (deviceId) => {
+              try {
+                const response = await fetch(
+                  `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=targetTemperature&interval=600000&agg=MAX&limit=2000`,
+                  {
+                    headers: {
+                      'Authorization': `Bearer ${session.token}`
+                    }
+                  }
+                );
+                
+                if (response.ok) {
+                  const data = await response.json();
+                  return data.targetTemperature?.[0]?.value;
+                }
+              } catch (error) {
+                console.warn(`Error fetching target temperature for device ${deviceId}:`, error);
+              }
+              return null;
+            });
+            
+            const targetTemperatures = await Promise.all(targetTemperaturePromises);
+            const validTargetTemperatures = targetTemperatures
+              .filter(temp => temp !== null && temp !== undefined)
+              .map(temp => Number(temp))
+              .filter(temp => !isNaN(temp) && temp > -50 && temp < 100);
+            
+            if (validTargetTemperatures.length > 0) {
+              const maxTargetTemp = Math.max(...validTargetTemperatures); // Use MAX instead of AVG
+              setCurrentTargetTemperature({
+                value: maxTargetTemp,
+                source: 'max',
+                deviceCount: validTargetTemperatures.length
+              });
+            }
+          }
+        }
+      } else {
+        // Use average temperature from related devices
+        const relatedDevices = node.relatedDevices || node.data?.relatedDevices || [];
+        if (relatedDevices.length > 0) {
+          const deviceIds = relatedDevices.map(device => {
+            if (typeof device.id === 'object' && device.id?.id) {
+              return device.id.id;
+            }
+            return device.id;
+          }).filter(id => id);
+          
+          if (deviceIds.length > 0) {
+            // Fetch sensor temperature with AVG
+            const sensorTemperaturePromises = deviceIds.map(async (deviceId) => {
+              try {
+                const response = await fetch(
+                  `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=sensorTemperature&interval=600000&agg=AVG&limit=2000`,
+                  {
+                    headers: {
+                      'Authorization': `Bearer ${session.token}`
+                    }
+                  }
+                );
+                
+                if (response.ok) {
+                  const data = await response.json();
+                  return {
+                    temperature: data.sensorTemperature?.[0]?.value
+                  };
+                }
+              } catch (error) {
+                console.warn(`Error fetching temperature for device ${deviceId}:`, error);
+              }
+              return { temperature: null };
+            });
+
+            // Fetch target temperature with MAX
+            const targetTemperaturePromises = deviceIds.map(async (deviceId) => {
+              try {
+                const response = await fetch(
+                  `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=targetTemperature&interval=600000&agg=MAX&limit=2000`,
+                  {
+                    headers: {
+                      'Authorization': `Bearer ${session.token}`
+                    }
+                  }
+                );
+                
+                if (response.ok) {
+                  const data = await response.json();
+                  return {
+                    targetTemperature: data.targetTemperature?.[0]?.value
+                  };
+                }
+              } catch (error) {
+                console.warn(`Error fetching target temperature for device ${deviceId}:`, error);
+              }
+              return { targetTemperature: null };
+            });
+            
+            const sensorResults = await Promise.all(sensorTemperaturePromises);
+            const targetResults = await Promise.all(targetTemperaturePromises);
+            console.log('Raw sensor temperature data from API:', sensorResults);
+            console.log('Raw target temperature data from API:', targetResults);
+            
+            const validTemperatures = sensorResults
+              .filter(data => data.temperature !== null && data.temperature !== undefined)
+              .map(data => {
+                const numTemp = Number(data.temperature);
+                console.log('Converting temperature:', data.temperature, 'to number:', numTemp);
+                return numTemp;
+              })
+              .filter(temp => !isNaN(temp) && temp > -50 && temp < 100); // Reasonable temperature range
+            
+            const validTargetTemperatures = targetResults
+              .filter(data => data.targetTemperature !== null && data.targetTemperature !== undefined)
+              .map(data => {
+                const numTemp = Number(data.targetTemperature);
+                console.log('Converting target temperature:', data.targetTemperature, 'to number:', numTemp);
+                return numTemp;
+              })
+              .filter(temp => !isNaN(temp) && temp > -50 && temp < 100); // Reasonable temperature range
+
+            console.log('Valid temperatures after filtering:', validTemperatures);
+            console.log('Valid target temperatures after filtering:', validTargetTemperatures);
+            
+            if (validTemperatures.length > 0) {
+              const averageTemp = validTemperatures.reduce((sum, temp) => sum + temp, 0) / validTemperatures.length;
+              console.log('Calculated average temperature:', averageTemp);
+              
+              let maxTargetTemp = null;
+              if (validTargetTemperatures.length > 0) {
+                maxTargetTemp = Math.max(...validTargetTemperatures); // Use MAX instead of AVG
+                console.log('Calculated MAX target temperature:', maxTargetTemp);
+              }
+              setCurrentTemperature({
+                value: averageTemp,
+                source: 'average',
+                deviceCount: validTemperatures.length
+              });
+              
+              if (maxTargetTemp !== null) {
+                setCurrentTargetTemperature({
+                  value: maxTargetTemp,
+                  source: 'max',
+                  deviceCount: validTargetTemperatures.length
+                });
+              }
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching temperature:', error);
+    } finally {
+      setLoadingTemperature(false);
+    }
+  };
+
+  const fetchTemperatureHistory = async (node) => {
+    if (!node || !session?.token) return;
+    
+    try {
+      setLoadingTemperatureHistory(true);
+      setTemperatureHistory([]);
+      setTargetTemperatureHistory([]);
+      
+      const operationalMode = node.data?.operationalMode || node.operationalMode;
+      const extTempDevice = node.data?.extTempDevice || node.extTempDevice;
+      
+      console.log('Fetching temperature history for operationalMode:', operationalMode, 'extTempDevice:', extTempDevice);
+      
+      // Calculate time range (7 days ago to now)
+      const endTime = Date.now();
+      const startTime = endTime - (7 * 24 * 60 * 60 * 1000); // 7 days in milliseconds
+      
+      console.log('Fetching temperature history for operationalMode:', operationalMode, 'extTempDevice:', extTempDevice);
+      console.log('Time range - Start:', new Date(startTime).toISOString(), 'End:', new Date(endTime).toISOString());
+      console.log('Time range in days:', (endTime - startTime) / (24 * 60 * 60 * 1000));
+      
+      if (operationalMode === 2) {
+        // Use external temperature device for both temperature and target temperature
+        if (extTempDevice) {
+          // Split the 7-day period into smaller chunks to get all data
+          const chunkSize = 24 * 60 * 60 * 1000; // 1 day in milliseconds
+          const chunks = [];
+          
+          for (let i = 0; i < 7; i++) {
+            const chunkStart = startTime + (i * chunkSize);
+            const chunkEnd = Math.min(startTime + ((i + 1) * chunkSize), endTime);
+            chunks.push({ start: chunkStart, end: chunkEnd });
+          }
+          
+          console.log('Fetching data in', chunks.length, 'chunks');
+          
+          const allTemperatureData = [];
+          const allTargetTemperatureData = [];
+          
+          for (const chunk of chunks) {
+            try {
+              // Fetch sensor temperature with AVG
+              const sensorResponse = await fetch(
+                `/api/thingsboard/devices/telemetry?deviceId=${extTempDevice}&keys=sensorTemperature&startTs=${chunk.start}&endTs=${chunk.end}&interval=600000&agg=AVG&limit=2000`,
+                {
+                  headers: {
+                    'Authorization': `Bearer ${session.token}`
+                  }
+                }
+              );
+              
+              // Fetch target temperature with MAX
+              const targetResponse = await fetch(
+                `/api/thingsboard/devices/telemetry?deviceId=${extTempDevice}&keys=targetTemperature&startTs=${chunk.start}&endTs=${chunk.end}&interval=600000&agg=MAX&limit=2000`,
+                {
+                  headers: {
+                    'Authorization': `Bearer ${session.token}`
+                  }
+                }
+              );
+              
+              if (sensorResponse.ok && targetResponse.ok) {
+                const sensorData = await sensorResponse.json();
+                const targetData = await targetResponse.json();
+                const temperatureData = sensorData.sensorTemperature || [];
+                const targetTemperatureData = targetData.targetTemperature || [];
+                
+                allTemperatureData.push(...temperatureData);
+                allTargetTemperatureData.push(...targetTemperatureData);
+                
+                console.log(`Chunk ${chunks.indexOf(chunk) + 1}: Got ${temperatureData.length} temp points, ${targetTemperatureData.length} target temp points`);
+              }
+            } catch (error) {
+              console.warn(`Error fetching chunk ${chunks.indexOf(chunk) + 1}:`, error);
+            }
+          }
+          
+          const historyData = allTemperatureData
+            .filter(item => item && item.value !== null && item.value !== undefined)
+            .map(item => ({
+              time: new Date(item.ts).toLocaleString('de-DE'),
+              timestamp: item.ts,
+              temperature: Number(item.value)
+            }))
+            .filter(item => !isNaN(item.temperature) && item.temperature > -50 && item.temperature < 100)
+            .sort((a, b) => a.timestamp - b.timestamp);
+          
+          const targetHistoryData = allTargetTemperatureData
+            .filter(item => item && item.value !== null && item.value !== undefined)
+            .map(item => ({
+              time: new Date(item.ts).toLocaleString('de-DE'),
+              timestamp: item.ts,
+              temperature: Number(item.value)
+            }))
+            .filter(item => !isNaN(item.temperature) && item.temperature > -50 && item.temperature < 100)
+            .sort((a, b) => a.timestamp - b.timestamp);
+          
+          console.log('External temperature history:', historyData);
+          console.log('External MAX target temperature history:', targetHistoryData);
+          console.log('Temperature data points count:', historyData.length);
+          console.log('Target temperature data points count:', targetHistoryData.length);
+          console.log('First temperature data point:', historyData[0]);
+          console.log('Last temperature data point:', historyData[historyData.length - 1]);
+          setTemperatureHistory(historyData);
+          setTargetTemperatureHistory(targetHistoryData);
+        }
+      } else if (operationalMode === 10) {
+        // Use external temperature device for temperature only, MAX for target temperature
+        if (extTempDevice) {
+          // Split the 7-day period into smaller chunks to get all data
+          const chunkSize = 24 * 60 * 60 * 1000; // 1 day in milliseconds
+          const chunks = [];
+          
+          for (let i = 0; i < 7; i++) {
+            const chunkStart = startTime + (i * chunkSize);
+            const chunkEnd = Math.min(startTime + ((i + 1) * chunkSize), endTime);
+            chunks.push({ start: chunkStart, end: chunkEnd });
+          }
+          
+          console.log('Fetching temperature data in', chunks.length, 'chunks');
+          
+          const allTemperatureData = [];
+          const allTargetTemperatureData = [];
+          
+          for (const chunk of chunks) {
+            try {
+              // Fetch sensor temperature with AVG
+              const sensorResponse = await fetch(
+                `/api/thingsboard/devices/telemetry?deviceId=${extTempDevice}&keys=sensorTemperature&startTs=${chunk.start}&endTs=${chunk.end}&interval=600000&agg=AVG&limit=2000`,
+                {
+                  headers: {
+                    'Authorization': `Bearer ${session.token}`
+                  }
+                }
+              );
+              
+              // Fetch target temperature with MAX from related devices
+              const relatedDevices = node.relatedDevices || node.data?.relatedDevices || [];
+              const deviceIds = relatedDevices.map(device => {
+                if (typeof device.id === 'object' && device.id?.id) {
+                  return device.id.id;
+                }
+                return device.id;
+              }).filter(id => id);
+              
+              let targetTemperatureData = [];
+              if (deviceIds.length > 0) {
+                const targetPromises = deviceIds.map(async (deviceId) => {
+                  try {
+                    const response = await fetch(
+                      `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=targetTemperature&startTs=${chunk.start}&endTs=${chunk.end}&interval=600000&agg=MAX&limit=2000`,
+                      {
+                        headers: {
+                          'Authorization': `Bearer ${session.token}`
+                        }
+                      }
+                    );
+                    
+                    if (response.ok) {
+                      const data = await response.json();
+                      return data.targetTemperature || [];
+                    }
+                  } catch (error) {
+                    console.warn(`Error fetching target temperature for device ${deviceId}:`, error);
+                  }
+                  return [];
+                });
+                
+                const targetResults = await Promise.all(targetPromises);
+                targetTemperatureData = targetResults.flat();
+              }
+              
+              if (sensorResponse.ok) {
+                const data = await sensorResponse.json();
+                const temperatureData = data.sensorTemperature || [];
+                allTemperatureData.push(...temperatureData);
+                allTargetTemperatureData.push(...targetTemperatureData);
+                console.log(`Chunk ${chunks.indexOf(chunk) + 1}: Got ${temperatureData.length} temp points, ${targetTemperatureData.length} target temp points`);
+              }
+            } catch (error) {
+              console.warn(`Error fetching temperature chunk ${chunks.indexOf(chunk) + 1}:`, error);
+            }
+          }
+          
+          const historyData = allTemperatureData
+            .filter(item => item && item.value !== null && item.value !== undefined)
+            .map(item => ({
+              time: new Date(item.ts).toLocaleString('de-DE'),
+              timestamp: item.ts,
+              temperature: Number(item.value)
+            }))
+            .filter(item => !isNaN(item.temperature) && item.temperature > -50 && item.temperature < 100)
+            .sort((a, b) => a.timestamp - b.timestamp);
+          
+          console.log('External temperature history:', historyData);
+          console.log('Temperature data points count:', historyData.length);
+          setTemperatureHistory(historyData);
+          
+          // Process target temperature history
+          const targetHistoryData = allTargetTemperatureData
+            .filter(item => item && item.value !== null && item.value !== undefined)
+            .map(item => ({
+              time: new Date(item.ts).toLocaleString('de-DE'),
+              timestamp: item.ts,
+              temperature: Number(item.value)
+            }))
+            .filter(item => !isNaN(item.temperature) && item.temperature > -50 && item.temperature < 100)
+            .sort((a, b) => a.timestamp - b.timestamp);
+          
+          console.log('MAX target temperature history:', targetHistoryData);
+          console.log('Target temperature data points count:', targetHistoryData.length);
+          setTargetTemperatureHistory(targetHistoryData);
+        }
+        
+        // Load target temperature history from related devices (average) - fallback
+        const relatedDevices = node.relatedDevices || node.data?.relatedDevices || [];
+        if (relatedDevices.length > 0) {
+          const deviceIds = relatedDevices.map(device => {
+            if (typeof device.id === 'object' && device.id?.id) {
+              return device.id.id;
+            }
+            return device.id;
+          }).filter(id => id);
+          
+          if (deviceIds.length > 0) {
+            // Split the 7-day period into smaller chunks
+            const chunkSize = 24 * 60 * 60 * 1000; // 1 day in milliseconds
+            const chunks = [];
+            
+            for (let i = 0; i < 7; i++) {
+              const chunkStart = startTime + (i * chunkSize);
+              const chunkEnd = Math.min(startTime + ((i + 1) * chunkSize), endTime);
+              chunks.push({ start: chunkStart, end: chunkEnd });
+            }
+            
+            console.log('Fetching target temperature data in', chunks.length, 'chunks for', deviceIds.length, 'devices');
+            
+            const allTargetTemperatureData = [];
+            
+            for (const chunk of chunks) {
+              const targetHistoryPromises = deviceIds.map(async (deviceId) => {
+                try {
+                  const response = await fetch(
+                    `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=targetTemperature&startTs=${chunk.start}&endTs=${chunk.end}&interval=600000&agg=AVG&limit=2000`,
+                    {
+                      headers: {
+                        'Authorization': `Bearer ${session.token}`
+                      }
+                    }
+                  );
+                  
+                  if (response.ok) {
+                    const data = await response.json();
+                    return data.targetTemperature || [];
+                  }
+                } catch (error) {
+                  console.warn(`Error fetching target temperature history for device ${deviceId} chunk ${chunks.indexOf(chunk) + 1}:`, error);
+                }
+                return [];
+              });
+              
+              const chunkData = await Promise.all(targetHistoryPromises);
+              allTargetTemperatureData.push(...chunkData.flat());
+              console.log(`Chunk ${chunks.indexOf(chunk) + 1}: Got ${chunkData.flat().length} target temp points`);
+            }
+            
+            // Group by timestamp and calculate MAX for target temperatures
+            const targetTimestampMap = new Map();
+            
+            allTargetTemperatureData.forEach(item => {
+              if (item && item.value !== null && item.value !== undefined) {
+                const temp = Number(item.value);
+                if (!isNaN(temp) && temp > -50 && temp < 100) {
+                  if (!targetTimestampMap.has(item.ts)) {
+                    targetTimestampMap.set(item.ts, []);
+                  }
+                  targetTimestampMap.get(item.ts).push(temp);
+                }
+              }
+            });
+            
+            const targetHistoryData = Array.from(targetTimestampMap.entries())
+              .map(([timestamp, temps]) => ({
+                time: new Date(Number(timestamp)).toLocaleString('de-DE'),
+                timestamp: Number(timestamp),
+                temperature: temps.length > 0 ? Math.max(...temps) : null // Use MAX instead of AVG
+              }))
+              .filter(item => item.temperature !== null)
+              .sort((a, b) => a.timestamp - b.timestamp);
+            
+            console.log('MAX target temperature history:', targetHistoryData);
+            setTargetTemperatureHistory(targetHistoryData);
+          }
+        }
+      } else {
+        // Use average temperature from related devices
+        const relatedDevices = node.relatedDevices || node.data?.relatedDevices || [];
+        if (relatedDevices.length > 0) {
+          const deviceIds = relatedDevices.map(device => {
+            if (typeof device.id === 'object' && device.id?.id) {
+              return device.id.id;
+            }
+            return device.id;
+          }).filter(id => id);
+          
+          if (deviceIds.length > 0) {
+            // Split the 7-day period into smaller chunks
+            const chunkSize = 24 * 60 * 60 * 1000; // 1 day in milliseconds
+            const chunks = [];
+            
+            for (let i = 0; i < 7; i++) {
+              const chunkStart = startTime + (i * chunkSize);
+              const chunkEnd = Math.min(startTime + ((i + 1) * chunkSize), endTime);
+              chunks.push({ start: chunkStart, end: chunkEnd });
+            }
+            
+            console.log('Fetching temperature and target temperature data in', chunks.length, 'chunks for', deviceIds.length, 'devices');
+            
+            const allTemperatureData = [];
+            const allTargetTemperatureData = [];
+            
+            for (const chunk of chunks) {
+              // Fetch sensor temperature with AVG
+              const sensorHistoryPromises = deviceIds.map(async (deviceId) => {
+                try {
+                  const response = await fetch(
+                    `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=sensorTemperature&startTs=${chunk.start}&endTs=${chunk.end}&interval=600000&agg=AVG&limit=2000`,
+                    {
+                      headers: {
+                        'Authorization': `Bearer ${session.token}`
+                      }
+                    }
+                  );
+                  
+                  if (response.ok) {
+                    const data = await response.json();
+                    return data.sensorTemperature || [];
+                  }
+                } catch (error) {
+                  console.warn(`Error fetching sensor temperature history for device ${deviceId} chunk ${chunks.indexOf(chunk) + 1}:`, error);
+                }
+                return [];
+              });
+              
+              // Fetch target temperature with MAX
+              const targetHistoryPromises = deviceIds.map(async (deviceId) => {
+                try {
+                  const response = await fetch(
+                    `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=targetTemperature&startTs=${chunk.start}&endTs=${chunk.end}&interval=600000&agg=MAX&limit=2000`,
+                    {
+                      headers: {
+                        'Authorization': `Bearer ${session.token}`
+                      }
+                    }
+                  );
+                  
+                  if (response.ok) {
+                    const data = await response.json();
+                    return data.targetTemperature || [];
+                  }
+                } catch (error) {
+                  console.warn(`Error fetching target temperature history for device ${deviceId} chunk ${chunks.indexOf(chunk) + 1}:`, error);
+                }
+                return [];
+              });
+              
+              const sensorChunkData = await Promise.all(sensorHistoryPromises);
+              const targetChunkData = await Promise.all(targetHistoryPromises);
+              
+              allTemperatureData.push(...sensorChunkData.flat());
+              allTargetTemperatureData.push(...targetChunkData.flat());
+              
+              console.log(`Chunk ${chunks.indexOf(chunk) + 1}: Got ${sensorChunkData.flat().length} sensor temp points, ${targetChunkData.flat().length} target temp points`);
+            }
+            
+            // Group by timestamp and calculate average for temperatures
+            const timestampMap = new Map();
+            const targetTimestampMap = new Map();
+            
+            allTemperatureData.forEach(item => {
+              if (item && item.value !== null && item.value !== undefined) {
+                const temp = Number(item.value);
+                if (!isNaN(temp) && temp > -50 && temp < 100) {
+                  if (!timestampMap.has(item.ts)) {
+                    timestampMap.set(item.ts, []);
+                  }
+                  timestampMap.get(item.ts).push(temp);
+                }
+              }
+            });
+            
+            // Process target temperature data
+            allTargetTemperatureData.forEach(item => {
+              if (item && item.value !== null && item.value !== undefined) {
+                const temp = Number(item.value);
+                if (!isNaN(temp) && temp > -50 && temp < 100) {
+                  if (!targetTimestampMap.has(item.ts)) {
+                    targetTimestampMap.set(item.ts, []);
+                  }
+                  targetTimestampMap.get(item.ts).push(temp);
+                }
+              }
+            });
+            
+            const historyData = Array.from(timestampMap.entries())
+              .map(([timestamp, temps]) => ({
+                time: new Date(Number(timestamp)).toLocaleString('de-DE'),
+                timestamp: Number(timestamp),
+                temperature: temps.reduce((sum, temp) => sum + temp, 0) / temps.length
+              }))
+              .sort((a, b) => a.timestamp - b.timestamp);
+            
+            const targetHistoryData = Array.from(targetTimestampMap.entries())
+              .map(([timestamp, temps]) => ({
+                time: new Date(Number(timestamp)).toLocaleString('de-DE'),
+                timestamp: Number(timestamp),
+                temperature: temps.length > 0 ? Math.max(...temps) : null // Use MAX instead of AVG
+              }))
+              .filter(item => item.temperature !== null)
+              .sort((a, b) => a.timestamp - b.timestamp);
+            
+            console.log('Average temperature history:', historyData);
+            console.log('MAX target temperature history:', targetHistoryData);
+            console.log('Temperature data points count:', historyData.length);
+            console.log('Target temperature data points count:', targetHistoryData.length);
+            console.log('First temperature data point:', historyData[0]);
+            console.log('Last temperature data point:', historyData[historyData.length - 1]);
+            setTemperatureHistory(historyData);
+            setTargetTemperatureHistory(targetHistoryData);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching temperature history:', error);
+    } finally {
+      setLoadingTemperatureHistory(false);
+    }
+  };
+
   const fetchTelemetryForDevices = useCallback(async (devices) => {
     if (!session?.tbToken || !devices.length) {
       return devices;
@@ -471,8 +1194,23 @@ export default function HeatingControl() {
   const handleNodeSelect = (node) => {
     console.log('Node selected:', node);
     console.log('Node data:', node.data);
+    console.log('Node operationalMode:', node.operationalMode);
+    
+    // Set loading state and clear previous data
+    setLoadingNodeData(true);
+    setSelectedNode(null);
+    setNodeDetails(null);
+    
+    // Use the full node object, not just node.data
     setSelectedNode(node);
     fetchNodeDetails(node.id);
+    fetchTemperature(node);
+    fetchTemperatureHistory(node);
+    
+    // Clear loading state after a short delay to ensure data is loaded
+    setTimeout(() => {
+      setLoadingNodeData(false);
+    }, 100);
     
     // Load devices immediately from the node's relatedDevices
     // Check both node.relatedDevices and node.data.relatedDevices
@@ -514,6 +1252,237 @@ export default function HeatingControl() {
     return filterNodes(treeData);
   };
 
+  const getTemperatureChartOption = () => {
+    const hasTemperatureData = temperatureHistory && temperatureHistory.length > 0;
+    const hasTargetTemperatureData = targetTemperatureHistory && targetTemperatureHistory.length > 0;
+    
+    if (!hasTemperatureData && !hasTargetTemperatureData) {
+      return {
+        title: {
+          text: 'Temperaturverlauf (7 Tage)',
+          left: 'center',
+          textStyle: {
+            fontSize: 16
+          }
+        },
+        xAxis: {
+          type: 'time',
+          name: 'Zeit',
+          nameLocation: 'middle',
+          nameGap: 30
+        },
+        yAxis: {
+          type: 'value',
+          name: 'Temperatur (°C)',
+          nameLocation: 'middle',
+          nameGap: 50
+        },
+        series: [],
+        tooltip: {
+          trigger: 'axis',
+          formatter: function(params) {
+            return 'Keine Daten verfügbar';
+          }
+        },
+        grid: {
+          left: '10%',
+          right: '10%',
+          bottom: '15%',
+          top: '15%'
+        }
+      };
+    }
+
+    const temperatureData = hasTemperatureData ? temperatureHistory.map(item => {
+      const temp = Number(item.temperature);
+      return [item.timestamp, !isNaN(temp) ? temp : null];
+    }).filter(item => item[1] !== null) : [];
+
+    const targetTemperatureData = hasTargetTemperatureData ? targetTemperatureHistory.map(item => {
+      const temp = Number(item.temperature);
+      return [item.timestamp, !isNaN(temp) ? temp : null];
+    }).filter(item => item[1] !== null) : [];
+    
+    // Debug: Check timestamp ranges
+    if (temperatureData.length > 0 && targetTemperatureData.length > 0) {
+      const tempStart = new Date(temperatureData[0][0]);
+      const tempEnd = new Date(temperatureData[temperatureData.length - 1][0]);
+      const targetStart = new Date(targetTemperatureData[0][0]);
+      const targetEnd = new Date(targetTemperatureData[targetTemperatureData.length - 1][0]);
+      
+      console.log('Temperature range:', tempStart.toISOString(), 'to', tempEnd.toISOString());
+      console.log('Target temperature range:', targetStart.toISOString(), 'to', targetEnd.toISOString());
+      console.log('Time difference (hours):', (targetStart - tempStart) / (1000 * 60 * 60));
+      
+      // Synchronize data ranges - use the overlapping time range
+      const commonStart = Math.max(tempStart.getTime(), targetStart.getTime());
+      const commonEnd = Math.min(tempEnd.getTime(), targetEnd.getTime());
+      
+      console.log('Common time range:', new Date(commonStart).toISOString(), 'to', new Date(commonEnd).toISOString());
+      
+      // Filter data to common time range
+      const filteredTemperatureData = temperatureData.filter(item => 
+        item[0] >= commonStart && item[0] <= commonEnd
+      );
+      const filteredTargetTemperatureData = targetTemperatureData.filter(item => 
+        item[0] >= commonStart && item[0] <= commonEnd
+      );
+      
+      console.log('Filtered temperature data points:', filteredTemperatureData.length);
+      console.log('Filtered target temperature data points:', filteredTargetTemperatureData.length);
+      
+      // Use filtered data if we have overlapping data
+      if (filteredTemperatureData.length > 0 && filteredTargetTemperatureData.length > 0) {
+        temperatureData.splice(0, temperatureData.length, ...filteredTemperatureData);
+        targetTemperatureData.splice(0, targetTemperatureData.length, ...filteredTargetTemperatureData);
+      }
+    }
+    
+    console.log('Chart data points count:', temperatureData.length);
+    console.log('Target chart data points count:', targetTemperatureData.length);
+    console.log('First chart data point:', temperatureData[0]);
+    console.log('Last chart data point:', temperatureData[temperatureData.length - 1]);
+    console.log('First target chart data point:', targetTemperatureData[0]);
+    console.log('Last target chart data point:', targetTemperatureData[targetTemperatureData.length - 1]);
+    console.log('Raw targetTemperatureHistory:', targetTemperatureHistory);
+    console.log('Raw temperatureHistory:', temperatureHistory);
+    
+    return {
+      title: {
+        text: 'Temperaturverlauf (7 Tage)',
+        left: 'center',
+        textStyle: {
+          fontSize: 16
+        }
+      },
+      xAxis: {
+        type: 'time',
+        name: 'Zeit',
+        nameLocation: 'middle',
+        nameGap: 30,
+        axisLabel: {
+          formatter: function(value) {
+            return new Date(value).toLocaleDateString('de-DE', {
+              day: '2-digit',
+              month: '2-digit',
+              hour: '2-digit',
+              minute: '2-digit'
+            });
+          }
+        }
+      },
+      yAxis: {
+        type: 'value',
+        name: 'Temperatur (°C)',
+        nameLocation: 'middle',
+        nameGap: 50,
+        axisLabel: {
+          formatter: '{value}°C'
+        }
+      },
+      series: [
+        ...(hasTemperatureData ? [{
+          name: 'Aktuelle Temperatur',
+          type: 'line',
+          data: temperatureData,
+          smooth: true,
+          symbol: 'circle',
+          symbolSize: 4,
+          lineStyle: {
+            color: '#dc3545',
+            width: 2
+          },
+          itemStyle: {
+            color: '#dc3545'
+          },
+          areaStyle: {
+            color: {
+              type: 'linear',
+              x: 0,
+              y: 0,
+              x2: 0,
+              y2: 1,
+              colorStops: [{
+                offset: 0, color: 'rgba(220, 53, 69, 0.3)'
+              }, {
+                offset: 1, color: 'rgba(220, 53, 69, 0.05)'
+              }]
+            }
+          }
+        }] : []),
+        ...(hasTargetTemperatureData ? [{
+          name: 'Zieltemperatur',
+          type: 'line',
+          data: targetTemperatureData,
+          smooth: true,
+          symbol: 'diamond',
+          symbolSize: 6,
+          connectNulls: true,
+          lineStyle: {
+            color: '#28a745',
+            width: 2,
+            type: 'dashed'
+          },
+          itemStyle: {
+            color: '#28a745'
+          }
+        }] : [])
+      ],
+      tooltip: {
+        trigger: 'axis',
+        formatter: function(params) {
+          if (params && params.length > 0) {
+            const date = new Date(params[0].axisValue).toLocaleString('de-DE');
+            let tooltipText = date + '<br/>';
+            
+            params.forEach(param => {
+              const value = Number(param.value);
+              const seriesName = param.seriesName;
+              const color = param.color;
+              tooltipText += `<span style="color:${color}">●</span> ${seriesName}: ${!isNaN(value) ? value.toFixed(1) : 'N/A'}°C<br/>`;
+            });
+            
+            return tooltipText;
+          }
+          return '';
+        }
+      },
+      grid: {
+        left: '10%',
+        right: '10%',
+        bottom: '15%',
+        top: '15%'
+      },
+      dataZoom: [{
+        type: 'inside',
+        start: 0,
+        end: 100
+      }, {
+        type: 'slider',
+        start: 0,
+        end: 100,
+        height: 20,
+        bottom: 10,
+        dataBackground: {
+          areaStyle: {
+            color: '#f0f0f0'
+          },
+          lineStyle: {
+            color: '#ccc'
+          }
+        },
+        selectedDataBackground: {
+          areaStyle: {
+            color: '#e6f3ff'
+          },
+          lineStyle: {
+            color: '#1890ff'
+          }
+        }
+      }]
+    };
+  };
+
   const CustomNode = ({ node, onToggle, dragHandle, isOpen }) => {
     const isSelected = selectedNode?.id === node.id;
     const hasChildren = node.droppable;
@@ -532,7 +1501,7 @@ export default function HeatingControl() {
           border: isSelected ? '1px solid #fd7e14' : '1px solid transparent',
           transition: 'all 0.2s ease'
         }}
-        onClick={() => handleNodeSelect(node.data)}
+        onClick={() => handleNodeSelect(node)}
       >
         <div className="d-flex align-items-center">
           {hasChildren && (
@@ -589,6 +1558,48 @@ export default function HeatingControl() {
       fetchUserData();
     }
   }, [session, fetchUserData]);
+
+  // WebSocket connection effect
+  useEffect(() => {
+    if (session?.token) {
+      const wsUrl = `${process.env.NEXT_PUBLIC_THINGSBOARD_WSS_URL}/api/ws/plugins/telemetry?token=${session.token}`;
+      const websocket = new WebSocket(wsUrl);
+      
+      websocket.onmessage = (event) => {
+        console.log('ws message: ' + event.data);
+      };
+      
+      websocket.onopen = () => {
+        console.log('ws open');
+      };
+      
+      websocket.onclose = () => {
+        console.log('ws close');
+      };
+      
+      websocket.onerror = (event) => {
+        console.log('ws error: ' + event);
+      };
+
+      setWs(websocket);
+
+      // Check connection status after 1 second
+      setTimeout(() => {
+        if (websocket.readyState === WebSocket.OPEN) {
+          console.log("WS Verbindung ist stabil 👍");
+        } else {
+          console.warn("WS ist NICHT offen, Zustand:", websocket.readyState);
+        }
+      }, 1000);
+
+      // Cleanup function
+      return () => {
+        if (websocket.readyState === WebSocket.OPEN || websocket.readyState === WebSocket.CONNECTING) {
+          websocket.close();
+        }
+      };
+    }
+  }, [session?.token]);
 
 
   useEffect(() => {
@@ -850,6 +1861,149 @@ export default function HeatingControl() {
                       </span>
                     </div>
                   </div>
+
+                  {/* Tab Navigation */}
+                  <ul className="nav nav-tabs mb-4" id="nodeTabs" role="tablist">
+                    <li className="nav-item" role="presentation">
+                      <button
+                        className={`nav-link ${activeTab === 'overview' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('overview')}
+                        type="button"
+                      >
+                        <FontAwesomeIcon icon={faChartLine} className="me-2" />
+                        Übersicht
+                      </button>
+                    </li>
+                    <li className="nav-item" role="presentation">
+                      <button
+                        className={`nav-link ${activeTab === 'details' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('details')}
+                        type="button"
+                      >
+                        <FontAwesomeIcon icon={faCog} className="me-2" />
+                        Details
+                      </button>
+                    </li>
+                  </ul>
+
+                  {/* Tab Content */}
+                  <div className="tab-content">
+                    {/* Übersicht Tab */}
+                    {activeTab === 'overview' && (
+                      <div className="tab-pane fade show active">
+                        {/* Aktuelle Temperaturen */}
+                        <div className="row mb-4">
+                          <div className="col-md-6">
+                            <div className="card">
+                              <div className="card-body text-center">
+                                <FontAwesomeIcon icon={faThermometerHalf} className="text-danger mb-3" size="2x" />
+                                <h4 className="card-title">Aktuelle Temperatur</h4>
+                                {loadingTemperature ? (
+                                  <div className="d-flex align-items-center justify-content-center">
+                                    <div className="spinner-border me-2" role="status">
+                                      <span className="visually-hidden">Laden...</span>
+                                    </div>
+                                    <span>Lade Temperatur...</span>
+                                  </div>
+                                ) : currentTemperature ? (
+                                  <div>
+                                    <div className="display-4 text-primary mb-2">
+                                      {Number(currentTemperature.value).toFixed(1)}°C
+                                    </div>
+                                    <p className="text-muted mb-0">
+                                      {currentTemperature.source === 'external' ? (
+                                        <>Externe Temperatur (Device: {currentTemperature.deviceId?.substring(0, 8)}...)</>
+                                      ) : (
+                                        <>Durchschnittstemperatur ({currentTemperature.deviceCount} Geräte)</>
+                                      )}
+                                    </p>
+                                  </div>
+                                ) : (
+                                  <div className="text-muted">
+                                    <p>Keine Temperaturdaten verfügbar</p>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          
+                          <div className="col-md-6">
+                            <div className="card">
+                              <div className="card-body text-center">
+                                <FontAwesomeIcon icon={faBullseye} className="text-success mb-3" size="2x" />
+                                <h4 className="card-title">Zieltemperatur</h4>
+                                {loadingTemperature ? (
+                                  <div className="d-flex align-items-center justify-content-center">
+                                    <div className="spinner-border me-2" role="status">
+                                      <span className="visually-hidden">Laden...</span>
+                                    </div>
+                                    <span>Lade Zieltemperatur...</span>
+                                  </div>
+                                ) : currentTargetTemperature ? (
+                                  <div>
+                                    <div className="display-4 text-success mb-2">
+                                      {Number(currentTargetTemperature.value).toFixed(1)}°C
+                                    </div>
+                                    <p className="text-muted mb-0">
+                                      {currentTargetTemperature.source === 'external' ? (
+                                        <>Externe Zieltemperatur (Device: {currentTargetTemperature.deviceId?.substring(0, 8)}...)</>
+                                      ) : (
+                                        <>Maximale Zieltemperatur ({currentTargetTemperature.deviceCount} Geräte)</>
+                                      )}
+                                    </p>
+                                  </div>
+                                ) : (
+                                  <div className="text-muted">
+                                    <p>Keine Zieltemperaturdaten verfügbar</p>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Temperaturverlauf Chart */}
+                        <div className="row">
+                          <div className="col-12">
+                            <div className="card">
+                              <div className="card-header">
+                                <h6 className="mb-0">
+                                  <FontAwesomeIcon icon={faChartLine} className="me-2" />
+                                  Temperaturverlauf (7 Tage)
+                                </h6>
+                              </div>
+                              <div className="card-body">
+                                {loadingTemperatureHistory ? (
+                                  <div className="d-flex align-items-center justify-content-center" style={{ height: '400px' }}>
+                                    <div className="spinner-border me-2" role="status">
+                                      <span className="visually-hidden">Laden...</span>
+                                    </div>
+                                    <span>Lade Temperaturverlauf...</span>
+                                  </div>
+                                ) : temperatureHistory && temperatureHistory.length > 0 ? (
+                                  <ReactECharts
+                                    option={getTemperatureChartOption()}
+                                    style={{ height: '400px', width: '100%' }}
+                                    opts={{ renderer: 'canvas' }}
+                                  />
+                                ) : (
+                                  <div className="text-center text-muted" style={{ height: '400px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    <div>
+                                      <FontAwesomeIcon icon={faThermometerHalf} size="2x" className="mb-3" />
+                                      <p>Keine Temperaturverlaufsdaten verfügbar</p>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Details Tab */}
+                    {activeTab === 'details' && (
+                      <div className="tab-pane fade show active">
                   
                   <div className="row">
                     <div className="col-md-6">
@@ -980,10 +2134,10 @@ export default function HeatingControl() {
                   
 
                   {/* Heizungsspezifische Informationen */}
-                  {(selectedNode.operationalMode !== undefined || 
-                    selectedNode.fixValue !== undefined || 
-                    selectedNode.maxTemp !== undefined ||
-                    selectedNode.runStatus !== undefined) && (
+                  {((selectedNode.data?.operationalMode || selectedNode.operationalMode) !== undefined || 
+                    (selectedNode.data?.fixValue || selectedNode.fixValue) !== undefined || 
+                    (selectedNode.data?.maxTemp || selectedNode.maxTemp) !== undefined ||
+                    (selectedNode.data?.runStatus || selectedNode.runStatus) !== undefined) && (
                     <div className="mt-4">
                       <h6 className="text-muted mb-3">Heizungseinstellungen</h6>
                       <div className="row">
@@ -993,11 +2147,17 @@ export default function HeatingControl() {
                               <FontAwesomeIcon icon={faThermometerHalf} className="text-primary mb-2" size="lg" />
                               <h6 className="card-title">Betriebsmodus</h6>
                               <p className="card-text">
-                                {selectedNode.operationalMode === 0 ? 'Aus' :
-                                 selectedNode.operationalMode === 1 ? 'Manuell' :
-                                 selectedNode.operationalMode === 2 ? 'Automatisch' :
-                                 selectedNode.operationalMode === 10 ? 'Zeitplan' :
-                                 selectedNode.operationalMode}
+                                {loadingNodeData ? (
+                                  <div className="d-flex align-items-center justify-content-center">
+                                    <div className="spinner-border spinner-border-sm me-2" role="status">
+                                      <span className="visually-hidden">Laden...</span>
+                                    </div>
+                                    Laden...
+                                  </div>
+                                ) : (
+                                  selectedNode.data?.operationalMode || selectedNode.operationalMode
+                                )}
+                                {console.log('Displaying operationalMode:', selectedNode.data?.operationalMode || selectedNode.operationalMode, 'for node:', selectedNode.id)}
                               </p>
                             </div>
                           </div>
@@ -1009,7 +2169,16 @@ export default function HeatingControl() {
                               <FontAwesomeIcon icon={faCog} className="text-success mb-2" size="lg" />
                               <h6 className="card-title">Solltemperatur</h6>
                               <p className="card-text">
-                                {selectedNode.fixValue ? `${selectedNode.fixValue}°C` : 'Nicht gesetzt'}
+                                {loadingNodeData ? (
+                                  <div className="d-flex align-items-center justify-content-center">
+                                    <div className="spinner-border spinner-border-sm me-2" role="status">
+                                      <span className="visually-hidden">Laden...</span>
+                                    </div>
+                                    Laden...
+                                  </div>
+                                ) : (
+                                  (selectedNode.data?.fixValue || selectedNode.fixValue) ? `${selectedNode.data?.fixValue || selectedNode.fixValue}°C` : 'Nicht gesetzt'
+                                )}
                               </p>
                             </div>
                           </div>
@@ -1021,10 +2190,18 @@ export default function HeatingControl() {
                               <FontAwesomeIcon icon={faThermometerHalf} className="text-warning mb-2" size="lg" />
                               <h6 className="card-title">Temperaturbereich</h6>
                               <p className="card-text">
-                                {selectedNode.minTemp && selectedNode.maxTemp 
-                                  ? `${selectedNode.minTemp}°C - ${selectedNode.maxTemp}°C`
-                                  : 'Nicht definiert'
-                                }
+                                {loadingNodeData ? (
+                                  <div className="d-flex align-items-center justify-content-center">
+                                    <div className="spinner-border spinner-border-sm me-2" role="status">
+                                      <span className="visually-hidden">Laden...</span>
+                                    </div>
+                                    Laden...
+                                  </div>
+                                ) : (
+                                  (selectedNode.data?.minTemp || selectedNode.minTemp) && (selectedNode.data?.maxTemp || selectedNode.maxTemp)
+                                    ? `${selectedNode.data?.minTemp || selectedNode.minTemp}°C - ${selectedNode.data?.maxTemp || selectedNode.maxTemp}°C`
+                                    : 'Nicht definiert'
+                                )}
                               </p>
                             </div>
                           </div>
@@ -1036,10 +2213,22 @@ export default function HeatingControl() {
                               <FontAwesomeIcon icon={faCog} className="text-info mb-2" size="lg" />
                               <h6 className="card-title">Status</h6>
                               <p className="card-text">
-                                {selectedNode.runStatus === 'manual' ? 'Manuell' :
-                                 selectedNode.runStatus === 'schedule' ? 'Zeitplan' :
-                                 selectedNode.runStatus === 'fix' ? 'Fest' :
-                                 selectedNode.runStatus || 'Unbekannt'}
+                                {loadingNodeData ? (
+                                  <div className="d-flex align-items-center justify-content-center">
+                                    <div className="spinner-border spinner-border-sm me-2" role="status">
+                                      <span className="visually-hidden">Laden...</span>
+                                    </div>
+                                    Laden...
+                                  </div>
+                                ) : (
+                                  (() => {
+                                    const runStatus = selectedNode.data?.runStatus || selectedNode.runStatus;
+                                    return runStatus === 'manual' ? 'Manuell' :
+                                           runStatus === 'schedule' ? 'Zeitplan' :
+                                           runStatus === 'fix' ? 'Fest' :
+                                           runStatus || 'Unbekannt';
+                                  })()
+                                )}
                               </p>
                             </div>
                           </div>
@@ -1047,6 +2236,9 @@ export default function HeatingControl() {
                       </div>
                     </div>
                   )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             ) : (
