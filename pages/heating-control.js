@@ -326,9 +326,9 @@ export default function HeatingControl() {
       if (operationalMode === 2) {
         // Use external temperature device for both temperature and target temperature
         if (extTempDevice) {
-          // Fetch sensor temperature with AVG
-          const sensorResponse = await fetch(
-            `/api/thingsboard/devices/telemetry?deviceId=${extTempDevice}&keys=sensorTemperature&interval=600000&agg=AVG&limit=2000`,
+          // Fetch both sensor and target temperature in one call
+          const response = await fetch(
+            `/api/thingsboard/devices/telemetry?deviceId=${extTempDevice}&keys=sensorTemperature,targetTemperature&interval=600000&agg=AVG&limit=2000`,
             {
               headers: {
                 'Authorization': `Bearer ${session.token}`
@@ -336,21 +336,10 @@ export default function HeatingControl() {
             }
           );
           
-          // Fetch target temperature with MAX
-          const targetResponse = await fetch(
-            `/api/thingsboard/devices/telemetry?deviceId=${extTempDevice}&keys=targetTemperature&interval=600000&agg=MAX&limit=2000`,
-            {
-              headers: {
-                'Authorization': `Bearer ${session.token}`
-              }
-            }
-          );
-          
-          if (sensorResponse.ok && targetResponse.ok) {
-            const sensorData = await sensorResponse.json();
-            const targetData = await targetResponse.json();
-            const temperature = sensorData.sensorTemperature?.[0]?.value;
-            const targetTemperature = targetData.targetTemperature?.[0]?.value;
+          if (response.ok) {
+            const data = await response.json();
+            const temperature = data.sensorTemperature?.[0]?.value;
+            const targetTemperature = data.targetTemperature?.[0]?.value;
             console.log('External temperature raw value:', temperature);
             console.log('External target temperature raw value:', targetTemperature);
             
@@ -386,7 +375,7 @@ export default function HeatingControl() {
           }
         }
       } else if (operationalMode === 10) {
-        // Use external temperature device for temperature only, MAX for target temperature
+        // Use external temperature device for temperature only, average for target temperature
         if (extTempDevice) {
           const response = await fetch(
             `/api/thingsboard/devices/telemetry?deviceId=${extTempDevice}&keys=sensorTemperature&interval=600000&agg=AVG&limit=2000`,
@@ -458,10 +447,10 @@ export default function HeatingControl() {
               .filter(temp => !isNaN(temp) && temp > -50 && temp < 100);
             
             if (validTargetTemperatures.length > 0) {
-              const maxTargetTemp = Math.max(...validTargetTemperatures); // Use MAX instead of AVG
+              const avgTargetTemp = validTargetTemperatures.reduce((sum, temp) => sum + temp, 0) / validTargetTemperatures.length; // Use AVG for consistency
               setCurrentTargetTemperature({
-                value: maxTargetTemp,
-                source: 'max',
+                value: avgTargetTemp,
+                source: 'average',
                 deviceCount: validTargetTemperatures.length
               });
             }
@@ -557,10 +546,10 @@ export default function HeatingControl() {
               const averageTemp = validTemperatures.reduce((sum, temp) => sum + temp, 0) / validTemperatures.length;
               console.log('Calculated average temperature:', averageTemp);
               
-              let maxTargetTemp = null;
+              let avgTargetTemp = null;
               if (validTargetTemperatures.length > 0) {
-                maxTargetTemp = Math.max(...validTargetTemperatures); // Use MAX instead of AVG
-                console.log('Calculated MAX target temperature:', maxTargetTemp);
+                avgTargetTemp = validTargetTemperatures.reduce((sum, temp) => sum + temp, 0) / validTargetTemperatures.length; // Use AVG for consistency
+                console.log('Calculated AVG target temperature:', avgTargetTemp);
               }
               setCurrentTemperature({
                 value: averageTemp,
@@ -568,10 +557,10 @@ export default function HeatingControl() {
                 deviceCount: validTemperatures.length
               });
               
-              if (maxTargetTemp !== null) {
+              if (avgTargetTemp !== null) {
                 setCurrentTargetTemperature({
-                  value: maxTargetTemp,
-                  source: 'max',
+                  value: avgTargetTemp,
+                  source: 'average',
                   deviceCount: validTargetTemperatures.length
                 });
               }
@@ -627,9 +616,9 @@ export default function HeatingControl() {
           
           for (const chunk of chunks) {
             try {
-              // Fetch sensor temperature with AVG
-              const sensorResponse = await fetch(
-                `/api/thingsboard/devices/telemetry?deviceId=${extTempDevice}&keys=sensorTemperature&startTs=${chunk.start}&endTs=${chunk.end}&interval=600000&agg=AVG&limit=2000`,
+              // Fetch both sensor and target temperature in one call
+              const response = await fetch(
+                `/api/thingsboard/devices/telemetry?deviceId=${extTempDevice}&keys=sensorTemperature,targetTemperature&startTs=${chunk.start}&endTs=${chunk.end}&interval=36000000&agg=AVG&limit=2000`,
                 {
                   headers: {
                     'Authorization': `Bearer ${session.token}`
@@ -637,21 +626,10 @@ export default function HeatingControl() {
                 }
               );
               
-              // Fetch target temperature with MAX
-              const targetResponse = await fetch(
-                `/api/thingsboard/devices/telemetry?deviceId=${extTempDevice}&keys=targetTemperature&startTs=${chunk.start}&endTs=${chunk.end}&interval=600000&agg=MAX&limit=2000`,
-                {
-                  headers: {
-                    'Authorization': `Bearer ${session.token}`
-                  }
-                }
-              );
-              
-              if (sensorResponse.ok && targetResponse.ok) {
-                const sensorData = await sensorResponse.json();
-                const targetData = await targetResponse.json();
-                const temperatureData = sensorData.sensorTemperature || [];
-                const targetTemperatureData = targetData.targetTemperature || [];
+              if (response.ok) {
+                const data = await response.json();
+                const temperatureData = data.sensorTemperature || [];
+                const targetTemperatureData = data.targetTemperature || [];
                 
                 allTemperatureData.push(...temperatureData);
                 allTargetTemperatureData.push(...targetTemperatureData);
@@ -722,7 +700,7 @@ export default function HeatingControl() {
                 }
               );
               
-              // Fetch target temperature with MAX from related devices
+              // Fetch target temperature with AVG from related devices (same interval as sensor)
               const relatedDevices = node.relatedDevices || node.data?.relatedDevices || [];
               const deviceIds = relatedDevices.map(device => {
                 if (typeof device.id === 'object' && device.id?.id) {
@@ -736,7 +714,7 @@ export default function HeatingControl() {
                 const targetPromises = deviceIds.map(async (deviceId) => {
                   try {
                     const response = await fetch(
-                      `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=targetTemperature&startTs=${chunk.start}&endTs=${chunk.end}&interval=600000&agg=MAX&limit=2000`,
+                      `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=targetTemperature&startTs=${chunk.start}&endTs=${chunk.end}&interval=600000&agg=AVG&limit=2000`,
                       {
                         headers: {
                           'Authorization': `Bearer ${session.token}`
@@ -795,7 +773,7 @@ export default function HeatingControl() {
             .filter(item => !isNaN(item.temperature) && item.temperature > -50 && item.temperature < 100)
             .sort((a, b) => a.timestamp - b.timestamp);
           
-          console.log('MAX target temperature history:', targetHistoryData);
+          console.log('AVG target temperature history:', targetHistoryData);
           console.log('Target temperature data points count:', targetHistoryData.length);
           setTargetTemperatureHistory(targetHistoryData);
         }
@@ -852,7 +830,7 @@ export default function HeatingControl() {
               console.log(`Chunk ${chunks.indexOf(chunk) + 1}: Got ${chunkData.flat().length} target temp points`);
             }
             
-            // Group by timestamp and calculate MAX for target temperatures
+            // Group by timestamp and calculate AVG for target temperatures (consistent with sensor temperature)
             const targetTimestampMap = new Map();
             
             allTargetTemperatureData.forEach(item => {
@@ -871,12 +849,12 @@ export default function HeatingControl() {
               .map(([timestamp, temps]) => ({
                 time: new Date(Number(timestamp)).toLocaleString('de-DE'),
                 timestamp: Number(timestamp),
-                temperature: temps.length > 0 ? Math.max(...temps) : null // Use MAX instead of AVG
+                temperature: temps.length > 0 ? temps.reduce((sum, temp) => sum + temp, 0) / temps.length : null // Use AVG for consistency
               }))
               .filter(item => item.temperature !== null)
               .sort((a, b) => a.timestamp - b.timestamp);
             
-            console.log('MAX target temperature history:', targetHistoryData);
+            console.log('AVG target temperature history:', targetHistoryData);
             setTargetTemperatureHistory(targetHistoryData);
           }
         }
@@ -1002,13 +980,12 @@ export default function HeatingControl() {
               .map(([timestamp, temps]) => ({
                 time: new Date(Number(timestamp)).toLocaleString('de-DE'),
                 timestamp: Number(timestamp),
-                temperature: temps.length > 0 ? Math.max(...temps) : null // Use MAX instead of AVG
+                temperature: temps.reduce((sum, temp) => sum + temp, 0) / temps.length // Use AVG for consistency
               }))
-              .filter(item => item.temperature !== null)
               .sort((a, b) => a.timestamp - b.timestamp);
             
             console.log('Average temperature history:', historyData);
-            console.log('MAX target temperature history:', targetHistoryData);
+            console.log('AVG target temperature history:', targetHistoryData);
             console.log('Temperature data points count:', historyData.length);
             console.log('Target temperature data points count:', targetHistoryData.length);
             console.log('First temperature data point:', historyData[0]);
@@ -1262,24 +1239,66 @@ export default function HeatingControl() {
           text: 'Temperaturverlauf (7 Tage)',
           left: 'center',
           textStyle: {
-            fontSize: 16
+            fontSize: 16,
+            color: '#333'
           }
         },
         xAxis: {
           type: 'time',
           name: 'Zeit',
           nameLocation: 'middle',
-          nameGap: 30
+          nameGap: 30,
+          axisLabel: {
+            color: '#666',
+            formatter: function(value) {
+              return new Date(value).toLocaleDateString('de-DE', {
+                day: '2-digit',
+                month: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+              });
+            }
+          },
+          axisLine: {
+            lineStyle: {
+              color: '#ddd'
+            }
+          },
+          splitLine: {
+            lineStyle: {
+              color: '#f0f0f0'
+            }
+          }
         },
         yAxis: {
           type: 'value',
           name: 'Temperatur (°C)',
           nameLocation: 'middle',
-          nameGap: 50
+          nameGap: 50,
+          axisLabel: {
+            color: '#666',
+            formatter: '{value}°C'
+          },
+          axisLine: {
+            lineStyle: {
+              color: '#ddd'
+            }
+          },
+          splitLine: {
+            lineStyle: {
+              color: '#f0f0f0'
+            }
+          }
         },
         series: [],
         tooltip: {
           trigger: 'axis',
+          backgroundColor: 'rgba(255, 255, 255, 0.95)',
+          borderColor: '#ddd',
+          borderWidth: 1,
+          textStyle: {
+            color: '#333'
+          },
           formatter: function(params) {
             return 'Keine Daten verfügbar';
           }
@@ -1288,20 +1307,31 @@ export default function HeatingControl() {
           left: '10%',
           right: '10%',
           bottom: '15%',
-          top: '15%'
-        }
+          top: '15%',
+          backgroundColor: 'transparent'
+        },
+        backgroundColor: 'transparent'
       };
     }
 
-    const temperatureData = hasTemperatureData ? temperatureHistory.map(item => {
-      const temp = Number(item.temperature);
-      return [item.timestamp, !isNaN(temp) ? temp : null];
-    }).filter(item => item[1] !== null) : [];
+    // Sortiere Daten chronologisch (älteste zuerst) wie im WebSocket-Beispiel
+    const sortedTemperatureData = hasTemperatureData ? 
+      [...temperatureHistory].sort((a, b) => a.timestamp - b.timestamp) : [];
+    const sortedTargetTemperatureData = hasTargetTemperatureData ? 
+      [...targetTemperatureHistory].sort((a, b) => a.timestamp - b.timestamp) : [];
 
-    const targetTemperatureData = hasTargetTemperatureData ? targetTemperatureHistory.map(item => {
+    const temperatureData = sortedTemperatureData.map(item => {
       const temp = Number(item.temperature);
       return [item.timestamp, !isNaN(temp) ? temp : null];
-    }).filter(item => item[1] !== null) : [];
+    }).filter(item => item[1] !== null);
+
+    const targetTemperatureData = sortedTargetTemperatureData.map(item => {
+      const temp = Number(item.temperature);
+      return [item.timestamp, !isNaN(temp) ? temp : null];
+    }).filter(item => item[1] !== null);
+    
+    console.log('Temperature data for chart:', temperatureData.slice(0, 5));
+    console.log('Target temperature data for chart:', targetTemperatureData.slice(0, 5));
     
     // Debug: Check timestamp ranges
     if (temperatureData.length > 0 && targetTemperatureData.length > 0) {
@@ -1352,7 +1382,9 @@ export default function HeatingControl() {
         text: 'Temperaturverlauf (7 Tage)',
         left: 'center',
         textStyle: {
-          fontSize: 16
+          fontSize: 16,
+          color: '#333',
+          fontWeight: 'bold'
         }
       },
       xAxis: {
@@ -1361,6 +1393,7 @@ export default function HeatingControl() {
         nameLocation: 'middle',
         nameGap: 30,
         axisLabel: {
+          color: '#666',
           formatter: function(value) {
             return new Date(value).toLocaleDateString('de-DE', {
               day: '2-digit',
@@ -1369,7 +1402,19 @@ export default function HeatingControl() {
               minute: '2-digit'
             });
           }
-        }
+        },
+        axisLine: {
+          lineStyle: {
+            color: '#ddd'
+          }
+        },
+        splitLine: {
+          lineStyle: {
+            color: '#f0f0f0'
+          }
+        },
+        scale: true,
+        minInterval: 3600000 // 1 hour minimum interval
       },
       yAxis: {
         type: 'value',
@@ -1377,7 +1422,18 @@ export default function HeatingControl() {
         nameLocation: 'middle',
         nameGap: 50,
         axisLabel: {
+          color: '#666',
           formatter: '{value}°C'
+        },
+        axisLine: {
+          lineStyle: {
+            color: '#ddd'
+          }
+        },
+        splitLine: {
+          lineStyle: {
+            color: '#f0f0f0'
+          }
         }
       },
       series: [
@@ -1386,14 +1442,19 @@ export default function HeatingControl() {
           type: 'line',
           data: temperatureData,
           smooth: true,
-          symbol: 'circle',
-          symbolSize: 4,
+          symbol: 'none',
+          symbolSize: 0,
+          connectNulls: true,
+          encode: {
+            x: 0,
+            y: 1
+          },
           lineStyle: {
-            color: '#dc3545',
+            color: '#2196F3',
             width: 2
           },
           itemStyle: {
-            color: '#dc3545'
+            color: '#2196F3'
           },
           areaStyle: {
             color: {
@@ -1403,9 +1464,9 @@ export default function HeatingControl() {
               x2: 0,
               y2: 1,
               colorStops: [{
-                offset: 0, color: 'rgba(220, 53, 69, 0.3)'
+                offset: 0, color: 'rgba(33, 150, 243, 0.3)'
               }, {
-                offset: 1, color: 'rgba(220, 53, 69, 0.05)'
+                offset: 1, color: 'rgba(33, 150, 243, 0.05)'
               }]
             }
           }
@@ -1415,33 +1476,68 @@ export default function HeatingControl() {
           type: 'line',
           data: targetTemperatureData,
           smooth: true,
-          symbol: 'diamond',
-          symbolSize: 6,
+          symbol: 'none',
+          symbolSize: 0,
           connectNulls: true,
+          encode: {
+            x: 0,
+            y: 1
+          },
           lineStyle: {
-            color: '#28a745',
+            color: '#4CAF50',
             width: 2,
             type: 'dashed'
           },
           itemStyle: {
-            color: '#28a745'
+            color: '#4CAF50'
           }
         }] : [])
       ],
       tooltip: {
         trigger: 'axis',
+        backgroundColor: 'rgba(255, 255, 255, 0.95)',
+        borderColor: '#ddd',
+        borderWidth: 1,
+        textStyle: {
+          color: '#333',
+          fontSize: 12
+        },
         formatter: function(params) {
+          console.log('Tooltip params:', params);
+          
           if (params && params.length > 0) {
-            const date = new Date(params[0].axisValue).toLocaleString('de-DE');
-            let tooltipText = date + '<br/>';
+            // Get the timestamp from the first parameter
+            const timestamp = params[0].axisValue;
+            console.log('Tooltip timestamp:', timestamp, 'Date:', new Date(timestamp));
             
-            params.forEach(param => {
-              const value = Number(param.value);
+            const date = new Date(timestamp).toLocaleString('de-DE', {
+              day: '2-digit',
+              month: '2-digit',
+              year: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit'
+            });
+            let tooltipText = `<div style="font-weight: bold; margin-bottom: 5px;">${date}</div>`;
+            
+            params.forEach((param, index) => {
+              console.log(`Param ${index}:`, param);
+              
+              // For time series data, param.value is an array [timestamp, value]
+              const value = Array.isArray(param.value) ? param.value[1] : param.value;
               const seriesName = param.seriesName;
               const color = param.color;
-              tooltipText += `<span style="color:${color}">●</span> ${seriesName}: ${!isNaN(value) ? value.toFixed(1) : 'N/A'}°C<br/>`;
+              const displayValue = !isNaN(Number(value)) ? Number(value).toFixed(1) : 'N/A';
+              
+              console.log(`Series ${index}: ${seriesName}, value: ${value}, displayValue: ${displayValue}`);
+              
+              tooltipText += `<div style="display: flex; align-items: center; margin: 2px 0;">
+                <span style="color:${color}; margin-right: 8px;">●</span> 
+                <span style="font-weight: 500;">${seriesName}:</span> 
+                <span style="margin-left: 8px; font-weight: bold;">${displayValue}°C</span>
+              </div>`;
             });
             
+            console.log('Final tooltip text:', tooltipText);
             return tooltipText;
           }
           return '';
@@ -1451,7 +1547,8 @@ export default function HeatingControl() {
         left: '10%',
         right: '10%',
         bottom: '15%',
-        top: '15%'
+        top: '15%',
+        backgroundColor: 'transparent'
       },
       dataZoom: [{
         type: 'inside',
@@ -1463,6 +1560,7 @@ export default function HeatingControl() {
         end: 100,
         height: 20,
         bottom: 10,
+        backgroundColor: 'rgba(240, 240, 240, 0.3)',
         dataBackground: {
           areaStyle: {
             color: '#f0f0f0'
@@ -1478,8 +1576,15 @@ export default function HeatingControl() {
           lineStyle: {
             color: '#1890ff'
           }
+        },
+        handleStyle: {
+          color: '#1890ff'
         }
-      }]
+      }],
+      backgroundColor: 'transparent',
+      animation: true,
+      animationDuration: 1000,
+      animationEasing: 'cubicOut'
     };
   };
 
@@ -1948,7 +2053,7 @@ export default function HeatingControl() {
                                       {currentTargetTemperature.source === 'external' ? (
                                         <>Externe Zieltemperatur (Device: {currentTargetTemperature.deviceId?.substring(0, 8)}...)</>
                                       ) : (
-                                        <>Maximale Zieltemperatur ({currentTargetTemperature.deviceCount} Geräte)</>
+                                        <>Durchschnittliche Zieltemperatur ({currentTargetTemperature.deviceCount} Geräte)</>
                                       )}
                                     </p>
                                   </div>
@@ -1981,11 +2086,18 @@ export default function HeatingControl() {
                                     <span>Lade Temperaturverlauf...</span>
                                   </div>
                                 ) : temperatureHistory && temperatureHistory.length > 0 ? (
-                                  <ReactECharts
-                                    option={getTemperatureChartOption()}
-                                    style={{ height: '400px', width: '100%' }}
-                                    opts={{ renderer: 'canvas' }}
-                                  />
+                                  <div style={{ 
+                                    background: 'linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)',
+                                    borderRadius: '10px',
+                                    padding: '15px',
+                                    boxShadow: '0 4px 15px rgba(0, 0, 0, 0.1)'
+                                  }}>
+                                    <ReactECharts
+                                      option={getTemperatureChartOption()}
+                                      style={{ height: '400px', width: '100%' }}
+                                      opts={{ renderer: 'canvas' }}
+                                    />
+                                  </div>
                                 ) : (
                                   <div className="text-center text-muted" style={{ height: '400px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                     <div>
