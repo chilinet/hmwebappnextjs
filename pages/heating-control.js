@@ -99,10 +99,13 @@ export default function HeatingControl() {
   const [showTimeRangeModal, setShowTimeRangeModal] = useState(false);
 
   const timeRangeOptions = [
-    { value: '1h', label: '1 Stunde' },
-    { value: '6h', label: '6 Stunden' },
+    { value: '2h', label: '2 Stunden' },
+    { value: '4h', label: '4 Stunden' },
+    { value: '8h', label: '8 Stunden' },
     { value: '1d', label: '1 Tag' },
+    { value: '3d', label: '3 Tage' },
     { value: '7d', label: '7 Tage' },
+    { value: '14d', label: '14 Tage' },
     { value: '30d', label: '30 Tage' },
     { value: '90d', label: '90 Tage' }
   ];
@@ -110,10 +113,13 @@ export default function HeatingControl() {
   const getTimeRangeInMs = (timeRange) => {
     const now = Date.now();
     switch (timeRange) {
-      case '1h': return now - (1 * 60 * 60 * 1000);
-      case '6h': return now - (6 * 60 * 60 * 1000);
-      case '1d': return now - (24 * 60 * 60 * 1000);
+      case '2h': return now - (2 * 60 * 60 * 1000);
+      case '4h': return now - (4 * 60 * 60 * 1000);
+      case '8h': return now - (8 * 60 * 60 * 1000);
+      case '1d': return now - (1 * 24 * 60 * 60 * 1000);
+      case '3d': return now - (3 * 24 * 60 * 60 * 1000);
       case '7d': return now - (7 * 24 * 60 * 60 * 1000);
+      case '14d': return now - (14 * 24 * 60 * 60 * 1000);
       case '30d': return now - (30 * 24 * 60 * 60 * 1000);
       case '90d': return now - (90 * 24 * 60 * 60 * 1000);
       default: return now - (7 * 24 * 60 * 60 * 1000);
@@ -729,9 +735,9 @@ export default function HeatingControl() {
       
       console.log('Fetching temperature history for operationalMode:', operationalMode, 'extTempDevice:', extTempDevice);
       
-      // Calculate time range (7 days ago to now)
+      // Calculate time range based on selected time range
       const endTime = Date.now();
-      const startTime = endTime - (7 * 24 * 60 * 60 * 1000); // 7 days in milliseconds
+      const startTime = getTimeRangeInMs(selectedTimeRange);
       
       console.log('Fetching temperature history for operationalMode:', operationalMode, 'extTempDevice:', extTempDevice);
       console.log('Time range - Start:', new Date(startTime).toISOString(), 'End:', new Date(endTime).toISOString());
@@ -740,13 +746,15 @@ export default function HeatingControl() {
       if (operationalMode === 2) {
         // Use external temperature device for both temperature and target temperature
         if (extTempDevice) {
-          // Split the 7-day period into smaller chunks to get all data
-          const chunkSize = 24 * 60 * 60 * 1000; // 1 day in milliseconds
+          // Split the time period into smaller chunks to get all data
+          const totalTimeRange = endTime - startTime;
+          const daysInRange = totalTimeRange / (24 * 60 * 60 * 1000);
+          const chunkSize = Math.max(24 * 60 * 60 * 1000, totalTimeRange / 7); // At least 1 day, max 7 chunks
           const chunks = [];
           
-          for (let i = 0; i < 7; i++) {
-            const chunkStart = startTime + (i * chunkSize);
-            const chunkEnd = Math.min(startTime + ((i + 1) * chunkSize), endTime);
+          for (let i = 0; i < Math.ceil(daysInRange); i++) {
+            const chunkStart = Math.floor(startTime + (i * chunkSize));
+            const chunkEnd = Math.floor(Math.min(startTime + ((i + 1) * chunkSize), endTime));
             chunks.push({ start: chunkStart, end: chunkEnd });
           }
           
@@ -833,13 +841,15 @@ export default function HeatingControl() {
             }).filter(id => id);
             
             if (deviceIds.length > 0) {
-              // Split the 7-day period into smaller chunks
-              const chunkSize = 24 * 60 * 60 * 1000; // 1 day in milliseconds
+              // Split the time period into smaller chunks
+              const totalTimeRange = endTime - startTime;
+              const daysInRange = totalTimeRange / (24 * 60 * 60 * 1000);
+              const chunkSize = Math.max(24 * 60 * 60 * 1000, totalTimeRange / 7); // At least 1 day, max 7 chunks
               const chunks = [];
               
-              for (let i = 0; i < 7; i++) {
-                const chunkStart = startTime + (i * chunkSize);
-                const chunkEnd = Math.min(startTime + ((i + 1) * chunkSize), endTime);
+              for (let i = 0; i < Math.ceil(daysInRange); i++) {
+                const chunkStart = Math.floor(startTime + (i * chunkSize));
+                const chunkEnd = Math.floor(Math.min(startTime + ((i + 1) * chunkSize), endTime));
                 chunks.push({ start: chunkStart, end: chunkEnd });
               }
               
@@ -907,13 +917,15 @@ export default function HeatingControl() {
       } else if (operationalMode === 10) {
         // Use external temperature device for temperature only, MAX for target temperature
         if (extTempDevice) {
-          // Split the 7-day period into smaller chunks to get all data
-          const chunkSize = 24 * 60 * 60 * 1000; // 1 day in milliseconds
+          // Split the time period into smaller chunks to get all data
+          const totalTimeRange = endTime - startTime;
+          const daysInRange = totalTimeRange / (24 * 60 * 60 * 1000);
+          const chunkSize = Math.max(24 * 60 * 60 * 1000, totalTimeRange / 7); // At least 1 day, max 7 chunks
           const chunks = [];
           
-          for (let i = 0; i < 7; i++) {
-            const chunkStart = startTime + (i * chunkSize);
-            const chunkEnd = Math.min(startTime + ((i + 1) * chunkSize), endTime);
+          for (let i = 0; i < Math.ceil(daysInRange); i++) {
+            const chunkStart = Math.floor(startTime + (i * chunkSize));
+            const chunkEnd = Math.floor(Math.min(startTime + ((i + 1) * chunkSize), endTime));
             chunks.push({ start: chunkStart, end: chunkEnd });
           }
           
@@ -1020,6 +1032,7 @@ export default function HeatingControl() {
           
           console.log('AVG target temperature history:', targetHistoryData);
           console.log('Target temperature data points count:', targetHistoryData.length);
+          setTemperatureHistory(historyData);
           setTargetTemperatureHistory(targetHistoryData);
           
           // Load valve open history from related devices (average)
@@ -1033,13 +1046,15 @@ export default function HeatingControl() {
             }).filter(id => id);
             
             if (deviceIds.length > 0) {
-              // Split the 7-day period into smaller chunks
-              const chunkSize = 24 * 60 * 60 * 1000; // 1 day in milliseconds
+              // Split the time period into smaller chunks
+              const totalTimeRange = endTime - startTime;
+              const daysInRange = totalTimeRange / (24 * 60 * 60 * 1000);
+              const chunkSize = Math.max(24 * 60 * 60 * 1000, totalTimeRange / 7); // At least 1 day, max 7 chunks
               const chunks = [];
               
-              for (let i = 0; i < 7; i++) {
-                const chunkStart = startTime + (i * chunkSize);
-                const chunkEnd = Math.min(startTime + ((i + 1) * chunkSize), endTime);
+              for (let i = 0; i < Math.ceil(daysInRange); i++) {
+                const chunkStart = Math.floor(startTime + (i * chunkSize));
+                const chunkEnd = Math.floor(Math.min(startTime + ((i + 1) * chunkSize), endTime));
                 chunks.push({ start: chunkStart, end: chunkEnd });
               }
               
@@ -1229,6 +1244,7 @@ export default function HeatingControl() {
             
             console.log('AVG target temperature history:', targetHistoryData);
             console.log('AVG valve open history:', valveOpenHistoryData);
+            setTemperatureHistory(historyData);
             setTargetTemperatureHistory(targetHistoryData);
             setValveOpenHistory(valveOpenHistoryData);
           }
@@ -1245,11 +1261,13 @@ export default function HeatingControl() {
           }).filter(id => id);
           
           if (deviceIds.length > 0) {
-            // Split the 7-day period into smaller chunks
-            const chunkSize = 24 * 60 * 60 * 1000; // 1 day in milliseconds
+            // Split the time period into smaller chunks
+            const totalTimeRange = endTime - startTime;
+            const daysInRange = totalTimeRange / (24 * 60 * 60 * 1000);
+            const chunkSize = Math.max(24 * 60 * 60 * 1000, totalTimeRange / 7); // At least 1 day, max 7 chunks
             const chunks = [];
             
-            for (let i = 0; i < 7; i++) {
+            for (let i = 0; i < Math.ceil(daysInRange); i++) {
               const chunkStart = startTime + (i * chunkSize);
               const chunkEnd = Math.min(startTime + ((i + 1) * chunkSize), endTime);
               chunks.push({ start: chunkStart, end: chunkEnd });
@@ -1394,8 +1412,9 @@ export default function HeatingControl() {
               .map(([timestamp, temps]) => ({
                 time: new Date(Number(timestamp)).toLocaleString('de-DE'),
                 timestamp: Number(timestamp),
-                temperature: temps.reduce((sum, temp) => sum + temp, 0) / temps.length // Use AVG for consistency
+                temperature: temps.length > 0 ? temps.reduce((sum, temp) => sum + temp, 0) / temps.length : null
               }))
+              .filter(item => item.temperature !== null)
               .sort((a, b) => a.timestamp - b.timestamp);
 
             const valveOpenHistoryData = Array.from(valveOpenTimestampMap.entries())
@@ -1404,6 +1423,7 @@ export default function HeatingControl() {
                 timestamp: Number(timestamp),
                 valveOpen: valves.reduce((sum, valve) => sum + valve, 0) / valves.length
               }))
+              .filter(item => item.valveOpen !== null)
               .sort((a, b) => a.timestamp - b.timestamp);
             
             console.log('Average temperature history:', historyData);
@@ -1654,15 +1674,117 @@ export default function HeatingControl() {
     return filterNodes(treeData);
   };
 
-  const getTemperatureChartOption = () => {
+  // Funktion zur Synchronisation aller Datenquellen in 10-Minuten-Zeitscheiben
+  const synchronizeChartData = () => {
     const hasTemperatureData = temperatureHistory && temperatureHistory.length > 0;
     const hasTargetTemperatureData = targetTemperatureHistory && targetTemperatureHistory.length > 0;
     const hasValveOpenData = valveOpenHistory && valveOpenHistory.length > 0;
     
-    if (!hasTemperatureData && !hasTargetTemperatureData) {
+    if (!hasTemperatureData && !hasTargetTemperatureData && !hasValveOpenData) {
+      return { temperatureData: [], targetTemperatureData: [], valveOpenData: [] };
+    }
+
+    // Finde den gemeinsamen Zeitbereich
+    const allTimestamps = [];
+    if (hasTemperatureData) allTimestamps.push(...temperatureHistory.map(item => item.timestamp));
+    if (hasTargetTemperatureData) allTimestamps.push(...targetTemperatureHistory.map(item => item.timestamp));
+    if (hasValveOpenData) allTimestamps.push(...valveOpenHistory.map(item => item.timestamp));
+    
+    if (allTimestamps.length === 0) {
+      return { temperatureData: [], targetTemperatureData: [], valveOpenData: [] };
+    }
+
+    const minTimestamp = Math.min(...allTimestamps);
+    const maxTimestamp = Math.max(...allTimestamps);
+    
+    console.log('Synchronizing data from', new Date(minTimestamp), 'to', new Date(maxTimestamp));
+    
+    // Erstelle 10-Minuten-Zeitscheiben
+    const timeSlices = [];
+    const intervalMs = 10 * 60 * 1000; // 10 Minuten in Millisekunden
+    
+    for (let timestamp = minTimestamp; timestamp <= maxTimestamp; timestamp += intervalMs) {
+      timeSlices.push(timestamp);
+    }
+    
+    console.log('Created', timeSlices.length, 'time slices (10-minute intervals)');
+    
+    // Hilfsfunktion: Finde den nächstgelegenen Wert zu einem Zeitpunkt
+    const findNearestValue = (dataArray, targetTimestamp, maxDistanceMs = 30 * 60 * 1000) => {
+      if (!dataArray || dataArray.length === 0) return null;
+      
+      let nearestItem = null;
+      let minDistance = Infinity;
+      
+      for (const item of dataArray) {
+        const distance = Math.abs(item.timestamp - targetTimestamp);
+        if (distance < minDistance && distance <= maxDistanceMs) {
+          minDistance = distance;
+          nearestItem = item;
+        }
+      }
+      
+      return nearestItem;
+    };
+    
+    // Synchronisiere alle Datenquellen
+    const synchronizedData = {
+      temperatureData: [],
+      targetTemperatureData: [],
+      valveOpenData: []
+    };
+    
+    timeSlices.forEach(sliceTimestamp => {
+      // Finde Temperatur-Wert für diese Zeitscheibe
+      const tempItem = hasTemperatureData ? findNearestValue(temperatureHistory, sliceTimestamp) : null;
+      if (tempItem) {
+        const temp = Number(tempItem.temperature);
+        if (!isNaN(temp)) {
+          synchronizedData.temperatureData.push([sliceTimestamp, temp]);
+        }
+      }
+      
+      // Finde Zieltemperatur-Wert für diese Zeitscheibe
+      const targetItem = hasTargetTemperatureData ? findNearestValue(targetTemperatureHistory, sliceTimestamp) : null;
+      if (targetItem) {
+        const targetTemp = Number(targetItem.temperature);
+        if (!isNaN(targetTemp)) {
+          synchronizedData.targetTemperatureData.push([sliceTimestamp, targetTemp]);
+        }
+      }
+      
+      // Finde Ventilöffnung-Wert für diese Zeitscheibe
+      const valveItem = hasValveOpenData ? findNearestValue(valveOpenHistory, sliceTimestamp) : null;
+      if (valveItem) {
+        const valve = Number(valveItem.valveOpen);
+        if (!isNaN(valve)) {
+          synchronizedData.valveOpenData.push([sliceTimestamp, valve]);
+        }
+      }
+    });
+    
+    console.log('Synchronized data points:', {
+      temperature: synchronizedData.temperatureData.length,
+      targetTemperature: synchronizedData.targetTemperatureData.length,
+      valveOpen: synchronizedData.valveOpenData.length
+    });
+    
+    return synchronizedData;
+  };
+
+  const getTemperatureChartOption = () => {
+    // Verwende synchronisierte Daten
+    const synchronizedData = synchronizeChartData();
+    const { temperatureData, targetTemperatureData, valveOpenData } = synchronizedData;
+    
+    const hasTemperatureData = temperatureData.length > 0;
+    const hasTargetTemperatureData = targetTemperatureData.length > 0;
+    const hasValveOpenData = valveOpenData.length > 0;
+    
+    if (!hasTemperatureData && !hasTargetTemperatureData && !hasValveOpenData) {
       return {
         title: {
-          text: 'Temperaturverlauf (7 Tage)',
+          text: `Temperaturverlauf (${getTimeRangeLabel(selectedTimeRange)})`,
           left: 'center',
           textStyle: {
             fontSize: 16,
@@ -1740,80 +1862,15 @@ export default function HeatingControl() {
       };
     }
 
-    // Sortiere Daten chronologisch (älteste zuerst) wie im WebSocket-Beispiel
-    const sortedTemperatureData = hasTemperatureData ? 
-      [...temperatureHistory].sort((a, b) => a.timestamp - b.timestamp) : [];
-    const sortedTargetTemperatureData = hasTargetTemperatureData ? 
-      [...targetTemperatureHistory].sort((a, b) => a.timestamp - b.timestamp) : [];
-    const sortedValveOpenData = hasValveOpenData ? 
-      [...valveOpenHistory].sort((a, b) => a.timestamp - b.timestamp) : [];
-
-    const temperatureData = sortedTemperatureData.map(item => {
-      const temp = Number(item.temperature);
-      return [item.timestamp, !isNaN(temp) ? temp : null];
-    }).filter(item => item[1] !== null);
-
-    const targetTemperatureData = sortedTargetTemperatureData.map(item => {
-      const temp = Number(item.temperature);
-      return [item.timestamp, !isNaN(temp) ? temp : null];
-    }).filter(item => item[1] !== null);
-
-    const valveOpenData = sortedValveOpenData.map(item => {
-      const valve = Number(item.valveOpen);
-      return [item.timestamp, !isNaN(valve) ? valve : null];
-    }).filter(item => item[1] !== null);
-    
-    console.log('Temperature data for chart:', temperatureData.slice(0, 5));
-    console.log('Target temperature data for chart:', targetTemperatureData.slice(0, 5));
-    console.log('Valve open data for chart:', valveOpenData.slice(0, 5));
-    
-    // Debug: Check timestamp ranges
-    if (temperatureData.length > 0 && targetTemperatureData.length > 0) {
-      const tempStart = new Date(temperatureData[0][0]);
-      const tempEnd = new Date(temperatureData[temperatureData.length - 1][0]);
-      const targetStart = new Date(targetTemperatureData[0][0]);
-      const targetEnd = new Date(targetTemperatureData[targetTemperatureData.length - 1][0]);
-      
-      console.log('Temperature range:', tempStart.toISOString(), 'to', tempEnd.toISOString());
-      console.log('Target temperature range:', targetStart.toISOString(), 'to', targetEnd.toISOString());
-      console.log('Time difference (hours):', (targetStart - tempStart) / (1000 * 60 * 60));
-      
-      // Synchronize data ranges - use the overlapping time range
-      const commonStart = Math.max(tempStart.getTime(), targetStart.getTime());
-      const commonEnd = Math.min(tempEnd.getTime(), targetEnd.getTime());
-      
-      console.log('Common time range:', new Date(commonStart).toISOString(), 'to', new Date(commonEnd).toISOString());
-      
-      // Filter data to common time range
-      const filteredTemperatureData = temperatureData.filter(item => 
-        item[0] >= commonStart && item[0] <= commonEnd
-      );
-      const filteredTargetTemperatureData = targetTemperatureData.filter(item => 
-        item[0] >= commonStart && item[0] <= commonEnd
-      );
-      
-      console.log('Filtered temperature data points:', filteredTemperatureData.length);
-      console.log('Filtered target temperature data points:', filteredTargetTemperatureData.length);
-      
-      // Use filtered data if we have overlapping data
-      if (filteredTemperatureData.length > 0 && filteredTargetTemperatureData.length > 0) {
-        temperatureData.splice(0, temperatureData.length, ...filteredTemperatureData);
-        targetTemperatureData.splice(0, targetTemperatureData.length, ...filteredTargetTemperatureData);
-      }
-    }
-    
-    console.log('Chart data points count:', temperatureData.length);
-    console.log('Target chart data points count:', targetTemperatureData.length);
-    console.log('First chart data point:', temperatureData[0]);
-    console.log('Last chart data point:', temperatureData[temperatureData.length - 1]);
-    console.log('First target chart data point:', targetTemperatureData[0]);
-    console.log('Last target chart data point:', targetTemperatureData[targetTemperatureData.length - 1]);
-    console.log('Raw targetTemperatureHistory:', targetTemperatureHistory);
-    console.log('Raw temperatureHistory:', temperatureHistory);
+    console.log('Synchronized chart data points:', {
+      temperature: temperatureData.length,
+      targetTemperature: targetTemperatureData.length,
+      valveOpen: valveOpenData.length
+    });
     
     return {
       title: {
-        text: 'Temperaturverlauf (7 Tage)',
+        text: `Temperaturverlauf (${getTimeRangeLabel(selectedTimeRange)})`,
         left: 'center',
         textStyle: {
           fontSize: 16,
@@ -2588,10 +2645,28 @@ export default function HeatingControl() {
                           <div className="col-12">
                             <div className="card">
                               <div className="card-header">
-                                <h6 className="mb-0">
-                                  <FontAwesomeIcon icon={faChartLine} className="me-2" />
-                                  Temperaturverlauf (7 Tage)
-                                </h6>
+                                <div className="d-flex justify-content-between align-items-center">
+                                  <h6 className="mb-0">
+                                    <FontAwesomeIcon icon={faChartLine} className="me-2" />
+                                    Temperaturverlauf ({getTimeRangeLabel(selectedTimeRange)})
+                                  </h6>
+                                  <div className="btn-group" role="group">
+                                    {timeRangeOptions.map((option) => (
+                                      <button
+                                        key={option.value}
+                                        className={`btn btn-sm ${selectedTimeRange === option.value ? 'btn-primary' : 'btn-outline-primary'}`}
+                                        onClick={() => {
+                                          setSelectedTimeRange(option.value);
+                                          if (selectedNode) {
+                                            fetchTemperatureHistory(selectedNode);
+                                          }
+                                        }}
+                                      >
+                                        {option.label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
                               </div>
                               <div className="card-body">
                                 {loadingTemperatureHistory ? (
