@@ -334,100 +334,70 @@ export default function HeatingControl() {
       if (operationalMode === 2) {
         // Use external temperature device for both temperature and target temperature
         if (extTempDevice) {
-          // Fetch sensor temperature, target temperature and valve open percentage in one call
+          // Fetch latest data from reporting API
           const response = await fetch(
-            `/api/thingsboard/devices/telemetry?deviceId=${extTempDevice}&keys=sensorTemperature,targetTemperature,PercentValveOpen&interval=600000&agg=AVG&limit=2000`,
+            `/api/reporting-proxy?entity_id=${extTempDevice}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
             {
               headers: {
-                'Authorization': `Bearer ${session.token}`
+                'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
               }
             }
           );
           
           if (response.ok) {
             const data = await response.json();
-            const temperature = data.sensorTemperature?.[0]?.value;
-            const targetTemperature = data.targetTemperature?.[0]?.value;
-            const valveOpen = data.PercentValveOpen?.[0]?.value;
-            console.log('External temperature raw value:', temperature);
-            console.log('External target temperature raw value:', targetTemperature);
-            console.log('External valve open raw value:', valveOpen);
-            
-            if (temperature !== undefined) {
-              const numTemp = Number(temperature);
-              console.log('External temperature converted:', numTemp);
+            if (data.success && data.data && data.data.length > 0) {
+              const latestData = data.data[0];
+              const temperature = latestData.sensor_temperature;
+              const targetTemperature = latestData.target_temperature;
+              const valveOpen = latestData.percent_valve_open;
               
-              if (!isNaN(numTemp) && numTemp > -50 && numTemp < 100) {
-                setCurrentTemperature({
-                  value: numTemp,
-                  source: 'external',
-                  deviceId: extTempDevice
-                });
-              } else {
-                console.warn('External temperature out of reasonable range:', numTemp);
-              }
-            }
-            
-            if (targetTemperature !== undefined) {
-              const numTargetTemp = Number(targetTemperature);
-              console.log('External target temperature converted:', numTargetTemp);
+              console.log('External temperature raw value:', temperature);
+              console.log('External target temperature raw value:', targetTemperature);
+              console.log('External valve open raw value:', valveOpen);
               
-              if (!isNaN(numTargetTemp) && numTargetTemp > -50 && numTargetTemp < 100) {
-                setCurrentTargetTemperature({
-                  value: numTargetTemp,
-                  source: 'external',
-                  deviceId: extTempDevice
-                });
-              } else {
-                console.warn('External target temperature out of reasonable range:', numTargetTemp);
-              }
-            }
-            
-            // Valve open is always calculated as average from related devices
-            const relatedDevices = node.relatedDevices || node.data?.relatedDevices || [];
-            if (relatedDevices.length > 0) {
-              const deviceIds = relatedDevices.map(device => {
-                if (typeof device.id === 'object' && device.id?.id) {
-                  return device.id.id;
-                }
-                return device.id;
-              }).filter(id => id);
-              
-              if (deviceIds.length > 0) {
-                const valveOpenPromises = deviceIds.map(async (deviceId) => {
-                  try {
-                    const response = await fetch(
-                      `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=PercentValveOpen&interval=600000&agg=AVG&limit=2000`,
-                      {
-                        headers: {
-                          'Authorization': `Bearer ${session.token}`
-                        }
-                      }
-                    );
-                    
-                    if (response.ok) {
-                      const data = await response.json();
-                      return data.PercentValveOpen?.[0]?.value;
-                    }
-                  } catch (error) {
-                    console.warn(`Error fetching valve open for device ${deviceId}:`, error);
-                  }
-                  return null;
-                });
+              if (temperature !== undefined && temperature !== null) {
+                const numTemp = Number(temperature);
+                console.log('External temperature converted:', numTemp);
                 
-                const valveOpens = await Promise.all(valveOpenPromises);
-                const validValveOpens = valveOpens
-                  .filter(valve => valve !== null && valve !== undefined)
-                  .map(valve => Number(valve))
-                  .filter(valve => !isNaN(valve) && valve >= 0 && valve <= 100);
-                
-                if (validValveOpens.length > 0) {
-                  const avgValveOpen = validValveOpens.reduce((sum, valve) => sum + valve, 0) / validValveOpens.length;
-                  setCurrentValveOpen({
-                    value: avgValveOpen,
-                    source: 'average',
-                    deviceCount: validValveOpens.length
+                if (!isNaN(numTemp) && numTemp > -50 && numTemp < 100) {
+                  setCurrentTemperature({
+                    value: numTemp,
+                    source: 'external',
+                    deviceId: extTempDevice
                   });
+                } else {
+                  console.warn('External temperature out of reasonable range:', numTemp);
+                }
+              }
+              
+              if (targetTemperature !== undefined && targetTemperature !== null) {
+                const numTargetTemp = Number(targetTemperature);
+                console.log('External target temperature converted:', numTargetTemp);
+                
+                if (!isNaN(numTargetTemp) && numTargetTemp > -50 && numTargetTemp < 100) {
+                  setCurrentTargetTemperature({
+                    value: numTargetTemp,
+                    source: 'external',
+                    deviceId: extTempDevice
+                  });
+                } else {
+                  console.warn('External target temperature out of reasonable range:', numTargetTemp);
+                }
+              }
+              
+              if (valveOpen !== undefined && valveOpen !== null) {
+                const numValveOpen = Number(valveOpen);
+                console.log('External valve open converted:', numValveOpen);
+                
+                if (!isNaN(numValveOpen) && numValveOpen >= 0 && numValveOpen <= 100) {
+                  setCurrentValveOpen({
+                    value: numValveOpen,
+                    source: 'external',
+                    deviceId: extTempDevice
+                  });
+                } else {
+                  console.warn('External valve open out of reasonable range:', numValveOpen);
                 }
               }
             }
@@ -437,31 +407,34 @@ export default function HeatingControl() {
         // Use external temperature device for temperature only, average for target temperature and valve open
         if (extTempDevice) {
           const response = await fetch(
-            `/api/thingsboard/devices/telemetry?deviceId=${extTempDevice}&keys=sensorTemperature&interval=600000&agg=AVG&limit=2000`,
+            `/api/reporting-proxy?entity_id=${extTempDevice}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
             {
               headers: {
-                'Authorization': `Bearer ${session.token}`
+                'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
               }
             }
           );
           
           if (response.ok) {
             const data = await response.json();
-            const temperature = data.sensorTemperature?.[0]?.value;
-            console.log('External temperature raw value:', temperature);
-            
-            if (temperature !== undefined) {
-              const numTemp = Number(temperature);
-              console.log('External temperature converted:', numTemp);
+            if (data.success && data.data && data.data.length > 0) {
+              const latestData = data.data[0];
+              const temperature = latestData.sensor_temperature;
+              console.log('External temperature raw value:', temperature);
               
-              if (!isNaN(numTemp) && numTemp > -50 && numTemp < 100) {
-                setCurrentTemperature({
-                  value: numTemp,
-                  source: 'external',
-                  deviceId: extTempDevice
-                });
-              } else {
-                console.warn('External temperature out of reasonable range:', numTemp);
+              if (temperature !== undefined && temperature !== null) {
+                const numTemp = Number(temperature);
+                console.log('External temperature converted:', numTemp);
+                
+                if (!isNaN(numTemp) && numTemp > -50 && numTemp < 100) {
+                  setCurrentTemperature({
+                    value: numTemp,
+                    source: 'external',
+                    deviceId: extTempDevice
+                  });
+                } else {
+                  console.warn('External temperature out of reasonable range:', numTemp);
+                }
               }
             }
           }
@@ -481,17 +454,20 @@ export default function HeatingControl() {
             const targetTemperaturePromises = deviceIds.map(async (deviceId) => {
               try {
                 const response = await fetch(
-                  `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=targetTemperature&interval=600000&agg=AVG&limit=2000`,
+                  `/api/reporting-proxy?entity_id=${deviceId}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
                   {
                     headers: {
-                      'Authorization': `Bearer ${session.token}`
+                      'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
                     }
                   }
                 );
                 
                 if (response.ok) {
                   const data = await response.json();
-                  return data.targetTemperature?.[0]?.value;
+                  if (data.success && data.data && data.data.length > 0) {
+                    return data.data[0].target_temperature;
+                  }
+                  return null;
                 }
               } catch (error) {
                 console.warn(`Error fetching target temperature for device ${deviceId}:`, error);
@@ -502,17 +478,20 @@ export default function HeatingControl() {
             const valveOpenPromises = deviceIds.map(async (deviceId) => {
               try {
                 const response = await fetch(
-                  `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=PercentValveOpen&interval=600000&agg=AVG&limit=2000`,
+                  `/api/reporting-proxy?entity_id=${deviceId}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
                   {
                     headers: {
-                      'Authorization': `Bearer ${session.token}`
+                      'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
                     }
                   }
                 );
                 
                 if (response.ok) {
                   const data = await response.json();
-                  return data.PercentValveOpen?.[0]?.value;
+                  if (data.success && data.data && data.data.length > 0) {
+                    return data.data[0].percent_valve_open;
+                  }
+                  return null;
                 }
               } catch (error) {
                 console.warn(`Error fetching valve open for device ${deviceId}:`, error);
@@ -534,7 +513,7 @@ export default function HeatingControl() {
               .filter(valve => !isNaN(valve) && valve >= 0 && valve <= 100);
             
             if (validTargetTemperatures.length > 0) {
-              const avgTargetTemp = validTargetTemperatures.reduce((sum, temp) => sum + temp, 0) / validTargetTemperatures.length; // Use AVG for consistency
+              const avgTargetTemp = validTargetTemperatures.reduce((sum, temp) => sum + temp, 0) / validTargetTemperatures.length;
               setCurrentTargetTemperature({
                 value: avgTargetTemp,
                 source: 'average',
@@ -564,23 +543,25 @@ export default function HeatingControl() {
           }).filter(id => id);
           
           if (deviceIds.length > 0) {
-            // Fetch sensor temperature with AVG
+            // Fetch latest data for all devices
             const sensorTemperaturePromises = deviceIds.map(async (deviceId) => {
               try {
                 const response = await fetch(
-                  `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=sensorTemperature&interval=600000&agg=AVG&limit=2000`,
+                  `/api/reporting-proxy?entity_id=${deviceId}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
                   {
                     headers: {
-                      'Authorization': `Bearer ${session.token}`
+                      'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
                     }
                   }
                 );
                 
                 if (response.ok) {
                   const data = await response.json();
-                  return {
-                    temperature: data.sensorTemperature?.[0]?.value
-                  };
+                  if (data.success && data.data && data.data.length > 0) {
+                    return {
+                      temperature: data.data[0].sensor_temperature
+                    };
+                  }
                 }
               } catch (error) {
                 console.warn(`Error fetching temperature for device ${deviceId}:`, error);
@@ -588,23 +569,25 @@ export default function HeatingControl() {
               return { temperature: null };
             });
 
-            // Fetch target temperature with AVG
+            // Fetch target temperature
             const targetTemperaturePromises = deviceIds.map(async (deviceId) => {
               try {
                 const response = await fetch(
-                  `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=targetTemperature&interval=600000&agg=AVG&limit=2000`,
+                  `/api/reporting-proxy?entity_id=${deviceId}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
                   {
                     headers: {
-                      'Authorization': `Bearer ${session.token}`
+                      'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
                     }
                   }
                 );
                 
                 if (response.ok) {
                   const data = await response.json();
-                  return {
-                    targetTemperature: data.targetTemperature?.[0]?.value
-                  };
+                  if (data.success && data.data && data.data.length > 0) {
+                    return {
+                      targetTemperature: data.data[0].target_temperature
+                    };
+                  }
                 }
               } catch (error) {
                 console.warn(`Error fetching target temperature for device ${deviceId}:`, error);
@@ -612,23 +595,25 @@ export default function HeatingControl() {
               return { targetTemperature: null };
             });
 
-            // Fetch valve open percentage with AVG
+            // Fetch valve open percentage
             const valveOpenPromises = deviceIds.map(async (deviceId) => {
               try {
                 const response = await fetch(
-                  `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=PercentValveOpen&interval=600000&agg=AVG&limit=2000`,
+                  `/api/reporting-proxy?entity_id=${deviceId}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
                   {
                     headers: {
-                      'Authorization': `Bearer ${session.token}`
+                      'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
                     }
                   }
                 );
                 
                 if (response.ok) {
                   const data = await response.json();
-                  return {
-                    valveOpen: data.PercentValveOpen?.[0]?.value
-                  };
+                  if (data.success && data.data && data.data.length > 0) {
+                    return {
+                      valveOpen: data.data[0].percent_valve_open
+                    };
+                  }
                 }
               } catch (error) {
                 console.warn(`Error fetching valve open for device ${deviceId}:`, error);
@@ -680,7 +665,7 @@ export default function HeatingControl() {
               
               let avgTargetTemp = null;
               if (validTargetTemperatures.length > 0) {
-                avgTargetTemp = validTargetTemperatures.reduce((sum, temp) => sum + temp, 0) / validTargetTemperatures.length; // Use AVG for consistency
+                avgTargetTemp = validTargetTemperatures.reduce((sum, temp) => sum + temp, 0) / validTargetTemperatures.length;
                 console.log('Calculated AVG target temperature:', avgTargetTemp);
               }
               
@@ -743,384 +728,107 @@ export default function HeatingControl() {
       console.log('Time range - Start:', new Date(startTime).toISOString(), 'End:', new Date(endTime).toISOString());
       console.log('Time range in days:', (endTime - startTime) / (24 * 60 * 60 * 1000));
       
+      // Convert timestamps to ISO date strings for the reporting API
+      const startDate = new Date(startTime).toISOString().split('T')[0];
+      const endDate = new Date(endTime).toISOString().split('T')[0];
+      
       if (operationalMode === 2) {
         // Use external temperature device for both temperature and target temperature
         if (extTempDevice) {
-          // Split the time period into smaller chunks to get all data
-          const totalTimeRange = endTime - startTime;
-          const daysInRange = totalTimeRange / (24 * 60 * 60 * 1000);
-          const chunkSize = Math.max(24 * 60 * 60 * 1000, totalTimeRange / 7); // At least 1 day, max 7 chunks
-          const chunks = [];
-          
-          for (let i = 0; i < Math.ceil(daysInRange); i++) {
-            const chunkStart = Math.floor(startTime + (i * chunkSize));
-            const chunkEnd = Math.floor(Math.min(startTime + ((i + 1) * chunkSize), endTime));
-            chunks.push({ start: chunkStart, end: chunkEnd });
-          }
-          
-          console.log('Fetching data in', chunks.length, 'chunks');
-          
-          const allTemperatureData = [];
-          const allTargetTemperatureData = [];
-          const allValveOpenData = [];
-          
-          for (const chunk of chunks) {
-            try {
-              // Fetch sensor temperature and target temperature in one call
-              const response = await fetch(
-                `/api/thingsboard/devices/telemetry?deviceId=${extTempDevice}&keys=sensorTemperature,targetTemperature&startTs=${chunk.start}&endTs=${chunk.end}&interval=36000000&agg=AVG&limit=2000`,
-                {
-                  headers: {
-                    'Authorization': `Bearer ${session.token}`
-                  }
+          // Fetch data from reporting API with date range
+            const response = await fetch(
+              `/api/reporting-proxy?entity_id=${extTempDevice}&start_date=${startDate}&end_date=${endDate}&limit=1000&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
+              {
+                headers: {
+                  'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
                 }
-              );
-              
-              if (response.ok) {
-                const data = await response.json();
-                const temperatureData = data.sensorTemperature || [];
-                const targetTemperatureData = data.targetTemperature || [];
-                
-                allTemperatureData.push(...temperatureData);
-                allTargetTemperatureData.push(...targetTemperatureData);
-                
-                console.log(`Chunk ${chunks.indexOf(chunk) + 1}: Got ${temperatureData.length} temp points, ${targetTemperatureData.length} target temp points`);
               }
-            } catch (error) {
-              console.warn(`Error fetching chunk ${chunks.indexOf(chunk) + 1}:`, error);
-            }
-          }
+            );
           
-          const historyData = allTemperatureData
-            .filter(item => item && item.value !== null && item.value !== undefined)
-            .map(item => ({
-              time: new Date(item.ts).toLocaleString('de-DE'),
-              timestamp: item.ts,
-              temperature: Number(item.value)
-            }))
-            .filter(item => !isNaN(item.temperature) && item.temperature > -50 && item.temperature < 100)
-            .sort((a, b) => a.timestamp - b.timestamp);
-          
-          const targetHistoryData = allTargetTemperatureData
-            .filter(item => item && item.value !== null && item.value !== undefined)
-            .map(item => ({
-              time: new Date(item.ts).toLocaleString('de-DE'),
-              timestamp: item.ts,
-              temperature: Number(item.value)
-            }))
-            .filter(item => !isNaN(item.temperature) && item.temperature > -50 && item.temperature < 100)
-            .sort((a, b) => a.timestamp - b.timestamp);
-          
-          const valveOpenHistoryData = allValveOpenData
-            .filter(item => item && item.value !== null && item.value !== undefined)
-            .map(item => ({
-              time: new Date(item.ts).toLocaleString('de-DE'),
-              timestamp: item.ts,
-              valveOpen: Number(item.value)
-            }))
-            .filter(item => !isNaN(item.valveOpen) && item.valveOpen >= 0 && item.valveOpen <= 100)
-            .sort((a, b) => a.timestamp - b.timestamp);
-          
-          console.log('External temperature history:', historyData);
-          console.log('External AVG target temperature history:', targetHistoryData);
-          console.log('Temperature data points count:', historyData.length);
-          console.log('Target temperature data points count:', targetHistoryData.length);
-          console.log('First temperature data point:', historyData[0]);
-          console.log('Last temperature data point:', historyData[historyData.length - 1]);
-          setTemperatureHistory(historyData);
-          setTargetTemperatureHistory(targetHistoryData);
-          
-          // Load valve open history from related devices (average)
-          const relatedDevices = node.relatedDevices || node.data?.relatedDevices || [];
-          if (relatedDevices.length > 0) {
-            const deviceIds = relatedDevices.map(device => {
-              if (typeof device.id === 'object' && device.id?.id) {
-                return device.id.id;
-              }
-              return device.id;
-            }).filter(id => id);
-            
-            if (deviceIds.length > 0) {
-              // Split the time period into smaller chunks
-              const totalTimeRange = endTime - startTime;
-              const daysInRange = totalTimeRange / (24 * 60 * 60 * 1000);
-              const chunkSize = Math.max(24 * 60 * 60 * 1000, totalTimeRange / 7); // At least 1 day, max 7 chunks
-              const chunks = [];
-              
-              for (let i = 0; i < Math.ceil(daysInRange); i++) {
-                const chunkStart = Math.floor(startTime + (i * chunkSize));
-                const chunkEnd = Math.floor(Math.min(startTime + ((i + 1) * chunkSize), endTime));
-                chunks.push({ start: chunkStart, end: chunkEnd });
-              }
-              
-              console.log('Fetching valve open data in', chunks.length, 'chunks for', deviceIds.length, 'devices');
-              
-              const allValveOpenData = [];
-              
-              for (const chunk of chunks) {
-                const valveOpenHistoryPromises = deviceIds.map(async (deviceId) => {
-                  try {
-                    const response = await fetch(
-                      `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=PercentValveOpen&startTs=${chunk.start}&endTs=${chunk.end}&interval=600000&agg=AVG&limit=2000`,
-                      {
-                        headers: {
-                          'Authorization': `Bearer ${session.token}`
-                        }
-                      }
-                    );
-                    
-                    if (response.ok) {
-                      const data = await response.json();
-                      return data.PercentValveOpen || [];
-                    }
-                  } catch (error) {
-                    console.warn(`Error fetching valve open history for device ${deviceId} chunk ${chunks.indexOf(chunk) + 1}:`, error);
-                  }
-                  return [];
-                });
-                
-                const valveOpenChunkData = await Promise.all(valveOpenHistoryPromises);
-                allValveOpenData.push(...valveOpenChunkData.flat());
-                console.log(`Chunk ${chunks.indexOf(chunk) + 1}: Got ${valveOpenChunkData.flat().length} valve open points`);
-              }
-              
-              // Group by timestamp and calculate AVG for valve open
-              const valveOpenTimestampMap = new Map();
-              
-              allValveOpenData.forEach(item => {
-                if (item && item.value !== null && item.value !== undefined) {
-                  const valve = Number(item.value);
-                  if (!isNaN(valve) && valve >= 0 && valve <= 100) {
-                    if (!valveOpenTimestampMap.has(item.ts)) {
-                      valveOpenTimestampMap.set(item.ts, []);
-                    }
-                    valveOpenTimestampMap.get(item.ts).push(valve);
-                  }
-                }
-              });
-              
-              const valveOpenHistoryData = Array.from(valveOpenTimestampMap.entries())
-                .map(([timestamp, valves]) => ({
-                  time: new Date(Number(timestamp)).toLocaleString('de-DE'),
-                  timestamp: Number(timestamp),
-                  valveOpen: valves.length > 0 ? valves.reduce((sum, valve) => sum + valve, 0) / valves.length : null
+          if (response.ok) {
+            const data = await response.json();
+            if (data.success && data.data && data.data.length > 0) {
+              // Process temperature history
+              const historyData = data.data
+                .filter(item => item.sensor_temperature !== null && item.sensor_temperature !== undefined)
+                .map(item => ({
+                  time: new Date(item.bucket_10m).toLocaleString('de-DE'),
+                  timestamp: new Date(item.bucket_10m).getTime(),
+                  temperature: Number(item.sensor_temperature)
                 }))
-                .filter(item => item.valveOpen !== null)
+                .filter(item => !isNaN(item.temperature) && item.temperature > -50 && item.temperature < 100)
                 .sort((a, b) => a.timestamp - b.timestamp);
               
-              console.log('AVG valve open history:', valveOpenHistoryData);
+              // Process target temperature history
+              const targetHistoryData = data.data
+                .filter(item => item.target_temperature !== null && item.target_temperature !== undefined)
+                .map(item => ({
+                  time: new Date(item.bucket_10m).toLocaleString('de-DE'),
+                  timestamp: new Date(item.bucket_10m).getTime(),
+                  temperature: Number(item.target_temperature)
+                }))
+                .filter(item => !isNaN(item.temperature) && item.temperature > -50 && item.temperature < 100)
+                .sort((a, b) => a.timestamp - b.timestamp);
+              
+              // Process valve open history
+              const valveOpenHistoryData = data.data
+                .filter(item => item.percent_valve_open !== null && item.percent_valve_open !== undefined)
+                .map(item => ({
+                  time: new Date(item.bucket_10m).toLocaleString('de-DE'),
+                  timestamp: new Date(item.bucket_10m).getTime(),
+                  valveOpen: Number(item.percent_valve_open)
+                }))
+                .filter(item => !isNaN(item.valveOpen) && item.valveOpen >= 0 && item.valveOpen <= 100)
+                .sort((a, b) => a.timestamp - b.timestamp);
+              
+              console.log('External temperature history:', historyData);
+              console.log('External target temperature history:', targetHistoryData);
+              console.log('External valve open history:', valveOpenHistoryData);
+              console.log('Temperature data points count:', historyData.length);
+              console.log('Target temperature data points count:', targetHistoryData.length);
               console.log('Valve open data points count:', valveOpenHistoryData.length);
+              
+              setTemperatureHistory(historyData);
+              setTargetTemperatureHistory(targetHistoryData);
               setValveOpenHistory(valveOpenHistoryData);
             }
           }
         }
       } else if (operationalMode === 10) {
-        // Use external temperature device for temperature only, MAX for target temperature
+        // Use external temperature device for temperature only, average for target temperature and valve open
         if (extTempDevice) {
-          // Split the time period into smaller chunks to get all data
-          const totalTimeRange = endTime - startTime;
-          const daysInRange = totalTimeRange / (24 * 60 * 60 * 1000);
-          const chunkSize = Math.max(24 * 60 * 60 * 1000, totalTimeRange / 7); // At least 1 day, max 7 chunks
-          const chunks = [];
-          
-          for (let i = 0; i < Math.ceil(daysInRange); i++) {
-            const chunkStart = Math.floor(startTime + (i * chunkSize));
-            const chunkEnd = Math.floor(Math.min(startTime + ((i + 1) * chunkSize), endTime));
-            chunks.push({ start: chunkStart, end: chunkEnd });
-          }
-          
-          console.log('Fetching temperature data in', chunks.length, 'chunks');
-          
-          const allTemperatureData = [];
-          const allTargetTemperatureData = [];
-          const allValveOpenData = [];
-          
-          for (const chunk of chunks) {
-            try {
-              // Fetch sensor temperature with AVG
-              const sensorResponse = await fetch(
-                `/api/thingsboard/devices/telemetry?deviceId=${extTempDevice}&keys=sensorTemperature&startTs=${chunk.start}&endTs=${chunk.end}&interval=600000&agg=AVG&limit=2000`,
-                {
-                  headers: {
-                    'Authorization': `Bearer ${session.token}`
-                  }
+          // Fetch temperature data from external device
+            const response = await fetch(
+              `/api/reporting-proxy?entity_id=${extTempDevice}&start_date=${startDate}&end_date=${endDate}&limit=1000&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
+              {
+                headers: {
+                  'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
                 }
-              );
-              
-              // Fetch target temperature with AVG from related devices (same interval as sensor)
-              const relatedDevices = node.relatedDevices || node.data?.relatedDevices || [];
-              const deviceIds = relatedDevices.map(device => {
-                if (typeof device.id === 'object' && device.id?.id) {
-                  return device.id.id;
-                }
-                return device.id;
-              }).filter(id => id);
-              
-              let targetTemperatureData = [];
-              if (deviceIds.length > 0) {
-                const targetPromises = deviceIds.map(async (deviceId) => {
-                  try {
-                    const response = await fetch(
-                      `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=targetTemperature&startTs=${chunk.start}&endTs=${chunk.end}&interval=600000&agg=AVG&limit=2000`,
-                      {
-                        headers: {
-                          'Authorization': `Bearer ${session.token}`
-                        }
-                      }
-                    );
-                    
-                    if (response.ok) {
-                      const data = await response.json();
-                      return data.targetTemperature || [];
-                    }
-                  } catch (error) {
-                    console.warn(`Error fetching target temperature for device ${deviceId}:`, error);
-                  }
-                  return [];
-                });
-                
-                const targetResults = await Promise.all(targetPromises);
-                targetTemperatureData = targetResults.flat();
               }
-              
-              if (sensorResponse.ok) {
-                const data = await sensorResponse.json();
-                const temperatureData = data.sensorTemperature || [];
-                allTemperatureData.push(...temperatureData);
-                allTargetTemperatureData.push(...targetTemperatureData);
-                console.log(`Chunk ${chunks.indexOf(chunk) + 1}: Got ${temperatureData.length} temp points, ${targetTemperatureData.length} target temp points`);
-              }
-            } catch (error) {
-              console.warn(`Error fetching temperature chunk ${chunks.indexOf(chunk) + 1}:`, error);
-            }
-          }
+            );
           
-          const historyData = allTemperatureData
-            .filter(item => item && item.value !== null && item.value !== undefined)
-            .map(item => ({
-              time: new Date(item.ts).toLocaleString('de-DE'),
-              timestamp: item.ts,
-              temperature: Number(item.value)
-            }))
-            .filter(item => !isNaN(item.temperature) && item.temperature > -50 && item.temperature < 100)
-            .sort((a, b) => a.timestamp - b.timestamp);
-          
-          console.log('External temperature history:', historyData);
-          console.log('Temperature data points count:', historyData.length);
-          setTemperatureHistory(historyData);
-          
-          // Process target temperature history
-          const targetHistoryData = allTargetTemperatureData
-            .filter(item => item && item.value !== null && item.value !== undefined)
-            .map(item => ({
-              time: new Date(item.ts).toLocaleString('de-DE'),
-              timestamp: item.ts,
-              temperature: Number(item.value)
-            }))
-            .filter(item => !isNaN(item.temperature) && item.temperature > -50 && item.temperature < 100)
-            .sort((a, b) => a.timestamp - b.timestamp);
-          
-          const valveOpenHistoryData = allValveOpenData
-            .filter(item => item && item.value !== null && item.value !== undefined)
-            .map(item => ({
-              time: new Date(item.ts).toLocaleString('de-DE'),
-              timestamp: item.ts,
-              valveOpen: Number(item.value)
-            }))
-            .filter(item => !isNaN(item.valveOpen) && item.valveOpen >= 0 && item.valveOpen <= 100)
-            .sort((a, b) => a.timestamp - b.timestamp);
-          
-          console.log('AVG target temperature history:', targetHistoryData);
-          console.log('Target temperature data points count:', targetHistoryData.length);
-          setTemperatureHistory(historyData);
-          setTargetTemperatureHistory(targetHistoryData);
-          
-          // Load valve open history from related devices (average)
-          const relatedDevices = node.relatedDevices || node.data?.relatedDevices || [];
-          if (relatedDevices.length > 0) {
-            const deviceIds = relatedDevices.map(device => {
-              if (typeof device.id === 'object' && device.id?.id) {
-                return device.id.id;
-              }
-              return device.id;
-            }).filter(id => id);
-            
-            if (deviceIds.length > 0) {
-              // Split the time period into smaller chunks
-              const totalTimeRange = endTime - startTime;
-              const daysInRange = totalTimeRange / (24 * 60 * 60 * 1000);
-              const chunkSize = Math.max(24 * 60 * 60 * 1000, totalTimeRange / 7); // At least 1 day, max 7 chunks
-              const chunks = [];
-              
-              for (let i = 0; i < Math.ceil(daysInRange); i++) {
-                const chunkStart = Math.floor(startTime + (i * chunkSize));
-                const chunkEnd = Math.floor(Math.min(startTime + ((i + 1) * chunkSize), endTime));
-                chunks.push({ start: chunkStart, end: chunkEnd });
-              }
-              
-              console.log('Fetching valve open data in', chunks.length, 'chunks for', deviceIds.length, 'devices');
-              
-              const allValveOpenData = [];
-              
-              for (const chunk of chunks) {
-                const valveOpenHistoryPromises = deviceIds.map(async (deviceId) => {
-                  try {
-                    const response = await fetch(
-                      `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=PercentValveOpen&startTs=${chunk.start}&endTs=${chunk.end}&interval=600000&agg=AVG&limit=2000`,
-                      {
-                        headers: {
-                          'Authorization': `Bearer ${session.token}`
-                        }
-                      }
-                    );
-                    
-                    if (response.ok) {
-                      const data = await response.json();
-                      return data.PercentValveOpen || [];
-                    }
-                  } catch (error) {
-                    console.warn(`Error fetching valve open history for device ${deviceId} chunk ${chunks.indexOf(chunk) + 1}:`, error);
-                  }
-                  return [];
-                });
-                
-                const valveOpenChunkData = await Promise.all(valveOpenHistoryPromises);
-                allValveOpenData.push(...valveOpenChunkData.flat());
-                console.log(`Chunk ${chunks.indexOf(chunk) + 1}: Got ${valveOpenChunkData.flat().length} valve open points`);
-              }
-              
-              // Group by timestamp and calculate AVG for valve open
-              const valveOpenTimestampMap = new Map();
-              
-              allValveOpenData.forEach(item => {
-                if (item && item.value !== null && item.value !== undefined) {
-                  const valve = Number(item.value);
-                  if (!isNaN(valve) && valve >= 0 && valve <= 100) {
-                    if (!valveOpenTimestampMap.has(item.ts)) {
-                      valveOpenTimestampMap.set(item.ts, []);
-                    }
-                    valveOpenTimestampMap.get(item.ts).push(valve);
-                  }
-                }
-              });
-              
-              const valveOpenHistoryData = Array.from(valveOpenTimestampMap.entries())
-                .map(([timestamp, valves]) => ({
-                  time: new Date(Number(timestamp)).toLocaleString('de-DE'),
-                  timestamp: Number(timestamp),
-                  valveOpen: valves.length > 0 ? valves.reduce((sum, valve) => sum + valve, 0) / valves.length : null
+          if (response.ok) {
+            const data = await response.json();
+            if (data.success && data.data && data.data.length > 0) {
+              // Process temperature history
+              const historyData = data.data
+                .filter(item => item.sensor_temperature !== null && item.sensor_temperature !== undefined)
+                .map(item => ({
+                  time: new Date(item.bucket_10m).toLocaleString('de-DE'),
+                  timestamp: new Date(item.bucket_10m).getTime(),
+                  temperature: Number(item.sensor_temperature)
                 }))
-                .filter(item => item.valveOpen !== null)
+                .filter(item => !isNaN(item.temperature) && item.temperature > -50 && item.temperature < 100)
                 .sort((a, b) => a.timestamp - b.timestamp);
               
-              console.log('AVG valve open history:', valveOpenHistoryData);
-              console.log('Valve open data points count:', valveOpenHistoryData.length);
-              setValveOpenHistory(valveOpenHistoryData);
+              console.log('External temperature history:', historyData);
+              console.log('Temperature data points count:', historyData.length);
+              setTemperatureHistory(historyData);
             }
           }
         }
         
-        // Load target temperature and valve open history from related devices (average) - fallback
+        // Load target temperature and valve open history from related devices (average)
         const relatedDevices = node.relatedDevices || node.data?.relatedDevices || [];
         if (relatedDevices.length > 0) {
           const deviceIds = relatedDevices.map(device => {
@@ -1131,120 +839,62 @@ export default function HeatingControl() {
           }).filter(id => id);
           
           if (deviceIds.length > 0) {
-            // Split the 7-day period into smaller chunks
-            const chunkSize = 24 * 60 * 60 * 1000; // 1 day in milliseconds
-            const chunks = [];
-            
-            for (let i = 0; i < 7; i++) {
-              const chunkStart = startTime + (i * chunkSize);
-              const chunkEnd = Math.min(startTime + ((i + 1) * chunkSize), endTime);
-              chunks.push({ start: chunkStart, end: chunkEnd });
-            }
-            
-            console.log('Fetching target temperature and valve open data in', chunks.length, 'chunks for', deviceIds.length, 'devices');
+            console.log('Fetching target temperature and valve open data for', deviceIds.length, 'devices');
             
             const allTargetTemperatureData = [];
             const allValveOpenData = [];
             
-            for (const chunk of chunks) {
-              const targetHistoryPromises = deviceIds.map(async (deviceId) => {
-                try {
-                  const response = await fetch(
-                    `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=targetTemperature&startTs=${chunk.start}&endTs=${chunk.end}&interval=600000&agg=AVG&limit=2000`,
-                    {
-                      headers: {
-                        'Authorization': `Bearer ${session.token}`
-                      }
+            // Fetch data for all related devices
+            const devicePromises = deviceIds.map(async (deviceId) => {
+              try {
+                const response = await fetch(
+                  `/api/reporting-proxy?entity_id=${deviceId}&start_date=${startDate}&end_date=${endDate}&limit=1000&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
+                  {
+                    headers: {
+                      'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
                     }
-                  );
-                  
-                  if (response.ok) {
-                    const data = await response.json();
-                    return data.targetTemperature || [];
                   }
-                } catch (error) {
-                  console.warn(`Error fetching target temperature history for device ${deviceId} chunk ${chunks.indexOf(chunk) + 1}:`, error);
-                }
-                return [];
-              });
-
-              const valveOpenHistoryPromises = deviceIds.map(async (deviceId) => {
-                try {
-                  const response = await fetch(
-                    `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=PercentValveOpen&startTs=${chunk.start}&endTs=${chunk.end}&interval=600000&agg=AVG&limit=2000`,
-                    {
-                      headers: {
-                        'Authorization': `Bearer ${session.token}`
-                      }
-                    }
-                  );
-                  
-                  if (response.ok) {
-                    const data = await response.json();
-                    return data.PercentValveOpen || [];
+                );
+                
+                if (response.ok) {
+                  const data = await response.json();
+                  if (data.success && data.data && data.data.length > 0) {
+                    return data.data;
                   }
-                } catch (error) {
-                  console.warn(`Error fetching valve open history for device ${deviceId} chunk ${chunks.indexOf(chunk) + 1}:`, error);
                 }
-                return [];
-              });
-              
-              const targetChunkData = await Promise.all(targetHistoryPromises);
-              const valveOpenChunkData = await Promise.all(valveOpenHistoryPromises);
-              allTargetTemperatureData.push(...targetChunkData.flat());
-              allValveOpenData.push(...valveOpenChunkData.flat());
-              console.log(`Chunk ${chunks.indexOf(chunk) + 1}: Got ${targetChunkData.flat().length} target temp points, ${valveOpenChunkData.flat().length} valve open points`);
-            }
-            
-            // Group by timestamp and calculate AVG for target temperatures and valve open (consistent with sensor temperature)
-            const targetTimestampMap = new Map();
-            const valveOpenTimestampMap = new Map();
-            
-            allTargetTemperatureData.forEach(item => {
-              if (item && item.value !== null && item.value !== undefined) {
-                const temp = Number(item.value);
-                if (!isNaN(temp) && temp > -50 && temp < 100) {
-                  if (!targetTimestampMap.has(item.ts)) {
-                    targetTimestampMap.set(item.ts, []);
-                  }
-                  targetTimestampMap.get(item.ts).push(temp);
-                }
+              } catch (error) {
+                console.warn(`Error fetching data for device ${deviceId}:`, error);
               }
-            });
-
-            allValveOpenData.forEach(item => {
-              if (item && item.value !== null && item.value !== undefined) {
-                const valve = Number(item.value);
-                if (!isNaN(valve) && valve >= 0 && valve <= 100) {
-                  if (!valveOpenTimestampMap.has(item.ts)) {
-                    valveOpenTimestampMap.set(item.ts, []);
-                  }
-                  valveOpenTimestampMap.get(item.ts).push(valve);
-                }
-              }
+              return [];
             });
             
-            const targetHistoryData = Array.from(targetTimestampMap.entries())
-              .map(([timestamp, temps]) => ({
-                time: new Date(Number(timestamp)).toLocaleString('de-DE'),
-                timestamp: Number(timestamp),
-                temperature: temps.length > 0 ? temps.reduce((sum, temp) => sum + temp, 0) / temps.length : null // Use AVG for consistency
+            const deviceResults = await Promise.all(devicePromises);
+            const allDeviceData = deviceResults.flat();
+            
+            // Process target temperature data
+            const targetHistoryData = allDeviceData
+              .filter(item => item.target_temperature !== null && item.target_temperature !== undefined)
+              .map(item => ({
+                time: new Date(item.bucket_10m).toLocaleString('de-DE'),
+                timestamp: new Date(item.bucket_10m).getTime(),
+                temperature: Number(item.target_temperature)
               }))
-              .filter(item => item.temperature !== null)
+              .filter(item => !isNaN(item.temperature) && item.temperature > -50 && item.temperature < 100)
               .sort((a, b) => a.timestamp - b.timestamp);
-
-            const valveOpenHistoryData = Array.from(valveOpenTimestampMap.entries())
-              .map(([timestamp, valves]) => ({
-                time: new Date(Number(timestamp)).toLocaleString('de-DE'),
-                timestamp: Number(timestamp),
-                valveOpen: valves.length > 0 ? valves.reduce((sum, valve) => sum + valve, 0) / valves.length : null
+            
+            // Process valve open data
+            const valveOpenHistoryData = allDeviceData
+              .filter(item => item.percent_valve_open !== null && item.percent_valve_open !== undefined)
+              .map(item => ({
+                time: new Date(item.bucket_10m).toLocaleString('de-DE'),
+                timestamp: new Date(item.bucket_10m).getTime(),
+                valveOpen: Number(item.percent_valve_open)
               }))
-              .filter(item => item.valveOpen !== null)
+              .filter(item => !isNaN(item.valveOpen) && item.valveOpen >= 0 && item.valveOpen <= 100)
               .sort((a, b) => a.timestamp - b.timestamp);
             
             console.log('AVG target temperature history:', targetHistoryData);
             console.log('AVG valve open history:', valveOpenHistoryData);
-            setTemperatureHistory(historyData);
             setTargetTemperatureHistory(targetHistoryData);
             setValveOpenHistory(valveOpenHistoryData);
           }
@@ -1261,157 +911,89 @@ export default function HeatingControl() {
           }).filter(id => id);
           
           if (deviceIds.length > 0) {
-            // Split the time period into smaller chunks
-            const totalTimeRange = endTime - startTime;
-            const daysInRange = totalTimeRange / (24 * 60 * 60 * 1000);
-            const chunkSize = Math.max(24 * 60 * 60 * 1000, totalTimeRange / 7); // At least 1 day, max 7 chunks
-            const chunks = [];
+            console.log('Fetching temperature, target temperature and valve open data for', deviceIds.length, 'devices');
             
-            for (let i = 0; i < Math.ceil(daysInRange); i++) {
-              const chunkStart = startTime + (i * chunkSize);
-              const chunkEnd = Math.min(startTime + ((i + 1) * chunkSize), endTime);
-              chunks.push({ start: chunkStart, end: chunkEnd });
-            }
-            
-            console.log('Fetching temperature, target temperature and valve open data in', chunks.length, 'chunks for', deviceIds.length, 'devices');
-            
-            const allTemperatureData = [];
-            const allTargetTemperatureData = [];
-            const allValveOpenData = [];
-            
-            for (const chunk of chunks) {
-              // Fetch sensor temperature with AVG
-              const sensorHistoryPromises = deviceIds.map(async (deviceId) => {
-                try {
-                  const response = await fetch(
-                    `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=sensorTemperature&startTs=${chunk.start}&endTs=${chunk.end}&interval=600000&agg=AVG&limit=2000`,
-                    {
-                      headers: {
-                        'Authorization': `Bearer ${session.token}`
-                      }
+            // Fetch data for all related devices
+            const devicePromises = deviceIds.map(async (deviceId) => {
+              try {
+                const response = await fetch(
+                  `/api/reporting-proxy?entity_id=${deviceId}&start_date=${startDate}&end_date=${endDate}&limit=1000&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
+                  {
+                    headers: {
+                      'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
                     }
-                  );
-                  
-                  if (response.ok) {
-                    const data = await response.json();
-                    return data.sensorTemperature || [];
                   }
-                } catch (error) {
-                  console.warn(`Error fetching sensor temperature history for device ${deviceId} chunk ${chunks.indexOf(chunk) + 1}:`, error);
-                }
-                return [];
-              });
-              
-              // Fetch target temperature with AVG
-              const targetHistoryPromises = deviceIds.map(async (deviceId) => {
-                try {
-                  const response = await fetch(
-                    `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=targetTemperature&startTs=${chunk.start}&endTs=${chunk.end}&interval=600000&agg=AVG&limit=2000`,
-                    {
-                      headers: {
-                        'Authorization': `Bearer ${session.token}`
-                      }
-                    }
-                  );
-                  
-                  if (response.ok) {
-                    const data = await response.json();
-                    return data.targetTemperature || [];
+                );
+                
+                if (response.ok) {
+                  const data = await response.json();
+                  if (data.success && data.data && data.data.length > 0) {
+                    return data.data;
                   }
-                } catch (error) {
-                  console.warn(`Error fetching target temperature history for device ${deviceId} chunk ${chunks.indexOf(chunk) + 1}:`, error);
                 }
-                return [];
-              });
-
-              // Fetch valve open with AVG
-              const valveOpenHistoryPromises = deviceIds.map(async (deviceId) => {
-                try {
-                  const response = await fetch(
-                    `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=PercentValveOpen&startTs=${chunk.start}&endTs=${chunk.end}&interval=600000&agg=AVG&limit=2000`,
-                    {
-                      headers: {
-                        'Authorization': `Bearer ${session.token}`
-                      }
-                    }
-                  );
-                  
-                  if (response.ok) {
-                    const data = await response.json();
-                    return data.PercentValveOpen || [];
-                  }
-                } catch (error) {
-                  console.warn(`Error fetching valve open history for device ${deviceId} chunk ${chunks.indexOf(chunk) + 1}:`, error);
-                }
-                return [];
-              });
-              
-              const sensorChunkData = await Promise.all(sensorHistoryPromises);
-              const targetChunkData = await Promise.all(targetHistoryPromises);
-              const valveOpenChunkData = await Promise.all(valveOpenHistoryPromises);
-              
-              allTemperatureData.push(...sensorChunkData.flat());
-              allTargetTemperatureData.push(...targetChunkData.flat());
-              allValveOpenData.push(...valveOpenChunkData.flat());
-              
-              console.log(`Chunk ${chunks.indexOf(chunk) + 1}: Got ${sensorChunkData.flat().length} sensor temp points, ${targetChunkData.flat().length} target temp points, ${valveOpenChunkData.flat().length} valve open points`);
-            }
+              } catch (error) {
+                console.warn(`Error fetching data for device ${deviceId}:`, error);
+              }
+              return [];
+            });
+            
+            const deviceResults = await Promise.all(devicePromises);
+            const allDeviceData = deviceResults.flat();
             
             // Group by timestamp and calculate average for temperatures
             const timestampMap = new Map();
             const targetTimestampMap = new Map();
             const valveOpenTimestampMap = new Map();
             
-            allTemperatureData.forEach(item => {
-              if (item && item.value !== null && item.value !== undefined) {
-                const temp = Number(item.value);
+            allDeviceData.forEach(item => {
+              const bucketTime = new Date(item.bucket_10m).getTime();
+              
+              // Process sensor temperature
+              if (item.sensor_temperature !== null && item.sensor_temperature !== undefined) {
+                const temp = Number(item.sensor_temperature);
                 if (!isNaN(temp) && temp > -50 && temp < 100) {
-                  if (!timestampMap.has(item.ts)) {
-                    timestampMap.set(item.ts, []);
+                  if (!timestampMap.has(bucketTime)) {
+                    timestampMap.set(bucketTime, []);
                   }
-                  timestampMap.get(item.ts).push(temp);
+                  timestampMap.get(bucketTime).push(temp);
                 }
               }
-            });
-            
-            // Process target temperature data
-            allTargetTemperatureData.forEach(item => {
-              if (item && item.value !== null && item.value !== undefined) {
-                const temp = Number(item.value);
+              
+              // Process target temperature
+              if (item.target_temperature !== null && item.target_temperature !== undefined) {
+                const temp = Number(item.target_temperature);
                 if (!isNaN(temp) && temp > -50 && temp < 100) {
-                  if (!targetTimestampMap.has(item.ts)) {
-                    targetTimestampMap.set(item.ts, []);
+                  if (!targetTimestampMap.has(bucketTime)) {
+                    targetTimestampMap.set(bucketTime, []);
                   }
-                  targetTimestampMap.get(item.ts).push(temp);
+                  targetTimestampMap.get(bucketTime).push(temp);
                 }
               }
-            });
-
-            // Process valve open data
-            allValveOpenData.forEach(item => {
-              if (item && item.value !== null && item.value !== undefined) {
-                const valve = Number(item.value);
+              
+              // Process valve open
+              if (item.percent_valve_open !== null && item.percent_valve_open !== undefined) {
+                const valve = Number(item.percent_valve_open);
                 if (!isNaN(valve) && valve >= 0 && valve <= 100) {
-                  if (!valveOpenTimestampMap.has(item.ts)) {
-                    valveOpenTimestampMap.set(item.ts, []);
+                  if (!valveOpenTimestampMap.has(bucketTime)) {
+                    valveOpenTimestampMap.set(bucketTime, []);
                   }
-                  valveOpenTimestampMap.get(item.ts).push(valve);
+                  valveOpenTimestampMap.get(bucketTime).push(valve);
                 }
               }
             });
             
             const historyData = Array.from(timestampMap.entries())
               .map(([timestamp, temps]) => ({
-                time: new Date(Number(timestamp)).toLocaleString('de-DE'),
-                timestamp: Number(timestamp),
+                time: new Date(timestamp).toLocaleString('de-DE'),
+                timestamp: timestamp,
                 temperature: temps.reduce((sum, temp) => sum + temp, 0) / temps.length
               }))
               .sort((a, b) => a.timestamp - b.timestamp);
             
             const targetHistoryData = Array.from(targetTimestampMap.entries())
               .map(([timestamp, temps]) => ({
-                time: new Date(Number(timestamp)).toLocaleString('de-DE'),
-                timestamp: Number(timestamp),
+                time: new Date(timestamp).toLocaleString('de-DE'),
+                timestamp: timestamp,
                 temperature: temps.length > 0 ? temps.reduce((sum, temp) => sum + temp, 0) / temps.length : null
               }))
               .filter(item => item.temperature !== null)
@@ -1419,8 +1001,8 @@ export default function HeatingControl() {
 
             const valveOpenHistoryData = Array.from(valveOpenTimestampMap.entries())
               .map(([timestamp, valves]) => ({
-                time: new Date(Number(timestamp)).toLocaleString('de-DE'),
-                timestamp: Number(timestamp),
+                time: new Date(timestamp).toLocaleString('de-DE'),
+                timestamp: timestamp,
                 valveOpen: valves.reduce((sum, valve) => sum + valve, 0) / valves.length
               }))
               .filter(item => item.valveOpen !== null)
@@ -1448,7 +1030,7 @@ export default function HeatingControl() {
   };
 
   const fetchTelemetryForDevices = useCallback(async (devices) => {
-    if (!session?.tbToken || !devices.length) {
+    if (!session?.token || !devices.length) {
       return devices;
     }
 
@@ -1476,12 +1058,12 @@ export default function HeatingControl() {
               return device;
             }
 
-            // Get the latest values
+            // Get the latest values from reporting API
             const latestTelemetryResponse = await fetch(
-              `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=fCnt,sensorTemperature,targetTemperature,batteryVoltage,PercentValveOpen,rssi,snr,sf,signalQuality`,
+              `/api/reporting-proxy?entity_id=${deviceId}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
               {
                 headers: {
-                  'Authorization': `Bearer ${session.token}`
+                  'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
                 }
               }
             );
@@ -1489,58 +1071,35 @@ export default function HeatingControl() {
             if (latestTelemetryResponse.ok) {
               const latestTelemetryData = await latestTelemetryResponse.json();
               
-              // Extract the latest values for each attribute
-              const telemetry = {};
-              
-              const getLatestValue = (attributeName) => {
-                const attributeData = latestTelemetryData[attributeName];
-                if (attributeData && Array.isArray(attributeData) && attributeData.length > 0) {
-                  const latestReading = attributeData[attributeData.length - 1];
-                  return latestReading && latestReading.value !== null && latestReading.value !== undefined 
-                    ? latestReading.value 
-                    : null;
+              if (latestTelemetryData.success && latestTelemetryData.data && latestTelemetryData.data.length > 0) {
+                const latestData = latestTelemetryData.data[0];
+                
+                // Extract the latest values for each attribute
+                const telemetry = {
+                  batteryVoltage: latestData.battery_voltage,
+                  fCnt: null, // Not available in reporting API
+                  PercentValveOpen: latestData.percent_valve_open,
+                  rssi: latestData.rssi,
+                  sensorTemperature: latestData.sensor_temperature,
+                  targetTemperature: latestData.target_temperature,
+                  sf: latestData.sf,
+                  signalQuality: latestData.signal_quality,
+                  snr: latestData.snr,
+                  lastUpdate: latestData.bucket_10m ? new Date(latestData.bucket_10m).getTime() : null
+                };
+
+                // Update device active status based on telemetry data
+                let updatedActive = device.active;
+                if (Object.values(telemetry).some(value => value !== null && value !== undefined)) {
+                  updatedActive = true;
                 }
-                return null;
-              };
 
-              // Extract all attributes from latest data
-              telemetry.batteryVoltage = getLatestValue('batteryVoltage');
-              telemetry.fCnt = getLatestValue('fCnt');
-              telemetry.PercentValveOpen = getLatestValue('PercentValveOpen');
-              telemetry.rssi = getLatestValue('rssi');
-              telemetry.sensorTemperature = getLatestValue('sensorTemperature');
-              telemetry.targetTemperature = getLatestValue('targetTemperature');
-              telemetry.sf = getLatestValue('sf');
-              telemetry.signalQuality = getLatestValue('signalQuality');
-              telemetry.snr = getLatestValue('snr');
-
-              // Find the latest timestamp
-              let latestTimestamp = null;
-              Object.keys(latestTelemetryData).forEach(key => {
-                if (latestTelemetryData[key] && Array.isArray(latestTelemetryData[key]) && latestTelemetryData[key].length > 0) {
-                  const lastEntry = latestTelemetryData[key][latestTelemetryData[key].length - 1];
-                  if (lastEntry && lastEntry.ts) {
-                    const ts = lastEntry.ts;
-                    if (!latestTimestamp || ts > latestTimestamp) {
-                      latestTimestamp = ts;
-                    }
-                  }
-                }
-              });
-
-              telemetry.lastUpdate = latestTimestamp;
-
-              // Update device active status based on telemetry data
-              let updatedActive = device.active;
-              if (Object.values(telemetry).some(value => value !== null && value !== undefined)) {
-                updatedActive = true;
+                return {
+                  ...device,
+                  telemetry,
+                  active: updatedActive
+                };
               }
-
-              return {
-                ...device,
-                telemetry,
-                active: updatedActive
-              };
             }
           } catch (error) {
             console.warn(`Error fetching telemetry for device ${device.id}:`, error);
@@ -1555,7 +1114,7 @@ export default function HeatingControl() {
       console.error('Error fetching telemetry data:', error);
       return devices;
     }
-  }, [session?.tbToken, session?.token]);
+  }, [session?.token]);
 
   const fetchDevices = useCallback(async (nodeId) => {
     if (!nodeId) {
@@ -1595,8 +1154,8 @@ export default function HeatingControl() {
         console.log('No relatedDevices found in node');
       }
       
-      // Also try to get additional device info from ThingsBoard if we have a token
-      if (session?.tbToken && devices.length > 0) {
+      // Also try to get additional device info from reporting API if we have devices
+      if (devices.length > 0) {
         console.log('Fetching additional telemetry data for devices...');
         const devicesWithTelemetry = await fetchTelemetryForDevices(devices);
         console.log('Devices with telemetry:', devicesWithTelemetry);
@@ -1611,7 +1170,7 @@ export default function HeatingControl() {
     } finally {
       setLoadingDevices(false);
     }
-  }, [treeData, session?.tbToken, fetchTelemetryForDevices]);
+  }, [treeData, fetchTelemetryForDevices]);
 
   const handleNodeSelect = (node) => {
     console.log('Node selected:', node);
@@ -2272,7 +1831,7 @@ export default function HeatingControl() {
 
   // Fallback function to fetch temperatures via API
   const fetchTemperaturesViaAPI = useCallback(async (deviceIds) => {
-    if (!session?.tbToken || !deviceIds.length) return;
+    if (!session?.token || !deviceIds.length) return;
 
     try {
       console.log('🌡️ Fetching temperatures via API for devices:', deviceIds);
@@ -2280,26 +1839,28 @@ export default function HeatingControl() {
       const temperaturePromises = deviceIds.map(async (deviceId) => {
         try {
           const response = await fetch(
-            `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=sensorTemperature`,
+            `/api/reporting-proxy?entity_id=${deviceId}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
             {
               headers: {
-                'Authorization': `Bearer ${session.token}`
+                'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
               }
             }
           );
 
           if (response.ok) {
             const data = await response.json();
-            const temperature = data.sensorTemperature?.[0]?.value;
-            
-            if (temperature !== undefined) {
-              setDeviceTemperatures(prev => ({
-                ...prev,
-                [deviceId]: {
-                  temperature: temperature,
-                  timestamp: Date.now()
-                }
-              }));
+            if (data.success && data.data && data.data.length > 0) {
+              const temperature = data.data[0].sensor_temperature;
+              
+              if (temperature !== undefined && temperature !== null) {
+                setDeviceTemperatures(prev => ({
+                  ...prev,
+                  [deviceId]: {
+                    temperature: temperature,
+                    timestamp: Date.now()
+                  }
+                }));
+              }
             }
           }
         } catch (error) {
@@ -2311,7 +1872,7 @@ export default function HeatingControl() {
     } catch (error) {
       console.error('Error fetching temperatures via API:', error);
     }
-  }, [session?.tbToken, session?.token]);
+  }, [session?.token]);
 
   // Subscribe to device temperatures when devices change
   useEffect(() => {

@@ -75,6 +75,16 @@ function validateQueryParams(query) {
 
 // Hauptfunktion für die API
 export default async function handler(req, res) {
+  // CORS-Header setzen
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key');
+  
+  // OPTIONS-Request für CORS Preflight behandeln
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  
   // Nur GET und POST erlauben
   if (req.method !== 'GET' && req.method !== 'POST') {
     return res.status(405).json({
