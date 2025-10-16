@@ -346,8 +346,10 @@ export default function HeatingControl() {
           
           if (response.ok) {
             const data = await response.json();
+            console.log('External temperature API response:', data);
             if (data.success && data.data && data.data.length > 0) {
               const latestData = data.data[0];
+              console.log('External temperature latest data:', latestData);
               const temperature = latestData.sensor_temperature;
               const targetTemperature = latestData.target_temperature;
               const valveOpen = latestData.percent_valve_open;
@@ -386,19 +388,71 @@ export default function HeatingControl() {
                 }
               }
               
-              if (valveOpen !== undefined && valveOpen !== null) {
-                const numValveOpen = Number(valveOpen);
-                console.log('External valve open converted:', numValveOpen);
+              // For operationalMode 2, calculate average valve open from all devices
+              // instead of using external device valve open
+              const relatedDevices = node.relatedDevices || node.data?.relatedDevices || [];
+              console.log('DEBUG: relatedDevices for valve open:', relatedDevices);
+              console.log('DEBUG: relatedDevices length:', relatedDevices.length);
+              if (relatedDevices.length > 0) {
+                console.log('Calculating average valve open from all devices for operationalMode 2');
+                // Extract device IDs from relatedDevices objects
+                const deviceIds = relatedDevices.map(device => {
+                  if (typeof device === 'string') {
+                    return device;
+                  } else if (device.id) {
+                    return device.id;
+                  } else if (device.deviceId) {
+                    return device.deviceId;
+                  }
+                  return null;
+                }).filter(id => id !== null);
                 
-                if (!isNaN(numValveOpen) && numValveOpen >= 0 && numValveOpen <= 100) {
-                  setCurrentValveOpen({
-                    value: numValveOpen,
-                    source: 'external',
-                    deviceId: extTempDevice
-                  });
-                } else {
-                  console.warn('External valve open out of reasonable range:', numValveOpen);
-                }
+                console.log('DEBUG: extracted device IDs:', deviceIds);
+                
+                const valveOpenPromises = deviceIds.map(async (deviceId) => {
+                  try {
+                    const response = await fetch(
+                      `/api/reporting-proxy?entity_id=${deviceId}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
+                      {
+                        headers: {
+                          'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
+                        }
+                      }
+                    );
+                    
+                    if (response.ok) {
+                      const data = await response.json();
+                      if (data.success && data.data && data.data.length > 0) {
+                        const valveOpen = data.data[0].percent_valve_open;
+                        return valveOpen !== null && valveOpen !== undefined ? Number(valveOpen) : 0;
+                      }
+                    }
+                    return 0;
+                  } catch (error) {
+                    console.warn(`Error fetching valve open for device ${deviceId}:`, error);
+                    return 0;
+                  }
+                });
+                
+                const valveOpenValues = await Promise.all(valveOpenPromises);
+                const validValveValues = valveOpenValues.filter(val => !isNaN(val) && val >= 0 && val <= 100);
+                const averageValveOpen = validValveValues.length > 0 
+                  ? validValveValues.reduce((sum, val) => sum + val, 0) / validValveValues.length 
+                  : 0;
+                
+                console.log('Average valve open from all devices:', averageValveOpen);
+                setCurrentValveOpen({
+                  value: averageValveOpen,
+                  source: 'average',
+                  deviceCount: validValveValues.length
+                });
+              } else {
+                console.warn('No related devices found for valve open calculation');
+                setCurrentValveOpen({
+                  value: 0,
+                  source: 'average',
+                  deviceCount: 0
+                });
               }
             }
           }
@@ -747,7 +801,10 @@ export default function HeatingControl() {
           
           if (response.ok) {
             const data = await response.json();
+            console.log('External temperature history API response:', data);
             if (data.success && data.data && data.data.length > 0) {
+              console.log('External temperature history raw data sample:', data.data.slice(0, 3));
+              
               // Process temperature history
               const historyData = data.data
                 .filter(item => item.sensor_temperature !== null && item.sensor_temperature !== undefined)
@@ -770,16 +827,85 @@ export default function HeatingControl() {
                 .filter(item => !isNaN(item.temperature) && item.temperature > -50 && item.temperature < 100)
                 .sort((a, b) => a.timestamp - b.timestamp);
               
-              // Process valve open history
-              const valveOpenHistoryData = data.data
-                .filter(item => item.percent_valve_open !== null && item.percent_valve_open !== undefined)
-                .map(item => ({
-                  time: new Date(item.bucket_10m).toLocaleString('de-DE'),
-                  timestamp: new Date(item.bucket_10m).getTime(),
-                  valveOpen: Number(item.percent_valve_open)
-                }))
-                .filter(item => !isNaN(item.valveOpen) && item.valveOpen >= 0 && item.valveOpen <= 100)
-                .sort((a, b) => a.timestamp - b.timestamp);
+              // For operationalMode 2, calculate average valve open from all devices
+              // instead of using external device valve open
+              const relatedDevices = node.relatedDevices || node.data?.relatedDevices || [];
+              let valveOpenHistoryData = [];
+              
+              console.log('DEBUG: relatedDevices for valve open history:', relatedDevices);
+              console.log('DEBUG: relatedDevices length for history:', relatedDevices.length);
+              if (relatedDevices.length > 0) {
+                console.log('Calculating average valve open history from all devices for operationalMode 2');
+                
+                // Extract device IDs from relatedDevices objects
+                const deviceIds = relatedDevices.map(device => {
+                  if (typeof device === 'string') {
+                    return device;
+                  } else if (device.id) {
+                    return device.id;
+                  } else if (device.deviceId) {
+                    return device.deviceId;
+                  }
+                  return null;
+                }).filter(id => id !== null);
+                
+                console.log('DEBUG: extracted device IDs for history:', deviceIds);
+                
+                // Fetch valve open data from all devices
+                const allDeviceValveData = await Promise.all(
+                  deviceIds.map(async (deviceId) => {
+                    try {
+                      const response = await fetch(
+                        `/api/reporting-proxy?entity_id=${deviceId}&start_date=${startDate}&end_date=${endDate}&limit=1000&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
+                        {
+                          headers: {
+                            'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
+                          }
+                        }
+                      );
+                      
+                      if (response.ok) {
+                        const data = await response.json();
+                        if (data.success && data.data && data.data.length > 0) {
+                          return data.data.map(item => ({
+                            timestamp: new Date(item.bucket_10m).getTime(),
+                            valveOpen: item.percent_valve_open !== null && item.percent_valve_open !== undefined 
+                              ? Number(item.percent_valve_open) 
+                              : 0
+                          }));
+                        }
+                      }
+                      return [];
+                    } catch (error) {
+                      console.warn(`Error fetching valve open history for device ${deviceId}:`, error);
+                      return [];
+                    }
+                  })
+                );
+                
+                // Flatten and group by timestamp
+                const valveOpenTimestampMap = new Map();
+                allDeviceValveData.flat().forEach(item => {
+                  if (!isNaN(item.valveOpen) && item.valveOpen >= 0 && item.valveOpen <= 100) {
+                    if (!valveOpenTimestampMap.has(item.timestamp)) {
+                      valveOpenTimestampMap.set(item.timestamp, []);
+                    }
+                    valveOpenTimestampMap.get(item.timestamp).push(item.valveOpen);
+                  }
+                });
+                
+                // Calculate average for each timestamp
+                valveOpenHistoryData = Array.from(valveOpenTimestampMap.entries())
+                  .map(([timestamp, valves]) => ({
+                    time: new Date(timestamp).toLocaleString('de-DE'),
+                    timestamp: timestamp,
+                    valveOpen: valves.reduce((sum, valve) => sum + valve, 0) / valves.length
+                  }))
+                  .sort((a, b) => a.timestamp - b.timestamp);
+              } else {
+                console.warn('No related devices found for valve open history calculation');
+                valveOpenHistoryData = [];
+              }
               
               console.log('External temperature history:', historyData);
               console.log('External target temperature history:', targetHistoryData);
@@ -884,11 +1010,12 @@ export default function HeatingControl() {
             
             // Process valve open data
             const valveOpenHistoryData = allDeviceData
-              .filter(item => item.percent_valve_open !== null && item.percent_valve_open !== undefined)
               .map(item => ({
                 time: new Date(item.bucket_10m).toLocaleString('de-DE'),
                 timestamp: new Date(item.bucket_10m).getTime(),
-                valveOpen: Number(item.percent_valve_open)
+                valveOpen: item.percent_valve_open !== null && item.percent_valve_open !== undefined 
+                  ? Number(item.percent_valve_open) 
+                  : 0 // Use 0% when valve open data is not available
               }))
               .filter(item => !isNaN(item.valveOpen) && item.valveOpen >= 0 && item.valveOpen <= 100)
               .sort((a, b) => a.timestamp - b.timestamp);
@@ -971,14 +1098,15 @@ export default function HeatingControl() {
               }
               
               // Process valve open
-              if (item.percent_valve_open !== null && item.percent_valve_open !== undefined) {
-                const valve = Number(item.percent_valve_open);
-                if (!isNaN(valve) && valve >= 0 && valve <= 100) {
-                  if (!valveOpenTimestampMap.has(bucketTime)) {
-                    valveOpenTimestampMap.set(bucketTime, []);
-                  }
-                  valveOpenTimestampMap.get(bucketTime).push(valve);
+              const valve = item.percent_valve_open !== null && item.percent_valve_open !== undefined 
+                ? Number(item.percent_valve_open) 
+                : 0; // Use 0% when valve open data is not available
+              
+              if (!isNaN(valve) && valve >= 0 && valve <= 100) {
+                if (!valveOpenTimestampMap.has(bucketTime)) {
+                  valveOpenTimestampMap.set(bucketTime, []);
                 }
+                valveOpenTimestampMap.get(bucketTime).push(valve);
               }
             });
             
@@ -1336,9 +1464,18 @@ export default function HeatingControl() {
     const synchronizedData = synchronizeChartData();
     const { temperatureData, targetTemperatureData, valveOpenData } = synchronizedData;
     
+    console.log('Chart data - temperatureData length:', temperatureData.length);
+    console.log('Chart data - targetTemperatureData length:', targetTemperatureData.length);
+    console.log('Chart data - valveOpenData length:', valveOpenData.length);
+    console.log('Chart data - valveOpenData sample:', valveOpenData.slice(0, 3));
+    
     const hasTemperatureData = temperatureData.length > 0;
     const hasTargetTemperatureData = targetTemperatureData.length > 0;
     const hasValveOpenData = valveOpenData.length > 0;
+    
+    console.log('Chart flags - hasTemperatureData:', hasTemperatureData);
+    console.log('Chart flags - hasTargetTemperatureData:', hasTargetTemperatureData);
+    console.log('Chart flags - hasValveOpenData:', hasValveOpenData);
     
     if (!hasTemperatureData && !hasTargetTemperatureData && !hasValveOpenData) {
       return {
