@@ -761,7 +761,7 @@ export default function HeatingControl() {
     }
   };
 
-  const fetchTemperatureHistory = async (node) => {
+  const fetchTemperatureHistory = async (node, timeRange = null) => {
     if (!node || !session?.token) return;
     
     try {
@@ -774,24 +774,35 @@ export default function HeatingControl() {
       
       console.log('Fetching temperature history for operationalMode:', operationalMode, 'extTempDevice:', extTempDevice);
       
-      // Calculate time range based on selected time range
+      // Calculate time range based on selected time range or provided timeRange parameter
       const endTime = Date.now();
-      const startTime = getTimeRangeInMs(selectedTimeRange);
+      const timeRangeToUse = timeRange || selectedTimeRange;
+      const startTime = getTimeRangeInMs(timeRangeToUse);
       
       console.log('Fetching temperature history for operationalMode:', operationalMode, 'extTempDevice:', extTempDevice);
       console.log('Time range - Start:', new Date(startTime).toISOString(), 'End:', new Date(endTime).toISOString());
       console.log('Time range in days:', (endTime - startTime) / (24 * 60 * 60 * 1000));
+      console.log('Using time range:', timeRangeToUse);
       
       // Convert timestamps to ISO date strings for the reporting API
       const startDate = new Date(startTime).toISOString().split('T')[0];
-      const endDate = new Date(endTime).toISOString().split('T')[0];
+      // Use current date as endDate to ensure we get data up to today
+      const endDate = new Date().toISOString().split('T')[0];
+      
+      console.log('API query parameters:', {
+        startDate,
+        endDate,
+        currentTime: new Date().toISOString(),
+        currentDate: new Date().toISOString().split('T')[0]
+      });
       
       if (operationalMode === 2) {
         // Use external temperature device for both temperature and target temperature
         if (extTempDevice) {
           // Fetch data from reporting API with date range
+          // Try without end_date to get all available data, then filter client-side
             const response = await fetch(
-              `/api/reporting-proxy?entity_id=${extTempDevice}&start_date=${startDate}&end_date=${endDate}&limit=1000&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
+              `/api/reporting-proxy?entity_id=${extTempDevice}&start_date=${startDate}&limit=2000&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
               {
                 headers: {
                   'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
@@ -804,28 +815,47 @@ export default function HeatingControl() {
             console.log('External temperature history API response:', data);
             if (data.success && data.data && data.data.length > 0) {
               console.log('External temperature history raw data sample:', data.data.slice(0, 3));
+              console.log('External temperature history raw data sample (last 3):', data.data.slice(-3));
+              console.log('Total data points received:', data.data.length);
               
               // Process temperature history
-              const historyData = data.data
+              // First sort the raw data by bucket_10m to ensure chronological order
+              const sortedData = data.data.sort((a, b) => new Date(a.bucket_10m) - new Date(b.bucket_10m));
+              console.log('Raw data time range:', {
+                first: sortedData[0]?.bucket_10m,
+                last: sortedData[sortedData.length - 1]?.bucket_10m
+              });
+              
+              // Filter data to only include data up to current time
+              const currentTime = new Date();
+              const filteredData = sortedData.filter(item => {
+                const itemTime = new Date(item.bucket_10m);
+                return itemTime <= currentTime;
+              });
+              console.log('Filtered data time range:', {
+                first: filteredData[0]?.bucket_10m,
+                last: filteredData[filteredData.length - 1]?.bucket_10m,
+                currentTime: currentTime.toISOString()
+              });
+              
+              const historyData = filteredData
                 .filter(item => item.sensor_temperature !== null && item.sensor_temperature !== undefined)
                 .map(item => ({
                   time: new Date(item.bucket_10m).toLocaleString('de-DE'),
                   timestamp: new Date(item.bucket_10m).getTime(),
                   temperature: Number(item.sensor_temperature)
                 }))
-                .filter(item => !isNaN(item.temperature) && item.temperature > -50 && item.temperature < 100)
-                .sort((a, b) => a.timestamp - b.timestamp);
+                .filter(item => !isNaN(item.temperature) && item.temperature > -50 && item.temperature < 100);
               
               // Process target temperature history
-              const targetHistoryData = data.data
+              const targetHistoryData = filteredData
                 .filter(item => item.target_temperature !== null && item.target_temperature !== undefined)
                 .map(item => ({
                   time: new Date(item.bucket_10m).toLocaleString('de-DE'),
                   timestamp: new Date(item.bucket_10m).getTime(),
                   temperature: Number(item.target_temperature)
                 }))
-                .filter(item => !isNaN(item.temperature) && item.temperature > -50 && item.temperature < 100)
-                .sort((a, b) => a.timestamp - b.timestamp);
+                .filter(item => !isNaN(item.temperature) && item.temperature > -50 && item.temperature < 100);
               
               // For operationalMode 2, calculate average valve open from all devices
               // instead of using external device valve open
@@ -856,7 +886,7 @@ export default function HeatingControl() {
                   deviceIds.map(async (deviceId) => {
                     try {
                       const response = await fetch(
-                        `/api/reporting-proxy?entity_id=${deviceId}&start_date=${startDate}&end_date=${endDate}&limit=1000&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
+                        `/api/reporting-proxy?entity_id=${deviceId}&start_date=${startDate}&limit=2000&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
                         {
                           headers: {
                             'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
@@ -885,8 +915,12 @@ export default function HeatingControl() {
                 
                 // Flatten and group by timestamp
                 const valveOpenTimestampMap = new Map();
+                const currentTime = new Date();
+                
                 allDeviceValveData.flat().forEach(item => {
-                  if (!isNaN(item.valveOpen) && item.valveOpen >= 0 && item.valveOpen <= 100) {
+                  // Filter by current time like we do for temperature data
+                  const itemTime = new Date(item.timestamp);
+                  if (itemTime <= currentTime && !isNaN(item.valveOpen) && item.valveOpen >= 0 && item.valveOpen <= 100) {
                     if (!valveOpenTimestampMap.has(item.timestamp)) {
                       valveOpenTimestampMap.set(item.timestamp, []);
                     }
@@ -914,6 +948,15 @@ export default function HeatingControl() {
               console.log('Target temperature data points count:', targetHistoryData.length);
               console.log('Valve open data points count:', valveOpenHistoryData.length);
               
+              // Debug: Show time range of processed data
+              if (historyData.length > 0) {
+                console.log('Processed temperature data time range:', {
+                  first: new Date(historyData[0].timestamp).toLocaleString('de-DE'),
+                  last: new Date(historyData[historyData.length - 1].timestamp).toLocaleString('de-DE'),
+                  current: new Date().toLocaleString('de-DE')
+                });
+              }
+              
               setTemperatureHistory(historyData);
               setTargetTemperatureHistory(targetHistoryData);
               setValveOpenHistory(valveOpenHistoryData);
@@ -925,7 +968,7 @@ export default function HeatingControl() {
         if (extTempDevice) {
           // Fetch temperature data from external device
             const response = await fetch(
-              `/api/reporting-proxy?entity_id=${extTempDevice}&start_date=${startDate}&end_date=${endDate}&limit=1000&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
+              `/api/reporting-proxy?entity_id=${extTempDevice}&start_date=${startDate}&limit=2000&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
               {
                 headers: {
                   'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
@@ -937,15 +980,24 @@ export default function HeatingControl() {
             const data = await response.json();
             if (data.success && data.data && data.data.length > 0) {
               // Process temperature history
-              const historyData = data.data
+              // First sort the raw data by bucket_10m to ensure chronological order
+              const sortedData = data.data.sort((a, b) => new Date(a.bucket_10m) - new Date(b.bucket_10m));
+              
+              // Filter data to only include data up to current time
+              const currentTime = new Date();
+              const filteredData = sortedData.filter(item => {
+                const itemTime = new Date(item.bucket_10m);
+                return itemTime <= currentTime;
+              });
+              
+              const historyData = filteredData
                 .filter(item => item.sensor_temperature !== null && item.sensor_temperature !== undefined)
                 .map(item => ({
                   time: new Date(item.bucket_10m).toLocaleString('de-DE'),
                   timestamp: new Date(item.bucket_10m).getTime(),
                   temperature: Number(item.sensor_temperature)
                 }))
-                .filter(item => !isNaN(item.temperature) && item.temperature > -50 && item.temperature < 100)
-                .sort((a, b) => a.timestamp - b.timestamp);
+                .filter(item => !isNaN(item.temperature) && item.temperature > -50 && item.temperature < 100);
               
               console.log('External temperature history:', historyData);
               console.log('Temperature data points count:', historyData.length);
@@ -974,7 +1026,7 @@ export default function HeatingControl() {
             const devicePromises = deviceIds.map(async (deviceId) => {
               try {
                 const response = await fetch(
-                  `/api/reporting-proxy?entity_id=${deviceId}&start_date=${startDate}&end_date=${endDate}&limit=1000&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
+                  `/api/reporting-proxy?entity_id=${deviceId}&start_date=${startDate}&limit=2000&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
                   {
                     headers: {
                       'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
@@ -997,8 +1049,15 @@ export default function HeatingControl() {
             const deviceResults = await Promise.all(devicePromises);
             const allDeviceData = deviceResults.flat();
             
+            // Filter data to only include data up to current time
+            const currentTime = new Date();
+            const filteredDeviceData = allDeviceData.filter(item => {
+              const itemTime = new Date(item.bucket_10m);
+              return itemTime <= currentTime;
+            });
+            
             // Process target temperature data
-            const targetHistoryData = allDeviceData
+            const targetHistoryData = filteredDeviceData
               .filter(item => item.target_temperature !== null && item.target_temperature !== undefined)
               .map(item => ({
                 time: new Date(item.bucket_10m).toLocaleString('de-DE'),
@@ -1009,7 +1068,7 @@ export default function HeatingControl() {
               .sort((a, b) => a.timestamp - b.timestamp);
             
             // Process valve open data
-            const valveOpenHistoryData = allDeviceData
+            const valveOpenHistoryData = filteredDeviceData
               .map(item => ({
                 time: new Date(item.bucket_10m).toLocaleString('de-DE'),
                 timestamp: new Date(item.bucket_10m).getTime(),
@@ -1044,7 +1103,7 @@ export default function HeatingControl() {
             const devicePromises = deviceIds.map(async (deviceId) => {
               try {
                 const response = await fetch(
-                  `/api/reporting-proxy?entity_id=${deviceId}&start_date=${startDate}&end_date=${endDate}&limit=1000&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
+                  `/api/reporting-proxy?entity_id=${deviceId}&start_date=${startDate}&limit=2000&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
                   {
                     headers: {
                       'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
@@ -1067,12 +1126,19 @@ export default function HeatingControl() {
             const deviceResults = await Promise.all(devicePromises);
             const allDeviceData = deviceResults.flat();
             
+            // Filter data to only include data up to current time
+            const currentTime = new Date();
+            const filteredDeviceData = allDeviceData.filter(item => {
+              const itemTime = new Date(item.bucket_10m);
+              return itemTime <= currentTime;
+            });
+            
             // Group by timestamp and calculate average for temperatures
             const timestampMap = new Map();
             const targetTimestampMap = new Map();
             const valveOpenTimestampMap = new Map();
             
-            allDeviceData.forEach(item => {
+            filteredDeviceData.forEach(item => {
               const bucketTime = new Date(item.bucket_10m).getTime();
               
               // Process sensor temperature
@@ -1459,10 +1525,12 @@ export default function HeatingControl() {
     return synchronizedData;
   };
 
-  const getTemperatureChartOption = () => {
+  const getTemperatureChartOption = (timeRange = null) => {
     // Verwende synchronisierte Daten
     const synchronizedData = synchronizeChartData();
     const { temperatureData, targetTemperatureData, valveOpenData } = synchronizedData;
+    
+    const timeRangeToUse = timeRange || selectedTimeRange;
     
     console.log('Chart data - temperatureData length:', temperatureData.length);
     console.log('Chart data - targetTemperatureData length:', targetTemperatureData.length);
@@ -1480,7 +1548,7 @@ export default function HeatingControl() {
     if (!hasTemperatureData && !hasTargetTemperatureData && !hasValveOpenData) {
       return {
         title: {
-          text: `Temperaturverlauf (${getTimeRangeLabel(selectedTimeRange)})`,
+          text: `Temperaturverlauf (${getTimeRangeLabel(timeRangeToUse)})`,
           left: 'center',
           textStyle: {
             fontSize: 16,
@@ -1566,7 +1634,7 @@ export default function HeatingControl() {
     
     return {
       title: {
-        text: `Temperaturverlauf (${getTimeRangeLabel(selectedTimeRange)})`,
+        text: `Temperaturverlauf (${getTimeRangeLabel(timeRangeToUse)})`,
         left: 'center',
         textStyle: {
           fontSize: 16,
@@ -2356,7 +2424,8 @@ export default function HeatingControl() {
                                         onClick={() => {
                                           setSelectedTimeRange(option.value);
                                           if (selectedNode) {
-                                            fetchTemperatureHistory(selectedNode);
+                                            // Pass the new time range directly to avoid state update timing issues
+                                            fetchTemperatureHistory(selectedNode, option.value);
                                           }
                                         }}
                                       >
