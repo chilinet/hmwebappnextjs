@@ -44,6 +44,49 @@ body::before {
   z-index: -1;
 }
 
+/* Responsive Cards für Heating Control */
+.responsive-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.responsive-card {
+  flex: 1;
+  min-width: 250px;
+  max-width: 350px;
+}
+
+@media (max-width: 768px) {
+  .responsive-cards {
+    flex-direction: column;
+  }
+  
+  .responsive-card {
+    max-width: 100%;
+  }
+}
+
+/* Tree Container für Heating Control */
+.tree-container {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.tree-header {
+  flex-shrink: 0;
+  padding: 1rem;
+}
+
+.tree-content {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 0 1rem 1rem 1rem;
+}
+
 * {
   box-sizing: border-box;
   padding: 0;
@@ -81,4 +124,71 @@ a {
 /* Erhöhe den Abstand zwischen den Menüpunkten */
 .gap-3 {
     gap: 1rem !important;
+}
+
+/* Responsive Kacheln für Heating Control - High specificity */
+.responsive-cards {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 1rem !important;
+    margin: 0 -0.5rem !important;
+}
+
+.responsive-card {
+    flex: 1 1 100% !important;
+    min-width: 0 !important;
+    padding: 0 0.5rem !important;
+    max-width: 100% !important;
+    width: 100% !important;
+}
+
+/* Mobile first approach - start with 1 column */
+@media (max-width: 575px) {
+    .responsive-card {
+        flex: 1 1 100% !important;
+        max-width: 100% !important;
+        width: 100% !important;
+    }
+}
+
+/* Small screens (≥576px) - 2 cards per row */
+@media (min-width: 576px) and (max-width: 991px) {
+    .responsive-card {
+        flex: 1 1 calc(50% - 0.5rem) !important;
+        max-width: calc(50% - 0.5rem) !important;
+        width: calc(50% - 0.5rem) !important;
+    }
+}
+
+/* Large screens (≥992px) - 3 cards per row */
+@media (min-width: 992px) {
+    .responsive-card {
+        flex: 1 1 calc(33.333% - 0.67rem) !important;
+        max-width: calc(33.333% - 0.67rem) !important;
+        width: calc(33.333% - 0.67rem) !important;
+    }
+}
+
+/* Footer spacing for screens > 880px to prevent chart overlap */
+@media (min-width: 881px) {
+    /* Only apply to heating control page, not all container-fluid */
+    .heating-control-page.container-fluid {
+        margin-bottom: 100px !important;
+    }
+    
+    /* Ensure main content has enough bottom margin */
+    .heating-control-page .main-content {
+        margin-bottom: 120px !important;
+    }
+    
+    /* Add extra space to the heating control page specifically */
+    .heating-control-page {
+        padding-bottom: 150px !important;
+        min-height: calc(100vh + 150px) !important;
+    }
+    
+    /* Ensure chart container has enough space - only in heating control */
+    .heating-control-page .card-body {
+        margin-bottom: 50px !important;
+    }
 }

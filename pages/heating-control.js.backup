@@ -513,7 +513,12 @@ export default function HeatingControl() {
   };
 
   const fetchTemperature = async (node) => {
-    if (!node || !session?.token) return;
+    if (!node || !session?.token) {
+      console.log('fetchTemperature: Missing node or session token', { node: !!node, token: !!session?.token });
+      return;
+    }
+    
+    console.log('fetchTemperature: Starting with node:', node);
     
     try {
       setLoadingTemperature(true);
@@ -521,31 +526,42 @@ export default function HeatingControl() {
       
       const operationalMode = node.data?.operationalMode || node.operationalMode;
       const extTempDevice = node.data?.extTempDevice || node.extTempDevice;
+      const relatedDevices = node.relatedDevices || node.data?.relatedDevices || [];
       
       console.log('Fetching temperature for operationalMode:', operationalMode, 'extTempDevice:', extTempDevice);
+      console.log('Related devices:', relatedDevices);
+      console.log('Node data:', node.data);
       
       if (operationalMode === 2) {
         // Use external temperature device for both temperature and target temperature
         if (extTempDevice) {
-          // Fetch latest data from reporting API
+          // Fetch latest data from ThingsBoard API
           const response = await fetch(
-            `/api/reporting-proxy?entity_id=${extTempDevice}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
+            `/api/thingsboard/devices/telemetry?deviceId=${extTempDevice}&keys=sensorTemperature,targetTemperature,PercentValveOpen`,
             {
               headers: {
-                'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
+                'Authorization': `Bearer ${session.token}`
               }
             }
           );
           
+          console.log('External temperature API response status:', response.status, response.statusText);
+          
           if (response.ok) {
             const data = await response.json();
-            console.log('External temperature API response:', data);
-            if (data.success && data.data && data.data.length > 0) {
-              const latestData = data.data[0];
-              console.log('External temperature latest data:', latestData);
-              const temperature = latestData.sensor_temperature;
-              const targetTemperature = latestData.target_temperature;
-              const valveOpen = latestData.percent_valve_open;
+            console.log('External temperature ThingsBoard API response:', data);
+            console.log('API response success:', data.success);
+            console.log('Available keys in response:', Object.keys(data));
+            
+            if (data.success && data.data) {
+              const telemetryData = data.data;
+              console.log('External temperature telemetry data:', telemetryData);
+              console.log('Available keys in telemetry data:', Object.keys(telemetryData));
+              
+              // ThingsBoard API returns data in format: { key: [{ ts, value }] }
+              const temperature = telemetryData.sensorTemperature?.[0]?.value;
+              const targetTemperature = telemetryData.targetTemperature?.[0]?.value;
+              const valveOpen = telemetryData.PercentValveOpen?.[0]?.value;
               
               console.log('External temperature raw value:', temperature);
               console.log('External target temperature raw value:', targetTemperature);
@@ -602,43 +618,41 @@ export default function HeatingControl() {
                 
                 console.log('DEBUG: extracted device IDs:', deviceIds);
                 
-                const valveOpenPromises = deviceIds.map(async (deviceId) => {
-                  try {
-                    const response = await fetch(
-                      `/api/reporting-proxy?entity_id=${deviceId}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
+                // Fetch valve open data for all devices using telemetry API
+                const valveResponse = await fetch(
+                  `/api/telemetry/values?deviceIds=${deviceIds.join(',')}&keys=PercentValveOpen`,
                       {
                         headers: {
-                          'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
+                      'Authorization': `Bearer ${session.token}`
+                    }
+                  }
+                );
+                
+                if (valveResponse.ok) {
+                  const valveData = await valveResponse.json();
+                  if (valveData.success && valveData.data) {
+                    const valveOpenValues = [];
+                    deviceIds.forEach(deviceId => {
+                      if (valveData.data[deviceId]?.PercentValveOpen?.value !== undefined) {
+                        const valveValue = Number(valveData.data[deviceId].PercentValveOpen.value);
+                        if (!isNaN(valveValue) && valveValue >= 0 && valveValue <= 100) {
+                          valveOpenValues.push(valveValue);
                         }
                       }
-                    );
+                    });
                     
-                    if (response.ok) {
-                      const data = await response.json();
-                      if (data.success && data.data && data.data.length > 0) {
-                        const valveOpen = data.data[0].percent_valve_open;
-                        return valveOpen !== null && valveOpen !== undefined ? Number(valveOpen) : 0;
-                      }
-                    }
-                    return 0;
-                  } catch (error) {
-                    console.warn(`Error fetching valve open for device ${deviceId}:`, error);
-                    return 0;
-                  }
-                });
-                
-                const valveOpenValues = await Promise.all(valveOpenPromises);
-                const validValveValues = valveOpenValues.filter(val => !isNaN(val) && val >= 0 && val <= 100);
-                const averageValveOpen = validValveValues.length > 0 
-                  ? validValveValues.reduce((sum, val) => sum + val, 0) / validValveValues.length 
+                    const averageValveOpen = valveOpenValues.length > 0 
+                      ? valveOpenValues.reduce((sum, val) => sum + val, 0) / valveOpenValues.length 
                   : 0;
                 
                 console.log('Average valve open from all devices:', averageValveOpen);
                 setCurrentValveOpen({
                   value: averageValveOpen,
                   source: 'average',
-                  deviceCount: validValveValues.length
+                      deviceCount: valveOpenValues.length
                 });
+                  }
+                }
               } else {
                 console.warn('No related devices found for valve open calculation');
                 setCurrentValveOpen({
@@ -648,25 +662,29 @@ export default function HeatingControl() {
                 });
               }
             }
+          } else {
+            console.error('External temperature API error:', response.status, response.statusText);
+            const errorText = await response.text();
+            console.error('API error response:', errorText);
           }
         }
       } else if (operationalMode === 10) {
         // Use external temperature device for temperature only, average for target temperature and valve open
         if (extTempDevice) {
           const response = await fetch(
-            `/api/reporting-proxy?entity_id=${extTempDevice}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
+            `/api/thingsboard/devices/telemetry?deviceId=${extTempDevice}&keys=sensorTemperature`,
             {
               headers: {
-                'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
+                'Authorization': `Bearer ${session.token}`
               }
             }
           );
           
           if (response.ok) {
             const data = await response.json();
-            if (data.success && data.data && data.data.length > 0) {
-              const latestData = data.data[0];
-              const temperature = latestData.sensor_temperature;
+            if (data.success && data.data) {
+              const telemetryData = data.data;
+              const temperature = telemetryData.sensorTemperature?.[0]?.value;
               console.log('External temperature raw value:', temperature);
               
               if (temperature !== undefined && temperature !== null) {
@@ -698,83 +716,70 @@ export default function HeatingControl() {
           }).filter(id => id);
           
           if (deviceIds.length > 0) {
-            const targetTemperaturePromises = deviceIds.map(async (deviceId) => {
-              try {
-                const response = await fetch(
-                  `/api/reporting-proxy?entity_id=${deviceId}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
-                  {
-                    headers: {
-                      'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
+              // Fetch target temperature and valve open data using ThingsBoard API
+              // For multiple devices, we need to make separate calls
+              const responses = await Promise.all(
+                deviceIds.map(deviceId => 
+                  fetch(
+                    `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=targetTemperature,PercentValveOpen`,
+                    {
+                      headers: {
+                        'Authorization': `Bearer ${session.token}`
+                      }
                     }
-                  }
-                );
+                  )
+                )
+              );
+              
+              const targetTemperatures = [];
+              const valveOpens = [];
+              
+              for (let i = 0; i < responses.length; i++) {
+                const response = responses[i];
+                const deviceId = deviceIds[i];
                 
                 if (response.ok) {
                   const data = await response.json();
-                  if (data.success && data.data && data.data.length > 0) {
-                    return data.data[0].target_temperature;
-                  }
-                  return null;
-                }
-              } catch (error) {
-                console.warn(`Error fetching target temperature for device ${deviceId}:`, error);
-              }
-              return null;
-            });
-
-            const valveOpenPromises = deviceIds.map(async (deviceId) => {
-              try {
-                const response = await fetch(
-                  `/api/reporting-proxy?entity_id=${deviceId}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
-                  {
-                    headers: {
-                      'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
+                  if (data.success && data.data) {
+                    const telemetryData = data.data;
+                    
+                    // Process target temperature
+                    if (telemetryData.targetTemperature?.[0]?.value !== undefined) {
+                      const temp = Number(telemetryData.targetTemperature[0].value);
+                      if (!isNaN(temp) && temp > -50 && temp < 100) {
+                        targetTemperatures.push(temp);
+                      }
+                    }
+                    
+                    // Process valve open
+                    if (telemetryData.PercentValveOpen?.[0]?.value !== undefined) {
+                      const valve = Number(telemetryData.PercentValveOpen[0].value);
+                      if (!isNaN(valve) && valve >= 0 && valve <= 100) {
+                        valveOpens.push(valve);
+                      }
                     }
                   }
-                );
-                
-                if (response.ok) {
-                  const data = await response.json();
-                  if (data.success && data.data && data.data.length > 0) {
-                    return data.data[0].percent_valve_open;
-                  }
-                  return null;
                 }
-              } catch (error) {
-                console.warn(`Error fetching valve open for device ${deviceId}:`, error);
               }
-              return null;
-            });
-            
-            const targetTemperatures = await Promise.all(targetTemperaturePromises);
-            const valveOpens = await Promise.all(valveOpenPromises);
-            
-            const validTargetTemperatures = targetTemperatures
-              .filter(temp => temp !== null && temp !== undefined)
-              .map(temp => Number(temp))
-              .filter(temp => !isNaN(temp) && temp > -50 && temp < 100);
-
-            const validValveOpens = valveOpens
-              .filter(valve => valve !== null && valve !== undefined)
-              .map(valve => Number(valve))
-              .filter(valve => !isNaN(valve) && valve >= 0 && valve <= 100);
-            
-            if (validTargetTemperatures.length > 0) {
-              const avgTargetTemp = validTargetTemperatures.reduce((sum, temp) => sum + temp, 0) / validTargetTemperatures.length;
+                
+                if (targetTemperatures.length > 0) {
+                  const avgTargetTemp = targetTemperatures.reduce((sum, temp) => sum + temp, 0) / targetTemperatures.length;
               setCurrentTargetTemperature({
                 value: avgTargetTemp,
                 source: 'average',
-                deviceCount: validTargetTemperatures.length
+                    deviceCount: targetTemperatures.length
               });
             }
 
-            if (validValveOpens.length > 0) {
-              const avgValveOpen = validValveOpens.reduce((sum, valve) => sum + valve, 0) / validValveOpens.length;
-              setCurrentValveOpen({
-                value: avgValveOpen,
-                source: 'average',
-                deviceCount: validValveOpens.length
-              });
+                if (valveOpens.length > 0) {
+                  const avgValveOpen = valveOpens.reduce((sum, valve) => sum + valve, 0) / valveOpens.length;
+                  setCurrentValveOpen({
+                    value: avgValveOpen,
+                    source: 'average',
+                    deviceCount: valveOpens.length
+                  });
+                }
+              }
             }
           }
         }
@@ -790,160 +795,229 @@ export default function HeatingControl() {
           }).filter(id => id);
           
           if (deviceIds.length > 0) {
-            // Fetch latest data for all devices
-            const sensorTemperaturePromises = deviceIds.map(async (deviceId) => {
-              try {
-                const response = await fetch(
-                  `/api/reporting-proxy?entity_id=${deviceId}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
-                  {
-                    headers: {
-                      'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
+              // Fetch latest data for all devices using ThingsBoard API
+              // For multiple devices, we need to make separate calls
+              const responses = await Promise.all(
+                deviceIds.map(deviceId => 
+                  fetch(
+                    `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=sensorTemperature,targetTemperature,PercentValveOpen`,
+                    {
+                      headers: {
+                        'Authorization': `Bearer ${session.token}`
+                      }
                     }
-                  }
-                );
-                
-                if (response.ok) {
-                  const data = await response.json();
-                  if (data.success && data.data && data.data.length > 0) {
-                    return {
-                      temperature: data.data[0].sensor_temperature
-                    };
-                  }
-                }
-              } catch (error) {
-                console.warn(`Error fetching temperature for device ${deviceId}:`, error);
-              }
-              return { temperature: null };
-            });
-
-            // Fetch target temperature
-            const targetTemperaturePromises = deviceIds.map(async (deviceId) => {
-              try {
-                const response = await fetch(
-                  `/api/reporting-proxy?entity_id=${deviceId}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
-                  {
-                    headers: {
-                      'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
-                    }
-                  }
-                );
-                
-                if (response.ok) {
-                  const data = await response.json();
-                  if (data.success && data.data && data.data.length > 0) {
-                    return {
-                      targetTemperature: data.data[0].target_temperature
-                    };
-                  }
-                }
-              } catch (error) {
-                console.warn(`Error fetching target temperature for device ${deviceId}:`, error);
-              }
-              return { targetTemperature: null };
-            });
-
-            // Fetch valve open percentage
-            const valveOpenPromises = deviceIds.map(async (deviceId) => {
-              try {
-                const response = await fetch(
-                  `/api/reporting-proxy?entity_id=${deviceId}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
-                  {
-                    headers: {
-                      'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
-                    }
-                  }
-                );
-                
-                if (response.ok) {
-                  const data = await response.json();
-                  if (data.success && data.data && data.data.length > 0) {
-                    return {
-                      valveOpen: data.data[0].percent_valve_open
-                    };
-                  }
-                }
-              } catch (error) {
-                console.warn(`Error fetching valve open for device ${deviceId}:`, error);
-              }
-              return { valveOpen: null };
-            });
-            
-            const sensorResults = await Promise.all(sensorTemperaturePromises);
-            const targetResults = await Promise.all(targetTemperaturePromises);
-            const valveOpenResults = await Promise.all(valveOpenPromises);
-            console.log('Raw sensor temperature data from API:', sensorResults);
-            console.log('Raw target temperature data from API:', targetResults);
-            console.log('Raw valve open data from API:', valveOpenResults);
-            
-            const validTemperatures = sensorResults
-              .filter(data => data.temperature !== null && data.temperature !== undefined)
-              .map(data => {
-                const numTemp = Number(data.temperature);
-                console.log('Converting temperature:', data.temperature, 'to number:', numTemp);
-                return numTemp;
-              })
-              .filter(temp => !isNaN(temp) && temp > -50 && temp < 100); // Reasonable temperature range
-            
-            const validTargetTemperatures = targetResults
-              .filter(data => data.targetTemperature !== null && data.targetTemperature !== undefined)
-              .map(data => {
-                const numTemp = Number(data.targetTemperature);
-                console.log('Converting target temperature:', data.targetTemperature, 'to number:', numTemp);
-                return numTemp;
-              })
-              .filter(temp => !isNaN(temp) && temp > -50 && temp < 100); // Reasonable temperature range
-
-            const validValveOpen = valveOpenResults
-              .filter(data => data.valveOpen !== null && data.valveOpen !== undefined)
-              .map(data => {
-                const numValveOpen = Number(data.valveOpen);
-                console.log('Converting valve open:', data.valveOpen, 'to number:', numValveOpen);
-                return numValveOpen;
-              })
-              .filter(valve => !isNaN(valve) && valve >= 0 && valve <= 100); // Reasonable valve range
-
-            console.log('Valid temperatures after filtering:', validTemperatures);
-            console.log('Valid target temperatures after filtering:', validTargetTemperatures);
-            console.log('Valid valve open after filtering:', validValveOpen);
-            
-            if (validTemperatures.length > 0) {
-              const averageTemp = validTemperatures.reduce((sum, temp) => sum + temp, 0) / validTemperatures.length;
-              console.log('Calculated average temperature:', averageTemp);
+                  )
+                )
+              );
               
-              let avgTargetTemp = null;
-              if (validTargetTemperatures.length > 0) {
-                avgTargetTemp = validTargetTemperatures.reduce((sum, temp) => sum + temp, 0) / validTargetTemperatures.length;
-                console.log('Calculated AVG target temperature:', avgTargetTemp);
+              const temperatures = [];
+              const targetTemperatures = [];
+              const valveOpens = [];
+              
+              for (let i = 0; i < responses.length; i++) {
+                const response = responses[i];
+                const deviceId = deviceIds[i];
+                
+                if (response.ok) {
+                  const data = await response.json();
+                  if (data.success && data.data) {
+                    const telemetryData = data.data;
+                    
+                    // Process sensor temperature
+                    if (telemetryData.sensorTemperature?.[0]?.value !== undefined) {
+                      const temp = Number(telemetryData.sensorTemperature[0].value);
+                      if (!isNaN(temp) && temp > -50 && temp < 100) {
+                        temperatures.push(temp);
+                      }
+                    }
+                    
+                    // Process target temperature
+                    if (telemetryData.targetTemperature?.[0]?.value !== undefined) {
+                      const temp = Number(telemetryData.targetTemperature[0].value);
+                      if (!isNaN(temp) && temp > -50 && temp < 100) {
+                        targetTemperatures.push(temp);
+                      }
+                    }
+                    
+                    // Process valve open
+                    if (telemetryData.PercentValveOpen?.[0]?.value !== undefined) {
+                      const valve = Number(telemetryData.PercentValveOpen[0].value);
+                      if (!isNaN(valve) && valve >= 0 && valve <= 100) {
+                        valveOpens.push(valve);
+                      }
+                    }
+                  }
+                }
               }
               
-              let avgValveOpen = null;
-              if (validValveOpen.length > 0) {
-                avgValveOpen = validValveOpen.reduce((sum, valve) => sum + valve, 0) / validValveOpen.length;
-                console.log('Calculated AVG valve open:', avgValveOpen);
+              console.log('Valid temperatures after filtering:', temperatures);
+                console.log('Valid target temperatures after filtering:', targetTemperatures);
+                console.log('Valid valve open after filtering:', valveOpens);
+                
+                if (temperatures.length > 0) {
+                  const averageTemp = temperatures.reduce((sum, temp) => sum + temp, 0) / temperatures.length;
+                  console.log('Calculated average temperature:', averageTemp);
+                  
+                  setCurrentTemperature({
+                    value: averageTemp,
+                    source: 'average',
+                    deviceCount: temperatures.length
+                  });
+                }
+                
+                if (targetTemperatures.length > 0) {
+                  const avgTargetTemp = targetTemperatures.reduce((sum, temp) => sum + temp, 0) / targetTemperatures.length;
+                  console.log('Calculated AVG target temperature:', avgTargetTemp);
+                  
+                  setCurrentTargetTemperature({
+                    value: avgTargetTemp,
+                    source: 'average',
+                    deviceCount: targetTemperatures.length
+                  });
+                }
+                
+                if (valveOpens.length > 0) {
+                  const avgValveOpen = valveOpens.reduce((sum, valve) => sum + valve, 0) / valveOpens.length;
+                  console.log('Calculated AVG valve open:', avgValveOpen);
+                  
+                  setCurrentValveOpen({
+                    value: avgValveOpen,
+                    source: 'average',
+                    deviceCount: valveOpens.length
+                  });
+                }
               }
+            }
+          }
+        }
+      }
+      
+      // Fallback: If no specific operational mode or no data found, try to get data from related devices
+      if (!currentTemperature && relatedDevices.length > 0) {
+        console.log('No temperature data found with operational mode, trying fallback with related devices');
+        
+        const deviceIds = relatedDevices.map(device => {
+          if (typeof device === 'string') {
+            return device;
+          } else if (device.id) {
+            return device.id;
+          } else if (device.deviceId) {
+            return device.deviceId;
+          }
+          return null;
+        }).filter(id => id !== null);
+        
+        if (deviceIds.length > 0) {
+          console.log('Fallback: Fetching temperature from related devices:', deviceIds);
+          
+          // For multiple devices, we need to make separate calls to ThingsBoard API
+          const responses = await Promise.all(
+            deviceIds.map(deviceId => 
+              fetch(
+                `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=sensorTemperature,targetTemperature,PercentValveOpen`,
+                {
+                  headers: {
+                    'Authorization': `Bearer ${session.token}`
+                  }
+                }
+              )
+            )
+          );
+          
+          const temperatures = [];
+          const targetTemperatures = [];
+          const valveOpens = [];
+          
+          for (let i = 0; i < responses.length; i++) {
+            const response = responses[i];
+            const deviceId = deviceIds[i];
+            
+            console.log(`Processing fallback device ${deviceId}:`, response.status);
+            
+            if (response.ok) {
+              const data = await response.json();
+              console.log(`Fallback device ${deviceId} API response:`, data);
+              
+              if (data.success && data.data) {
+                const telemetryData = data.data;
+                console.log(`Device ${deviceId} telemetry data keys:`, Object.keys(telemetryData));
+                
+                // Process sensor temperature
+                if (telemetryData.sensorTemperature?.[0]?.value !== undefined) {
+                  const temp = Number(telemetryData.sensorTemperature[0].value);
+                  console.log(`Device ${deviceId} sensorTemperature:`, telemetryData.sensorTemperature[0].value, 'converted to:', temp);
+                  if (!isNaN(temp) && temp > -50 && temp < 100) {
+                    temperatures.push(temp);
+                    console.log(`Added temperature ${temp} to array`);
+                  } else {
+                    console.log(`Temperature ${temp} filtered out (NaN or out of range)`);
+                  }
+                } else {
+                  console.log(`Device ${deviceId} has no sensorTemperature data`);
+                }
+                
+                // Process target temperature
+                if (telemetryData.targetTemperature?.[0]?.value !== undefined) {
+                  const temp = Number(telemetryData.targetTemperature[0].value);
+                  if (!isNaN(temp) && temp > -50 && temp < 100) {
+                    targetTemperatures.push(temp);
+                  }
+                }
+                
+                // Process valve open
+                if (telemetryData.PercentValveOpen?.[0]?.value !== undefined) {
+                  const valve = Number(telemetryData.PercentValveOpen[0].value);
+                  if (!isNaN(valve) && valve >= 0 && valve <= 100) {
+                    valveOpens.push(valve);
+                  }
+                }
+              }
+            } else {
+              console.error(`Fallback device ${deviceId} API error:`, response.status, response.statusText);
+            }
+          }
+              
+              console.log('Fallback - Valid temperatures:', temperatures);
+              console.log('Fallback - Valid target temperatures:', targetTemperatures);
+              console.log('Fallback - Valid valve opens:', valveOpens);
+              
+              if (temperatures.length > 0) {
+                const averageTemp = temperatures.reduce((sum, temp) => sum + temp, 0) / temperatures.length;
+                console.log('Fallback - Calculated average temperature:', averageTemp);
               
               setCurrentTemperature({
                 value: averageTemp,
                 source: 'average',
-                deviceCount: validTemperatures.length
+                  deviceCount: temperatures.length
               });
+              }
               
-              if (avgTargetTemp !== null) {
+              if (targetTemperatures.length > 0) {
+                const avgTargetTemp = targetTemperatures.reduce((sum, temp) => sum + temp, 0) / targetTemperatures.length;
+                console.log('Fallback - Calculated average target temperature:', avgTargetTemp);
+                
                 setCurrentTargetTemperature({
                   value: avgTargetTemp,
                   source: 'average',
-                  deviceCount: validTargetTemperatures.length
+                  deviceCount: targetTemperatures.length
                 });
               }
               
-              if (avgValveOpen !== null) {
+              if (valveOpens.length > 0) {
+                const avgValveOpen = valveOpens.reduce((sum, valve) => sum + valve, 0) / valveOpens.length;
+                console.log('Fallback - Calculated average valve open:', avgValveOpen);
+                
                 setCurrentValveOpen({
                   value: avgValveOpen,
                   source: 'average',
-                  deviceCount: validValveOpen.length
+                  deviceCount: valveOpens.length
                 });
               }
             }
+          } else {
+            console.error('Fallback telemetry API error:', response.status, response.statusText);
+            const errorText = await response.text();
+            console.error('Fallback API error response:', errorText);
           }
         }
       }
@@ -1436,43 +1510,47 @@ export default function HeatingControl() {
 
       console.log('Fetching telemetry for device IDs:', deviceIds);
 
-      // Fetch telemetry data for each device individually
-      const devicesWithTelemetry = await Promise.all(
-        devices.map(async (device) => {
-          try {
-            const deviceId = typeof device.id === 'object' && device.id?.id ? device.id.id : device.id;
-            if (!deviceId) {
-              return device;
-            }
-
-            // Get the latest values from reporting API
-            const latestTelemetryResponse = await fetch(
-              `/api/reporting-proxy?entity_id=${deviceId}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
-              {
-                headers: {
-                  'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
-                }
+      // Fetch telemetry data for all devices using ThingsBoard API
+      // For multiple devices, we need to make separate calls
+      const responses = await Promise.all(
+        deviceIds.map(deviceId => 
+          fetch(
+            `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=batteryVoltage,PercentValveOpen,rssi,sensorTemperature,targetTemperature,sf,signalQuality,snr`,
+            {
+              headers: {
+                'Authorization': `Bearer ${session.token}`
               }
-            );
+            }
+          )
+        )
+      );
 
-            if (latestTelemetryResponse.ok) {
-              const latestTelemetryData = await latestTelemetryResponse.json();
-              
-              if (latestTelemetryData.success && latestTelemetryData.data && latestTelemetryData.data.length > 0) {
-                const latestData = latestTelemetryData.data[0];
-                
-                // Extract the latest values for each attribute
-                const telemetry = {
-                  batteryVoltage: latestData.battery_voltage,
-                  fCnt: null, // Not available in reporting API
-                  PercentValveOpen: latestData.percent_valve_open,
-                  rssi: latestData.rssi,
-                  sensorTemperature: latestData.sensor_temperature,
-                  targetTemperature: latestData.target_temperature,
-                  sf: latestData.sf,
-                  signalQuality: latestData.signal_quality,
-                  snr: latestData.snr,
-                  lastUpdate: latestData.bucket_10m ? new Date(latestData.bucket_10m).getTime() : null
+      // Process responses and map telemetry data back to devices
+      const devicesWithTelemetry = await Promise.all(devices.map(async (device) => {
+        const deviceId = typeof device.id === 'object' && device.id?.id ? device.id.id : device.id;
+        const deviceIndex = deviceIds.indexOf(deviceId);
+        
+        if (deviceIndex === -1 || !responses[deviceIndex] || !responses[deviceIndex].ok) {
+          return device;
+        }
+
+        try {
+          const data = await responses[deviceIndex].json();
+          if (data.success && data.data) {
+            const telemetryData = data.data;
+            
+            // Extract the latest values for each attribute
+            const telemetry = {
+              batteryVoltage: telemetryData.batteryVoltage?.[0]?.value || null,
+              fCnt: null, // Not available in telemetry API
+              PercentValveOpen: telemetryData.PercentValveOpen?.[0]?.value || null,
+              rssi: telemetryData.rssi?.[0]?.value || null,
+              sensorTemperature: telemetryData.sensorTemperature?.[0]?.value || null,
+              targetTemperature: telemetryData.targetTemperature?.[0]?.value || null,
+              sf: telemetryData.sf?.[0]?.value || null,
+              signalQuality: telemetryData.signalQuality?.[0]?.value || null,
+              snr: telemetryData.snr?.[0]?.value || null,
+              lastUpdate: telemetryData.sensorTemperature?.[0]?.ts || null
                 };
 
                 // Update device active status based on telemetry data
@@ -1486,16 +1564,12 @@ export default function HeatingControl() {
                   telemetry,
                   active: updatedActive
                 };
-              }
-            }
-          } catch (error) {
-            console.warn(`Error fetching telemetry for device ${device.id}:`, error);
-          }
-          
-          return device;
-        })
-      );
+          });
 
+          return devicesWithTelemetry;
+        }
+      }));
+      
       return devicesWithTelemetry;
     } catch (error) {
       console.error('Error fetching telemetry data:', error);
@@ -2252,23 +2326,32 @@ export default function HeatingControl() {
     if (!session?.token || !deviceIds.length) return;
 
     try {
-      console.log('🌡️ Fetching temperatures via API for devices:', deviceIds);
+      console.log('🌡️ Fetching temperatures via ThingsBoard API for devices:', deviceIds);
       
-      const temperaturePromises = deviceIds.map(async (deviceId) => {
-        try {
-          const response = await fetch(
-            `/api/reporting-proxy?entity_id=${deviceId}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
+      // For multiple devices, we need to make separate calls to ThingsBoard API
+      const responses = await Promise.all(
+        deviceIds.map(deviceId => 
+          fetch(
+            `/api/thingsboard/devices/telemetry?deviceId=${deviceId}&keys=sensorTemperature`,
             {
               headers: {
-                'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
+                'Authorization': `Bearer ${session.token}`
               }
             }
-          );
+          )
+        )
+      );
 
-          if (response.ok) {
-            const data = await response.json();
-            if (data.success && data.data && data.data.length > 0) {
-              const temperature = data.data[0].sensor_temperature;
+      for (let i = 0; i < responses.length; i++) {
+        const response = responses[i];
+        const deviceId = deviceIds[i];
+        
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && data.data) {
+            const telemetryData = data.data;
+            if (telemetryData.sensorTemperature?.[0]?.value !== undefined) {
+              const temperature = telemetryData.sensorTemperature[0].value;
               
               if (temperature !== undefined && temperature !== null) {
                 setDeviceTemperatures(prev => ({
@@ -2280,15 +2363,11 @@ export default function HeatingControl() {
                 }));
               }
             }
+          });
           }
-        } catch (error) {
-          console.warn(`Error fetching temperature for device ${deviceId}:`, error);
         }
-      });
-
-      await Promise.all(temperaturePromises);
     } catch (error) {
-      console.error('Error fetching temperatures via API:', error);
+      console.error('Error fetching temperatures via telemetry API:', error);
     }
   }, [session?.token]);
 
@@ -2337,7 +2416,7 @@ export default function HeatingControl() {
   return (
     <DndProvider backend={HTML5Backend}>
       <div className="container-fluid p-0 heating-control-page">
-        <div className="d-flex" style={{ height: windowHeight ? `${windowHeight - 80}px` : 'calc(100vh - 80px)' }}>
+        <div className="d-flex" style={{ height: windowHeight ? `${windowHeight - 80}px` : '100vh' }}>
           {/* Mobile Toggle Button */}
           {isMobile && (
             <button
@@ -2372,22 +2451,19 @@ export default function HeatingControl() {
             />
           )}
           
-           {/* Linke Seite: Hierarchie */}
-           <div 
-             className={`card bg-light text-white ${isMobile ? (showTree ? 'd-block' : 'd-none') : 'd-block'}`}
-             style={{ 
-               minWidth: isMobile ? '100%' : '400px',
-               width: isMobile ? '100%' : '400px',
-               height: windowHeight ? `${windowHeight - 80}px` : 'calc(100vh - 80px)',
-               position: isMobile ? 'fixed' : 'relative',
-               top: isMobile ? '0' : 'auto',
-               left: isMobile ? '0' : 'auto',
-               zIndex: isMobile ? 1040 : 'auto',
-               display: 'flex',
-               flexDirection: 'column',
-               overflow: 'hidden'
-             }}
-           >
+          {/* Linke Seite: Hierarchie */}
+          <div 
+            className={`card bg-light text-white ${isMobile ? (showTree ? 'd-block' : 'd-none') : 'd-block'}`}
+            style={{ 
+              minWidth: isMobile ? '100%' : '400px',
+              width: isMobile ? '100%' : '400px',
+              height: windowHeight ? `${windowHeight - 80}px` : 'auto',
+              position: isMobile ? 'fixed' : 'relative',
+              top: isMobile ? '0' : 'auto',
+              left: isMobile ? '0' : 'auto',
+              zIndex: isMobile ? 1040 : 'auto'
+            }}
+          >
                   <div className="card-header bg-light border-secondary">
                     <h5 className="mb-0 d-flex align-items-center justify-content-between">
                       <div className="d-flex align-items-center">
@@ -2410,10 +2486,9 @@ export default function HeatingControl() {
                       </div>
                     </h5>
                   </div>
-            <div className="card-body tree-container" style={{ flex: 1, minHeight: 0 }}>
+            <div className="card-body" style={{ overflowY: 'auto' }}>
               {/* Suchfeld für Tree */}
-              <div className="tree-header">
-                <div className="d-flex gap-2">
+              <div className="d-flex gap-2 mb-3">
                 <div className="input-group">
                   <span className="input-group-text bg-light text-white border-secondary">
                     <FontAwesomeIcon icon={faSearch} />
@@ -2481,25 +2556,22 @@ export default function HeatingControl() {
                           <FontAwesomeIcon icon={faThermometerHalf} />
                         </button>
                       )}
-                </div>
               </div>
 
-              {/* Scrollbarer Bereich für Tree */}
-              <div className="tree-content">
-                {error && (
-                  <div className="alert alert-danger" role="alert">
-                    {error}
-                  </div>
-                )}
+              {error && (
+                <div className="alert alert-danger" role="alert">
+                  {error}
+                </div>
+              )}
 
-                {loading ? (
-                  <div className="text-center">
-                    <div className="spinner-border text-light" role="status">
-                      <span className="visually-hidden">Loading...</span>
-                    </div>
+              {loading ? (
+                <div className="text-center">
+                  <div className="spinner-border text-light" role="status">
+                    <span className="visually-hidden">Loading...</span>
                   </div>
-                ) : (
-                  <Tree
+                </div>
+              ) : (
+                <Tree
                   tree={(() => {
                     const filtered = getFilteredTreeData();
                     const converted = convertToTreeViewFormat(filtered);
@@ -2533,8 +2605,7 @@ export default function HeatingControl() {
                   canDrop={() => false}
                   canDrag={() => false}
                 />
-                )}
-              </div>
+              )}
             </div>
           </div>
 
@@ -2605,10 +2676,16 @@ export default function HeatingControl() {
                                     <div className="display-4 text-primary mb-2">
                                       {Number(currentTemperature.value).toFixed(1)}°C
                                     </div>
+                                    <small className="text-muted">
+                                      {currentTemperature.source === 'external' ? 'Extern' : 
+                                       currentTemperature.source === 'average' ? `Ø ${currentTemperature.deviceCount} Geräte` : 
+                                       'Unbekannt'}
+                                    </small>
                                   </div>
                                 ) : (
                                   <div className="text-muted">
                                     <p>Keine Temperaturdaten verfügbar</p>
+                                    <small>Debug: currentTemperature = {JSON.stringify(currentTemperature)}</small>
                                   </div>
                                 )}
                               </div>
