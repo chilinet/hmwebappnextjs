@@ -39,7 +39,8 @@ import {
   faCrown,
   faTowerObservation,
   faTree,
-  faBullseye
+  faBullseye,
+  faPlay
 } from '@fortawesome/free-solid-svg-icons';
 import { Tree } from '@minoru/react-dnd-treeview';
 import { DndProvider } from 'react-dnd';
@@ -123,6 +124,10 @@ export default function HeatingControl() {
   const [originalMinTemp, setOriginalMinTemp] = useState(null);
   const [originalMaxTemp, setOriginalMaxTemp] = useState(null);
   const [originalOverruleMinutes, setOriginalOverruleMinutes] = useState(null);
+  
+  // Telemetry data for subordinate nodes
+  const [subordinateTelemetry, setSubordinateTelemetry] = useState({});
+  const [loadingSubordinateTelemetry, setLoadingSubordinateTelemetry] = useState(false);
 
   const timeRangeOptions = [
     { value: '1d', label: '1 Tag' },
@@ -1564,6 +1569,8 @@ export default function HeatingControl() {
     console.log('Node selected:', node);
     console.log('Node data:', node.data);
     console.log('Node operationalMode:', node.operationalMode);
+    console.log('Node hasDevices:', node.hasDevices);
+    console.log('=== hasDevices VALUE ===', node.hasDevices, '=== TYPE ===', typeof node.hasDevices);
     
     // Set loading state and clear previous data
     setLoadingNodeData(true);
@@ -1572,6 +1579,19 @@ export default function HeatingControl() {
     
     // Use the full node object, not just node.data
     setSelectedNode(node);
+    
+    // Set active tab based on hasDevices - check both node.hasDevices and node.data.hasDevices
+    const hasDevices = node.hasDevices !== undefined ? node.hasDevices : (node.data?.hasDevices !== undefined ? node.data.hasDevices : false);
+    console.log('Final hasDevices value:', hasDevices);
+    
+    if (!hasDevices) {
+      console.log('Setting activeTab to "empty" (Übersicht) for node without devices');
+      setActiveTab('empty');  // Übersicht für Nodes ohne Geräte
+    } else {
+      console.log('Setting activeTab to "overview" (Verlauf) for node with devices');
+      setActiveTab('overview');  // Verlauf für Nodes mit Geräten
+    }
+    
     fetchNodeDetails(node.id);
     fetchTemperature(node);
     fetchTemperatureHistory(node);
@@ -1636,7 +1656,7 @@ export default function HeatingControl() {
   };
 
   // Function to get all subordinate nodes (children and their descendants)
-  const getAllSubordinateNodes = (nodeId, nodes = treeData) => {
+  const getAllSubordinateNodes = useCallback((nodeId, nodes = treeData) => {
     const findNode = (nodeList, targetId) => {
       for (const node of nodeList) {
         if (node.id === targetId) {
@@ -1693,7 +1713,126 @@ export default function HeatingControl() {
       });
 
     return { path: path || [], subordinates: subordinatesWithPaths };
+  }, [treeData]);
+
+  // Function to fetch telemetry data for a node
+  const fetchNodeTelemetry = async (node) => {
+    if (!node || !node.relatedDevices || node.relatedDevices.length === 0) {
+      return { currentTemp: null, targetTemp: null, valvePosition: null, runStatus: node.runStatus || null };
+    }
+
+    try {
+      const deviceIds = node.relatedDevices.map(device => {
+        if (typeof device.id === 'object' && device.id?.id) {
+          return device.id.id;
+        }
+        return device.id;
+      }).filter(id => id);
+
+      if (deviceIds.length === 0) {
+        return { currentTemp: null, targetTemp: null, valvePosition: null, runStatus: node.runStatus || null };
+      }
+
+      // Fetch latest data for all devices
+      const devicePromises = deviceIds.map(async (deviceId) => {
+        try {
+          const response = await fetch(
+            `/api/reporting-proxy?entity_id=${deviceId}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
+            {
+              headers: {
+                'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
+              }
+            }
+          );
+
+          if (response.ok) {
+            const data = await response.json();
+            if (data.success && data.data && data.data.length > 0) {
+              const latestData = data.data[0];
+              return {
+                sensorTemperature: latestData.sensor_temperature,
+                targetTemperature: latestData.target_temperature,
+                valvePosition: latestData.percent_valve_open
+              };
+            }
+          }
+        } catch (error) {
+          console.warn(`Error fetching telemetry for device ${deviceId}:`, error);
+        }
+        return { sensorTemperature: null, targetTemperature: null, valvePosition: null };
+      });
+
+      const deviceResults = await Promise.all(devicePromises);
+      
+      // Calculate averages
+      const validTemperatures = deviceResults
+        .filter(data => data.sensorTemperature !== null && data.sensorTemperature !== undefined)
+        .map(data => Number(data.sensorTemperature))
+        .filter(temp => !isNaN(temp) && temp > -50 && temp < 100);
+
+      const validTargetTemperatures = deviceResults
+        .filter(data => data.targetTemperature !== null && data.targetTemperature !== undefined)
+        .map(data => Number(data.targetTemperature))
+        .filter(temp => !isNaN(temp) && temp > -50 && temp < 100);
+
+      const validValvePositions = deviceResults
+        .filter(data => data.valvePosition !== null && data.valvePosition !== undefined)
+        .map(data => Number(data.valvePosition))
+        .filter(pos => !isNaN(pos) && pos >= 0 && pos <= 100);
+
+      const avgCurrentTemp = validTemperatures.length > 0 
+        ? validTemperatures.reduce((sum, temp) => sum + temp, 0) / validTemperatures.length 
+        : null;
+
+      const avgTargetTemp = validTargetTemperatures.length > 0 
+        ? validTargetTemperatures.reduce((sum, temp) => sum + temp, 0) / validTargetTemperatures.length 
+        : null;
+
+      const avgValvePosition = validValvePositions.length > 0 
+        ? validValvePositions.reduce((sum, pos) => sum + pos, 0) / validValvePositions.length 
+        : null;
+
+      return {
+        currentTemp: avgCurrentTemp,
+        targetTemp: avgTargetTemp,
+        valvePosition: avgValvePosition,
+        runStatus: node.runStatus || null
+      };
+    } catch (error) {
+      console.error('Error fetching node telemetry:', error);
+      return { currentTemp: null, targetTemp: null, valvePosition: null, runStatus: node.runStatus || null };
+    }
   };
+
+  // Function to fetch telemetry for all subordinate nodes
+  const fetchSubordinateTelemetry = useCallback(async (subordinates) => {
+    if (!subordinates || subordinates.length === 0) {
+      setSubordinateTelemetry({});
+      return;
+    }
+
+    setLoadingSubordinateTelemetry(true);
+    try {
+      const telemetryPromises = subordinates.map(async (node) => {
+        const telemetry = await fetchNodeTelemetry(node);
+        return { nodeId: node.id, telemetry };
+      });
+
+      const results = await Promise.all(telemetryPromises);
+      const telemetryMap = {};
+      
+      results.forEach(({ nodeId, telemetry }) => {
+        telemetryMap[nodeId] = telemetry;
+      });
+
+      setSubordinateTelemetry(telemetryMap);
+    } catch (error) {
+      console.error('Error fetching subordinate telemetry:', error);
+      setSubordinateTelemetry({});
+    } finally {
+      setLoadingSubordinateTelemetry(false);
+    }
+  }, []);
 
   // Funktion zur Synchronisation aller Datenquellen in 10-Minuten-Zeitscheiben
   const synchronizeChartData = () => {
@@ -2308,6 +2447,16 @@ export default function HeatingControl() {
     }
   }, [selectedNode]);
 
+  // Load telemetry data for subordinate nodes when activeTab changes to 'empty'
+  useEffect(() => {
+    if (activeTab === 'empty' && selectedNode) {
+      const { subordinates } = getAllSubordinateNodes(selectedNode.id);
+      if (subordinates.length > 0) {
+        fetchSubordinateTelemetry(subordinates);
+      }
+    }
+  }, [activeTab, selectedNode, getAllSubordinateNodes, fetchSubordinateTelemetry]);
+
   // Fallback function to fetch temperatures via API
   const fetchTemperaturesViaAPI = useCallback(async (deviceIds) => {
     if (!session?.token || !deviceIds.length) return;
@@ -2620,7 +2769,7 @@ export default function HeatingControl() {
 
                   {/* Tab Navigation */}
                   <ul className="nav nav-tabs mb-4" id="nodeTabs" role="tablist">
-                    {selectedNode && !selectedNode.hasDevices && (
+                    {selectedNode && (selectedNode.hasDevices === false || (selectedNode.data?.hasDevices === false)) && (
                       <li className="nav-item" role="presentation">
                         <button
                           className={`nav-link ${activeTab === 'empty' ? 'active' : ''}`}
@@ -2632,26 +2781,30 @@ export default function HeatingControl() {
                         </button>
                       </li>
                     )}
-                    <li className="nav-item" role="presentation">
-                      <button
-                        className={`nav-link ${activeTab === 'overview' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('overview')}
-                        type="button"
-                      >
-                        <FontAwesomeIcon icon={faChartLine} className="me-2" />
-                        Verlauf
-                      </button>
-                    </li>
-                    <li className="nav-item" role="presentation">
-                      <button
-                        className={`nav-link ${activeTab === 'details' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('details')}
-                        type="button"
-                      >
-                        <FontAwesomeIcon icon={faCog} className="me-2" />
-                        Details
-                      </button>
-                    </li>
+                    {selectedNode && (selectedNode.hasDevices === true || (selectedNode.data?.hasDevices === true)) && (
+                      <li className="nav-item" role="presentation">
+                        <button
+                          className={`nav-link ${activeTab === 'overview' ? 'active' : ''}`}
+                          onClick={() => setActiveTab('overview')}
+                          type="button"
+                        >
+                          <FontAwesomeIcon icon={faChartLine} className="me-2" />
+                          Verlauf
+                        </button>
+                      </li>
+                    )}
+                    {selectedNode && (selectedNode.hasDevices === true || (selectedNode.data?.hasDevices === true)) && (
+                      <li className="nav-item" role="presentation">
+                        <button
+                          className={`nav-link ${activeTab === 'details' ? 'active' : ''}`}
+                          onClick={() => setActiveTab('details')}
+                          type="button"
+                        >
+                          <FontAwesomeIcon icon={faCog} className="me-2" />
+                          Details
+                        </button>
+                      </li>
+                    )}
                   </ul>
 
                   {/* Tab Content */}
@@ -3086,7 +3239,7 @@ export default function HeatingControl() {
                     )}
 
                     {/* Übersicht Tab - shown when node doesn't have devices */}
-                    {activeTab === 'empty' && (
+                    {activeTab === 'empty' && selectedNode && (selectedNode.hasDevices === false || (selectedNode.data?.hasDevices === false)) && (
                       <div className="tab-pane fade show active">
                         {(() => {
                           const { path, subordinates } = getAllSubordinateNodes(selectedNode?.id);
@@ -3219,8 +3372,84 @@ export default function HeatingControl() {
                                                 <strong>Betriebsmodus:</strong> {node.data.operationalMode}
                                               </p>
                                             )}
+                                            
+                                            {/* Temperature and Valve Data */}
+                                            {subordinateTelemetry[node.id] && (
+                                              <div className="mt-3">
+                                                <div className="row text-center">
+                                                  {subordinateTelemetry[node.id].currentTemp !== null && (
+                                                    <div className="col-3">
+                                                      <div className="d-flex align-items-center justify-content-center mb-1">
+                                                        <FontAwesomeIcon 
+                                                          icon={faThermometerHalf} 
+                                                          className="text-danger me-1" 
+                                                          style={{ fontSize: '12px' }}
+                                                        />
+                                                        <small className="text-muted">Aktuell</small>
+                                                      </div>
+                                                      <div className="fw-bold text-danger" style={{ fontSize: '14px' }}>
+                                                        {subordinateTelemetry[node.id].currentTemp.toFixed(1)}°C
+                                                      </div>
+                                                    </div>
+                                                  )}
+                                                  {subordinateTelemetry[node.id].targetTemp !== null && (
+                                                    <div className="col-3">
+                                                      <div className="d-flex align-items-center justify-content-center mb-1">
+                                                        <FontAwesomeIcon 
+                                                          icon={faBullseye} 
+                                                          className="text-success me-1" 
+                                                          style={{ fontSize: '12px' }}
+                                                        />
+                                                        <small className="text-muted">Ziel</small>
+                                                      </div>
+                                                      <div className="fw-bold text-success" style={{ fontSize: '14px' }}>
+                                                        {subordinateTelemetry[node.id].targetTemp.toFixed(1)}°C
+                                                      </div>
+                                                    </div>
+                                                  )}
+                                                  {subordinateTelemetry[node.id].valvePosition !== null && (
+                                                    <div className="col-3">
+                                                      <div className="d-flex align-items-center justify-content-center mb-1">
+                                                        <FontAwesomeIcon 
+                                                          icon={faCog} 
+                                                          className="text-info me-1" 
+                                                          style={{ fontSize: '12px' }}
+                                                        />
+                                                        <small className="text-muted">Ventil</small>
+                                                      </div>
+                                                      <div className="fw-bold text-info" style={{ fontSize: '14px' }}>
+                                                        {subordinateTelemetry[node.id].valvePosition.toFixed(0)}%
+                                                      </div>
+                                                    </div>
+                                                  )}
+                                                  {subordinateTelemetry[node.id].runStatus !== null && subordinateTelemetry[node.id].runStatus !== undefined && subordinateTelemetry[node.id].runStatus !== '' && (
+                                                    <div className="col-3">
+                                                      <div className="d-flex align-items-center justify-content-center mb-1">
+                                                        <FontAwesomeIcon 
+                                                          icon={faPlay} 
+                                                          className="text-warning me-1" 
+                                                          style={{ fontSize: '12px' }}
+                                                        />
+                                                        <small className="text-muted">Status</small>
+                                                      </div>
+                                                      <div className="fw-bold text-warning" style={{ fontSize: '12px' }}>
+                                                        {subordinateTelemetry[node.id].runStatus}
+                                                      </div>
+                                                    </div>
+                                                  )}
+                                                </div>
+                                                {loadingSubordinateTelemetry && (
+                                                  <div className="text-center mt-2">
+                                                    <div className="spinner-border spinner-border-sm text-primary" role="status">
+                                                      <span className="visually-hidden">Laden...</span>
+                                                    </div>
+                                                  </div>
+                                                )}
+                                              </div>
+                                            )}
+                                            
                                             <button
-                                              className="btn btn-sm btn-outline-primary"
+                                              className="btn btn-sm btn-outline-primary mt-2"
                                               onClick={() => handleNodeSelect(node)}
                                             >
                                               <FontAwesomeIcon icon={faSearch} className="me-1" />
