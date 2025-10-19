@@ -26,6 +26,7 @@ import {
   faImage,
   faStar,
   faCog,
+  faFolder,
   faMapMarkerAlt,
   faStairs,
   faWarehouse,
@@ -1634,6 +1635,66 @@ export default function HeatingControl() {
     return filterNodes(treeData);
   };
 
+  // Function to get all subordinate nodes (children and their descendants)
+  const getAllSubordinateNodes = (nodeId, nodes = treeData) => {
+    const findNode = (nodeList, targetId) => {
+      for (const node of nodeList) {
+        if (node.id === targetId) {
+          return node;
+        }
+        if (node.children) {
+          const found = findNode(node.children, targetId);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+
+    const getNodePath = (nodeId, nodes = treeData, path = []) => {
+      for (const node of nodes) {
+        const currentPath = [...path, node];
+        if (node.id === nodeId) {
+          return currentPath;
+        }
+        if (node.children) {
+          const found = getNodePath(nodeId, node.children, currentPath);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+
+    const collectAllChildren = (node) => {
+      let allChildren = [];
+      if (node.children) {
+        for (const child of node.children) {
+          allChildren.push(child);
+          allChildren = allChildren.concat(collectAllChildren(child));
+        }
+      }
+      return allChildren;
+    };
+
+    const targetNode = findNode(nodes, nodeId);
+    if (!targetNode) return { path: [], subordinates: [] };
+
+    const path = getNodePath(nodeId, nodes);
+    const subordinates = collectAllChildren(targetNode);
+
+    // Add path information to each subordinate node and filter only nodes with devices
+    const subordinatesWithPaths = subordinates
+      .filter(subNode => subNode.hasDevices === true)
+      .map(subNode => {
+        const subNodePath = getNodePath(subNode.id, nodes);
+        return {
+          ...subNode,
+          path: subNodePath || []
+        };
+      });
+
+    return { path: path || [], subordinates: subordinatesWithPaths };
+  };
+
   // Funktion zur Synchronisation aller Datenquellen in 10-Minuten-Zeitscheiben
   const synchronizeChartData = () => {
     const hasTemperatureData = temperatureHistory && temperatureHistory.length > 0;
@@ -2559,6 +2620,18 @@ export default function HeatingControl() {
 
                   {/* Tab Navigation */}
                   <ul className="nav nav-tabs mb-4" id="nodeTabs" role="tablist">
+                    {selectedNode && !selectedNode.hasDevices && (
+                      <li className="nav-item" role="presentation">
+                        <button
+                          className={`nav-link ${activeTab === 'empty' ? 'active' : ''}`}
+                          onClick={() => setActiveTab('empty')}
+                          type="button"
+                        >
+                          <FontAwesomeIcon icon={faFolder} className="me-2" />
+                          Übersicht
+                        </button>
+                      </li>
+                    )}
                     <li className="nav-item" role="presentation">
                       <button
                         className={`nav-link ${activeTab === 'overview' ? 'active' : ''}`}
@@ -2566,7 +2639,7 @@ export default function HeatingControl() {
                         type="button"
                       >
                         <FontAwesomeIcon icon={faChartLine} className="me-2" />
-                        Übersicht
+                        Verlauf
                       </button>
                     </li>
                     <li className="nav-item" role="presentation">
@@ -3009,6 +3082,191 @@ export default function HeatingControl() {
                       </div>
                     </div>
                   )}
+                      </div>
+                    )}
+
+                    {/* Übersicht Tab - shown when node doesn't have devices */}
+                    {activeTab === 'empty' && (
+                      <div className="tab-pane fade show active">
+                        {(() => {
+                          const { path, subordinates } = getAllSubordinateNodes(selectedNode?.id);
+                          
+                          // Get all subordinates without filtering to calculate the difference
+                          const getAllSubordinatesWithoutFilter = (nodeId, nodes = treeData) => {
+                            const findNode = (nodeList, targetId) => {
+                              for (const node of nodeList) {
+                                if (node.id === targetId) {
+                                  return node;
+                                }
+                                if (node.children) {
+                                  const found = findNode(node.children, targetId);
+                                  if (found) return found;
+                                }
+                              }
+                              return null;
+                            };
+
+                            const collectAllChildren = (node) => {
+                              let allChildren = [];
+                              if (node.children) {
+                                for (const child of node.children) {
+                                  allChildren.push(child);
+                                  allChildren = allChildren.concat(collectAllChildren(child));
+                                }
+                              }
+                              return allChildren;
+                            };
+
+                            const targetNode = findNode(nodes, nodeId);
+                            if (!targetNode) return [];
+
+                            return collectAllChildren(targetNode);
+                          };
+                          
+                          const allSubordinates = getAllSubordinatesWithoutFilter(selectedNode?.id);
+                          const subordinatesWithDevices = subordinates.length;
+                          const emptySubordinates = allSubordinates.filter(node => node.hasDevices === false).length;
+                          
+                          return (
+                            <div>
+                              {/* Strukturpfad */}
+                              <div className="mb-4">
+                                <h6 className="text-muted mb-3">
+                                  <FontAwesomeIcon icon={faMapMarkerAlt} className="me-2" />
+                                  Strukturpfad
+                                </h6>
+                                <nav aria-label="breadcrumb">
+                                  <ol className="breadcrumb">
+                                    {path.map((node, index) => (
+                                      <li key={node.id} className={`breadcrumb-item ${index === path.length - 1 ? 'active' : ''}`}>
+                                        <FontAwesomeIcon 
+                                          icon={getIconForType(node.type)} 
+                                          className="me-1" 
+                                          style={{ color: index === path.length - 1 ? '#6c757d' : '#007bff' }}
+                                        />
+                                        {node.label || node.name || node.text}
+                                        {node.hasDevices && (
+                                          <FontAwesomeIcon 
+                                            icon={faThermometerHalf} 
+                                            className="ms-1" 
+                                            style={{ fontSize: '12px', color: '#28a745' }}
+                                            title="Hat Geräte"
+                                          />
+                                        )}
+                                      </li>
+                                    ))}
+                                  </ol>
+                                </nav>
+                              </div>
+
+                              {/* Untergeordnete Nodes */}
+                              <div className="mb-4">
+                                <h6 className="text-muted mb-3">
+                                  <FontAwesomeIcon icon={faLayerGroup} className="me-2" />
+                                  Untergeordnete Bereiche ({subordinates.length})
+                                </h6>
+                                
+                                {subordinates.length > 0 ? (
+                                  <div className="row">
+                                    {subordinates.map((node) => (
+                                      <div key={node.id} className="col-md-6 col-lg-4 mb-3">
+                                        <div className="card h-100">
+                                          <div className="card-body">
+                                            <div className="d-flex align-items-center mb-2">
+                                              <FontAwesomeIcon 
+                                                icon={getIconForType(node.type)} 
+                                                className="me-2 text-primary"
+                                              />
+                                              <h6 className="card-title mb-0">
+                                                {node.label || node.name || node.text}
+                                              </h6>
+                                              {node.hasDevices && (
+                                                <FontAwesomeIcon 
+                                                  icon={faThermometerHalf} 
+                                                  className="ms-2 text-success"
+                                                  title="Hat Geräte"
+                                                />
+                                              )}
+                                            </div>
+                                            
+                                            {/* Breadcrumb Path */}
+                                            {node.path && node.path.length > 0 && (
+                                              <div className="mb-2">
+                                                <nav aria-label="breadcrumb">
+                                                  <ol className="breadcrumb breadcrumb-sm mb-0">
+                                                    {node.path.map((pathNode, index) => (
+                                                      <li key={pathNode.id} className={`breadcrumb-item ${index === node.path.length - 1 ? 'active' : ''}`}>
+                                                        <FontAwesomeIcon 
+                                                          icon={getIconForType(pathNode.type)} 
+                                                          className="me-1" 
+                                                          style={{ fontSize: '10px' }}
+                                                        />
+                                                        <span style={{ fontSize: '11px' }}>
+                                                          {pathNode.label || pathNode.name || pathNode.text}
+                                                        </span>
+                                                      </li>
+                                                    ))}
+                                                  </ol>
+                                                </nav>
+                                              </div>
+                                            )}
+                                            
+                                            <p className="card-text small text-muted mb-2">
+                                              <strong>Typ:</strong> {getNodeTypeLabel(node.type)}
+                                            </p>
+                                            {node.data?.operationalMode !== undefined && (
+                                              <p className="card-text small text-muted mb-2">
+                                                <strong>Betriebsmodus:</strong> {node.data.operationalMode}
+                                              </p>
+                                            )}
+                                            <button
+                                              className="btn btn-sm btn-outline-primary"
+                                              onClick={() => handleNodeSelect(node)}
+                                            >
+                                              <FontAwesomeIcon icon={faSearch} className="me-1" />
+                                              Anzeigen
+                                            </button>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div className="text-center text-muted py-4">
+                                    <FontAwesomeIcon icon={faFolder} size="2x" className="mb-3" />
+                                    <p className="mb-0">Keine untergeordneten Bereiche vorhanden</p>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Zusammenfassung */}
+                              <div className="card">
+                                <div className="card-body">
+                                  <h6 className="card-title">
+                                    <FontAwesomeIcon icon={faInfoCircle} className="me-2" />
+                                    Zusammenfassung
+                                  </h6>
+                                  <div className="row">
+                                    <div className="col-md-6">
+                                      <div className="text-center">
+                                        <FontAwesomeIcon icon={faThermometerHalf} className="text-success mb-2" size="lg" />
+                                        <h5 className="mb-1">{subordinatesWithDevices}</h5>
+                                        <small className="text-muted">Bereiche mit Geräten</small>
+                                      </div>
+                                    </div>
+                                    <div className="col-md-6">
+                                      <div className="text-center">
+                                        <FontAwesomeIcon icon={faInfoCircle} className="text-info mb-2" size="lg" />
+                                        <h5 className="mb-1">{emptySubordinates}</h5>
+                                        <small className="text-muted">Leere Bereiche (ausgeblendet)</small>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </div>
                     )}
                   </div>
