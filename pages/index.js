@@ -36,9 +36,9 @@ export default function Home() {
 
   useEffect(() => {
     async function fetchDashboardData() {
-      if (session?.user?.customerId) {
+      if (session?.user?.customerid) {
         try {
-          const response = await fetch(`/api/dashboard/stats?customerId=${session.user.customerId}`);
+          const response = await fetch(`/api/dashboard/stats?customerId=${session.user.customerid}`);
           
           if (!response.ok) {
             const errorData = await response.json();
@@ -55,7 +55,7 @@ export default function Home() {
           setLoading(false);
         }
       } else {
-        console.log('No customerId in session:', session?.user);
+        console.log('No customerid in session:', session?.user);
         setLoading(false);
       }
     }
@@ -160,29 +160,30 @@ export default function Home() {
             <div className="col-4">
               <div className="text-center">
                 <h3 className="mb-1 fw-bold text-primary">{dashboardData?.devices || 0}</h3>
-                <small className="text-dark fw-semibold">Geräte</small>
+                <small className="text-dark fw-semibold">Gesamt</small>
               </div>
             </div>
-                    <div className="col-4">
+            <div className="col-4">
+              <div className="text-center">
+                <h3 className="mb-1 fw-bold text-success">{dashboardData?.activeDevices || 0}</h3>
+                <small className="text-dark fw-semibold">Aktiv</small>
+              </div>
+            </div>
+            <div className="col-4">
+              <div className="text-center">
+                <h3 className="mb-1 fw-bold text-danger">{dashboardData?.inactiveDevices || 0}</h3>
+                <small className="text-dark fw-semibold">Inaktiv</small>
+              </div>
+            </div>
+                  </div>
+                  
+                  <div className="row g-3 mt-2">
+                    <div className="col-12">
                       <div className="text-center">
-                        <h3 className="mb-1 fw-bold text-warning">{dashboardData?.alarms || 0}</h3>
-                        <small className="text-dark fw-semibold">Alarme</small>
-                      </div>
-                    </div>
-                    <div className="col-4">
-                      <div className="text-center">
-                        <h3 className="mb-1 fw-bold text-success">{dashboardData?.heatDemand || '85%'}</h3>
+                        <h3 className="mb-1 fw-bold text-info">{dashboardData?.heatDemand || '85%'}</h3>
                         <small className="text-dark fw-semibold">Wärmeanforderung</small>
                       </div>
                     </div>
-                  </div>
-                  
-                  <div className="mt-3">
-                    <div className="d-flex justify-content-between align-items-center mb-1">
-                      <small className="text-dark fw-semibold">Systemstatus</small>
-                      <Badge bg="success" className="border border-dark">Aktiv</Badge>
-                    </div>
-                    <ProgressBar variant="primary" now={85} className="border border-dark" />
                   </div>
                 </Card.Body>
               </Card>
@@ -190,17 +191,25 @@ export default function Home() {
 
             {/* 2. Verbrauch Kachel */}
             <div className="col-xl-6 col-lg-6">
-              <Card className="h-100 dashboard-tile shadow border-2 border-dark">
+              <Card 
+                className="h-100 dashboard-tile shadow border-2 border-dark disabled-card"
+                style={{
+                  opacity: 0.3,
+                  filter: 'grayscale(100%) brightness(0.6) blur(2px)',
+                  pointerEvents: 'none',
+                  cursor: 'not-allowed'
+                }}
+              >
                 <Card.Body className="p-4">
                   <div className="d-flex justify-content-between align-items-start mb-3">
                     <div>
                       <h4 className="mb-1 fw-bold text-dark">
-                        <FontAwesomeIcon icon={faTachometerAlt} className="me-2 text-info" />
+                        <FontAwesomeIcon icon={faTachometerAlt} className="me-2 text-secondary" />
                         Verbrauch
                       </h4>
                       <p className="mb-0 text-muted fw-semibold">Energieverbrauch & Effizienz</p>
                     </div>
-                    <div className="icon-shape bg-info text-white border border-dark">
+                    <div className="icon-shape bg-secondary text-white border border-dark">
                       <FontAwesomeIcon icon={faTachometerAlt} size="lg" />
                     </div>
                   </div>
@@ -208,7 +217,7 @@ export default function Home() {
                   <div className="row g-3">
                     <div className="col-4">
                       <div className="text-center">
-                        <h3 className="mb-1 fw-bold text-primary">{dashboardData?.energyConsumption || '2.4'}</h3>
+                        <h3 className="mb-1 fw-bold text-primary">---</h3>
                         <small className="text-dark fw-semibold">kWh/h</small>
                       </div>
                     </div>
@@ -216,14 +225,14 @@ export default function Home() {
                       <div className="text-center">
                         <h3 className="mb-1 fw-bold text-success">
                           <FontAwesomeIcon icon={faArrowDown} className="me-1" />
-                          {dashboardData?.efficiency || '12%'}
+                          ---
                         </h3>
                         <small className="text-dark fw-semibold">Effizienz</small>
                       </div>
                     </div>
                     <div className="col-4">
                       <div className="text-center">
-                        <h3 className="mb-1 fw-bold text-primary">{dashboardData?.monthlyCost || '€89'}</h3>
+                        <h3 className="mb-1 fw-bold text-primary">---</h3>
                         <small className="text-dark fw-semibold">Monatlich</small>
                       </div>
                     </div>
@@ -232,9 +241,9 @@ export default function Home() {
                   <div className="mt-3">
                     <div className="d-flex justify-content-between align-items-center mb-1">
                       <small className="text-dark fw-semibold">Energieeinsparung</small>
-                      <Badge bg="success" className="border border-dark">+12%</Badge>
+                      <Badge bg="success" className="border border-dark">---</Badge>
                     </div>
-                    <ProgressBar variant="info" now={78} className="border border-dark" />
+                    <ProgressBar variant="info" now={0} className="border border-dark" />
                   </div>
                 </Card.Body>
               </Card>
@@ -242,17 +251,25 @@ export default function Home() {
 
             {/* 3. Raumklima Kachel */}
             <div className="col-xl-6 col-lg-6">
-              <Card className="h-100 dashboard-tile shadow border-2 border-dark">
+              <Card 
+                className="h-100 dashboard-tile shadow border-2 border-dark disabled-card"
+                style={{
+                  opacity: 0.3,
+                  filter: 'grayscale(100%) brightness(0.6) blur(2px)',
+                  pointerEvents: 'none',
+                  cursor: 'not-allowed'
+                }}
+              >
                 <Card.Body className="p-4">
                   <div className="d-flex justify-content-between align-items-start mb-3">
                     <div>
                       <h4 className="mb-1 fw-bold text-dark">
-                        <FontAwesomeIcon icon={faThermometerHalf} className="me-2 text-success" />
+                        <FontAwesomeIcon icon={faThermometerHalf} className="me-2 text-secondary" />
                         Raumklima
                       </h4>
                       <p className="mb-0 text-muted fw-semibold">Temperatur & Luftqualität</p>
                     </div>
-                    <div className="icon-shape bg-success text-white border border-dark">
+                    <div className="icon-shape bg-secondary text-white border border-dark">
                       <FontAwesomeIcon icon={faThermometerHalf} size="lg" />
                     </div>
                   </div>
@@ -260,13 +277,13 @@ export default function Home() {
                   <div className="row g-3">
                     <div className="col-4">
                       <div className="text-center">
-                        <h3 className="mb-1 fw-bold text-primary">{dashboardData?.avgTemperature || '21.5'}°C</h3>
+                        <h3 className="mb-1 fw-bold text-primary">---°C</h3>
                         <small className="text-dark fw-semibold">Durchschnitt</small>
                       </div>
                     </div>
                     <div className="col-4">
                       <div className="text-center">
-                        <h3 className="mb-1 fw-bold text-info">{dashboardData?.humidity || '45'}%</h3>
+                        <h3 className="mb-1 fw-bold text-info">---%</h3>
                         <small className="text-dark fw-semibold">Luftfeuchtigkeit</small>
                       </div>
                     </div>
@@ -274,7 +291,7 @@ export default function Home() {
                       <div className="text-center">
                         <h3 className="mb-1 fw-bold text-success">
                           <FontAwesomeIcon icon={faCheckCircle} className="me-1" />
-                          {dashboardData?.comfortLevel || 'Optimal'}
+                          ---
                         </h3>
                         <small className="text-dark fw-semibold">Komfort</small>
                       </div>
@@ -284,9 +301,9 @@ export default function Home() {
                   <div className="mt-3">
                     <div className="d-flex justify-content-between align-items-center mb-1">
                       <small className="text-dark fw-semibold">Klimaqualität</small>
-                      <Badge bg="success" className="border border-dark">Optimal</Badge>
+                      <Badge bg="success" className="border border-dark">---</Badge>
                     </div>
-                    <ProgressBar variant="success" now={92} className="border border-dark" />
+                    <ProgressBar variant="success" now={0} className="border border-dark" />
                   </div>
                 </Card.Body>
               </Card>
@@ -427,6 +444,18 @@ export default function Home() {
         
         .dashboard-tile .badge {
           font-size: 0.75rem;
+        }
+        
+        .disabled-card {
+          opacity: 0.3 !important;
+          filter: grayscale(100%) brightness(0.6) blur(2px) !important;
+          pointer-events: none !important;
+          cursor: not-allowed !important;
+        }
+        
+        .disabled-card * {
+          opacity: 0.5 !important;
+          filter: blur(1px) !important;
         }
       `}</style>
     </>
