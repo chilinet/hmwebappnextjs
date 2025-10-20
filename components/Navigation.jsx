@@ -79,15 +79,6 @@ export default function Navigation() {
                                 {isDropdownOpen && (
                                     <div className="dropdown-menu show shadow-sm border-0 position-absolute">
                                         <Link 
-                                            href="/dashboard" 
-                                            className={`dropdown-item d-flex align-items-center ${
-                                                router.pathname === '/dashboard' ? 'active-menu-item' : ''
-                                            }`}
-                                        >
-                                            <FontAwesomeIcon icon={faTachometerAlt} className="me-2" />
-                                            Dashboard
-                                        </Link>
-                                        <Link 
                                             href="/heating-control" 
                                             className={`dropdown-item d-flex align-items-center ${
                                                 router.pathname === '/heating-control' ? 'active-menu-item' : ''

@@ -140,7 +140,7 @@ export default function Home() {
               <Card 
                 className="h-100 dashboard-tile shadow border-2 border-dark" 
                 style={{ cursor: 'pointer' }}
-                onClick={() => router.push('/dashboard')}
+                onClick={() => router.push('/heating-control')}
               >
                 <Card.Body className="p-4">
                   <div className="d-flex justify-content-between align-items-start mb-3">
