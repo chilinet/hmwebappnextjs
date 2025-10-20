@@ -40,7 +40,10 @@ import {
   faTowerObservation,
   faTree,
   faBullseye,
-  faPlay
+  faPlay,
+  faCloud,
+  faWindowMaximize,
+  faUser
 } from '@fortawesome/free-solid-svg-icons';
 import { Tree } from '@minoru/react-dnd-treeview';
 import { DndProvider } from 'react-dnd';
@@ -78,6 +81,8 @@ export default function HeatingControl() {
   const [loadingDevices, setLoadingDevices] = useState(false);
   const [telemetryData, setTelemetryData] = useState([]);
   const [loadingTelemetry, setLoadingTelemetry] = useState(false);
+  const [weatherData, setWeatherData] = useState(null);
+  const [loadingWeather, setLoadingWeather] = useState(false);
   const [currentTemperature, setCurrentTemperature] = useState(null);
   const [currentTargetTemperature, setCurrentTargetTemperature] = useState(null);
   const [currentValveOpen, setCurrentValveOpen] = useState(null);
@@ -1424,6 +1429,42 @@ export default function HeatingControl() {
     }
   };
 
+  // Function to fetch weather data for Gelnhausen
+  const fetchWeatherData = useCallback(async () => {
+    try {
+      setLoadingWeather(true);
+      // Using OpenWeatherMap API for Gelnhausen, Germany
+      const response = await fetch(
+        `https://api.openweathermap.org/data/2.5/weather?q=Gelnhausen,DE&appid=${process.env.NEXT_PUBLIC_OPENWEATHER_API_KEY}&units=metric`
+      );
+      
+      if (response.ok) {
+        const data = await response.json();
+        setWeatherData({
+          temperature: data.main.temp,
+          description: data.weather[0].description,
+          city: data.name
+        });
+      } else {
+        console.error('Weather API error:', response.status);
+        setWeatherData({
+          temperature: null,
+          description: 'API Fehler',
+          city: 'Gelnhausen'
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching weather data:', error);
+      setWeatherData({
+        temperature: null,
+        description: 'Verbindungsfehler',
+        city: 'Gelnhausen'
+      });
+    } finally {
+      setLoadingWeather(false);
+    }
+  }, []);
+
   const fetchTelemetryForDevices = useCallback(async (devices) => {
     if (!session?.token || !devices.length) {
       return devices;
@@ -2634,6 +2675,11 @@ export default function HeatingControl() {
     }
   }, [devices, fetchTemperaturesViaAPI]);
 
+  // Fetch weather data on component mount
+  useEffect(() => {
+    fetchWeatherData();
+  }, [fetchWeatherData]);
+
   if (status === 'loading') {
     return (
       <div className="d-flex justify-content-center align-items-center" style={{ minHeight: '400px' }}>
@@ -2650,6 +2696,83 @@ export default function HeatingControl() {
 
   return (
     <DndProvider backend={HTML5Backend}>
+      <style jsx>{`
+        .responsive-cards {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.5rem;
+        }
+        
+        .responsive-card {
+          flex: 0 0 200px !important;
+          min-width: 200px !important;
+          max-width: 200px !important;
+          width: 200px !important;
+        }
+        
+        .responsive-card .card {
+          height: 200px !important;
+        }
+        
+        .responsive-card .card-body {
+          padding: 0.75rem;
+        }
+        
+        .responsive-card .card-title {
+          font-size: 0.875rem;
+          margin-bottom: 0.5rem;
+        }
+        
+        .responsive-card .display-4 {
+          font-size: 1.5rem;
+        }
+        
+        .responsive-card .text-muted {
+          font-size: 0.75rem;
+        }
+        
+        .responsive-card .spinner-border {
+          width: 1rem;
+          height: 1rem;
+        }
+        
+        @media (min-width: 1200px) {
+          .responsive-cards {
+            flex-wrap: nowrap;
+          }
+          
+          .responsive-card {
+            flex: 0 0 200px !important;
+            min-width: 200px !important;
+            max-width: 200px !important;
+            width: 200px !important;
+          }
+        }
+        
+        @media (max-width: 1199px) {
+          .responsive-cards {
+            flex-wrap: wrap;
+          }
+          
+          .responsive-card {
+            flex: 0 0 200px !important;
+            min-width: 200px !important;
+            max-width: 200px !important;
+            width: 200px !important;
+          }
+        }
+        
+         @media (max-width: 768px) {
+           .responsive-card {
+             flex: 1 1 100%;
+           }
+         }
+
+         .disabled-card {
+           opacity: 0.5;
+           filter: grayscale(100%);
+         }
+      `}</style>
       <div className="container-fluid p-0 heating-control-page">
         <div className="d-flex" style={{ height: windowHeight ? `${windowHeight - 80}px` : 'calc(100vh - 80px)' }}>
           {/* Mobile Toggle Button */}
@@ -2931,7 +3054,7 @@ export default function HeatingControl() {
                     {activeTab === 'overview' && (
                       <div className="tab-pane fade show active">
                         {/* Aktuelle Temperaturen */}
-                        <div className="responsive-cards mb-4">
+                        <div className="responsive-cards mb-5">
                           <div className="responsive-card">
                             <div className="card">
                               <div className="card-body text-center">
@@ -3030,7 +3153,7 @@ export default function HeatingControl() {
                               </div>
                             </div>
                           </div>
-
+                          
                           <div className="responsive-card">
                             <div className="card">
                               <div className="card-body text-center">
@@ -3054,6 +3177,42 @@ export default function HeatingControl() {
                                     <p>Keine Ventilöffnungsdaten verfügbar</p>
                                   </div>
                                 )}
+                              </div>
+                            </div>
+                          </div>
+                          
+                          <div className="responsive-card disabled-card">
+                            <div className="card">
+                              <div className="card-body text-center">
+                                <FontAwesomeIcon icon={faCloud} className="text-info mb-3" size="2x" />
+                                <h4 className="card-title">Wetter</h4>
+                                <div className="text-muted">
+                                  <p>Nicht konfiguriert</p>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                          
+                          <div className="responsive-card disabled-card">
+                            <div className="card">
+                              <div className="card-body text-center">
+                                <FontAwesomeIcon icon={faWindowMaximize} className="text-warning mb-3" size="2x" />
+                                <h4 className="card-title">Fenster</h4>
+                                <div className="text-muted">
+                                  <p>Kein Fensterkontakt gefunden</p>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                          
+                          <div className="responsive-card disabled-card">
+                            <div className="card">
+                              <div className="card-body text-center">
+                                <FontAwesomeIcon icon={faUser} className="text-success mb-3" size="2x" />
+                                <h4 className="card-title">Anwesenheit</h4>
+                                <div className="text-muted">
+                                  <p>Kein Anwesenheitssensor gefunden</p>
+                                </div>
                               </div>
                             </div>
                           </div>
