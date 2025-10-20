@@ -1,6 +1,6 @@
 import { useRouter } from 'next/router';
 import { useSession } from 'next-auth/react';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { 
   faBuilding, 
@@ -62,6 +62,7 @@ export default function HeatingControl() {
   const [treeData, setTreeData] = useState([]);
   const [customerData, setCustomerData] = useState(null);
   const [openNodes, setOpenNodes] = useState([]);
+  const [forceExpand, setForceExpand] = useState(false);
   const [windowHeight, setWindowHeight] = useState(0);
   const [selectedNode, setSelectedNode] = useState(null);
   const [nodeDetails, setNodeDetails] = useState(null);
@@ -90,7 +91,8 @@ export default function HeatingControl() {
   const [loadingImages, setLoadingImages] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
   const [ws, setWs] = useState(null);
-  
+  const treeRef = useRef(null); 
+
   // Temperature state (API only)
   const [deviceTemperatures, setDeviceTemperatures] = useState({});
 
@@ -1655,6 +1657,7 @@ export default function HeatingControl() {
     return filterNodes(treeData);
   };
 
+
   // Function to get all subordinate nodes (children and their descendants)
   const getAllSubordinateNodes = useCallback((nodeId, nodes = treeData) => {
     const findNode = (nodeList, targetId) => {
@@ -2457,6 +2460,61 @@ export default function HeatingControl() {
     }
   }, [activeTab, selectedNode, getAllSubordinateNodes, fetchSubordinateTelemetry]);
 
+
+  // Function to find path to selected node
+  const getPathToNode = useCallback((nodeId, nodes = treeData) => {
+    const findPath = (nodeList, targetId, currentPath = []) => {
+      for (const node of nodeList) {
+        const newPath = [...currentPath, node.id];
+        
+        if (node.id === targetId) {
+          return newPath;
+        }
+        
+        if (node.children && node.children.length > 0) {
+          const childPath = findPath(node.children, targetId, newPath);
+          if (childPath) {
+            return childPath;
+          }
+        }
+      }
+      return null;
+    };
+    
+    return findPath(nodes, nodeId);
+  }, [treeData]);
+
+  // Expand all nodes when tree data is loaded
+  useEffect(() => {
+    if (treeData && treeData.length > 0) {
+      const allNodeIds = getAllNodeIds(treeData);
+      console.log('Tree data loaded, expanding all nodes:', allNodeIds);
+      console.log('Current openNodes before setting:', openNodes);
+      setOpenNodes(allNodeIds);
+      setForceExpand(true);
+      
+      // Force re-render after a short delay to ensure the tree is ready
+      setTimeout(() => {
+        console.log('Setting openNodes after delay:', allNodeIds);
+        setOpenNodes(allNodeIds);
+        setForceExpand(true);
+      }, 100);
+    }
+  }, [treeData]);
+
+  // Expand path to selected node when a node is selected
+  useEffect(() => {
+    if (selectedNode && treeData && treeData.length > 0) {
+      const pathToNode = getPathToNode(selectedNode.id);
+      if (pathToNode) {
+        console.log('Selected node:', selectedNode.label);
+        console.log('Path to selected node:', pathToNode);
+        setOpenNodes(pathToNode);
+        setForceExpand(false); // Disable force expand, use specific path
+      }
+    }
+  }, [selectedNode, treeData, getPathToNode]);
+
   // Fallback function to fetch temperatures via API
   const fetchTemperaturesViaAPI = useCallback(async (deviceIds) => {
     if (!session?.token || !deviceIds.length) return;
@@ -2663,6 +2721,7 @@ export default function HeatingControl() {
                             // Alle Knoten aufklappen
                             const allNodeIds = getAllNodeIds(treeData);
                             setOpenNodes(allNodeIds);
+                            //setOpenNodes("4db7a8b0-0816-11f0-bf3e-fdfa06a0145e");
                           } else {
                             // Alle Knoten zuklappen
                             setOpenNodes([]);
@@ -2710,6 +2769,7 @@ export default function HeatingControl() {
                   </div>
                 ) : (
                   <Tree
+                  ref={treeRef}
                   tree={(() => {
                     const filtered = getFilteredTreeData();
                     const converted = convertToTreeViewFormat(filtered);
@@ -2717,6 +2777,7 @@ export default function HeatingControl() {
                     console.log('Converted tree data:', converted);
                     return converted;
                   })()}
+                  initialOpen={openNodes}  
                   rootId={0}
                   classes={{
                     root: 'tree-root',
@@ -2731,17 +2792,22 @@ export default function HeatingControl() {
                       isOpen={isOpen}
                     />
                   )}
-                  openNodes={openNodes}
-                  onToggle={(id) => {
-                    setOpenNodes((prevOpenNodes) => {
-                      const isOpen = prevOpenNodes.includes(id);
-                      return isOpen
-                        ? prevOpenNodes.filter((nodeId) => nodeId !== id)
-                        : [...prevOpenNodes, id];
-                    });
-                  }}
-                  canDrop={() => false}
-                  canDrag={() => false}
+                  //openNodes={getAllNodeIds(treeData)}
+                  //onToggle={(id) => {
+                  //  setOpenNodes((prevOpenNodes) => {
+                  //    const isOpen = prevOpenNodes.includes(id);
+                  //    return isOpen
+                  //      ? prevOpenNodes.filter((nodeId) => nodeId !== id)
+                  //      : [...prevOpenNodes, id];
+                  //  });
+                  //}}
+                  //canDrop={() => false}
+                  //canDrag={() => false}
+                // />
+                openIds={openNodes}    
+                onChangeOpen={setOpenNodes}
+                canDrop={() => false}
+                canDrag={() => false}
                 />
                 )}
               </div>
