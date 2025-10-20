@@ -108,7 +108,7 @@ export default function HeatingControl() {
   const [showTree, setShowTree] = useState(true);
   
   // Target temperature page state
-  const [showTargetTemperaturePage, setShowTargetTemperaturePage] = useState(false);
+  
 
   // Heating control state
   const [tempSliderValue, setTempSliderValue] = useState(20.0);
@@ -1444,6 +1444,9 @@ export default function HeatingControl() {
 
       console.log('Fetching telemetry for device IDs:', deviceIds);
 
+      // Define the attributes we want to fetch
+      const attributes = ['sensorTemperature', 'targetTemperature', 'PercentValveOpen', 'batteryVoltage', 'signalQuality'];
+      
       // Fetch telemetry data for each device individually
       const devicesWithTelemetry = await Promise.all(
         devices.map(async (device) => {
@@ -1453,57 +1456,70 @@ export default function HeatingControl() {
               return device;
             }
 
-            // Get the latest values from reporting API
-            const latestTelemetryResponse = await fetch(
-              `/api/reporting-proxy?entity_id=${deviceId}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
-              {
-                headers: {
-                  'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
+            // Fetch each attribute using the aggregated API
+            const telemetry = {};
+            
+            for (const attribute of attributes) {
+              try {
+                const response = await fetch(
+                  `/api/thingsboard/devices/telemetry/aggregated?deviceIds=${deviceId}&attribute=${attribute}&limit=1`,
+                  {
+                    headers: {
+                      'Authorization': `Bearer ${session.token}`
+                    }
+                  }
+                );
+
+                if (response.ok) {
+                  const data = await response.json();
+                  
+                  if (data.success && data.data && data.data.length > 0) {
+                    const deviceData = data.data[0];
+                    if (deviceData.data && deviceData.data.length > 0) {
+                      const latestValue = deviceData.data[deviceData.data.length - 1];
+                      telemetry[attribute] = latestValue.value;
+                      
+                      // Debug logging for signalQuality
+                      if (attribute === 'signalQuality') {
+                        console.log(`SignalQuality for device ${deviceId}:`, {
+                          rawValue: latestValue.value,
+                          type: typeof latestValue.value,
+                          fullData: latestValue
+                        });
+                      }
+                    }
+                  } else {
+                    console.log(`No data found for ${attribute} on device ${deviceId}`);
+                  }
+                } else {
+                  console.log(`API error for ${attribute} on device ${deviceId}:`, response.status, response.statusText);
                 }
-              }
-            );
-
-            if (latestTelemetryResponse.ok) {
-              const latestTelemetryData = await latestTelemetryResponse.json();
-              
-              if (latestTelemetryData.success && latestTelemetryData.data && latestTelemetryData.data.length > 0) {
-                const latestData = latestTelemetryData.data[0];
-                
-                // Extract the latest values for each attribute
-                const telemetry = {
-                  batteryVoltage: latestData.battery_voltage,
-                  fCnt: null, // Not available in reporting API
-                  PercentValveOpen: latestData.percent_valve_open,
-                  rssi: latestData.rssi,
-                  sensorTemperature: latestData.sensor_temperature,
-                  targetTemperature: latestData.target_temperature,
-                  sf: latestData.sf,
-                  signalQuality: latestData.signal_quality,
-                  snr: latestData.snr,
-                  lastUpdate: latestData.bucket_10m ? new Date(latestData.bucket_10m).getTime() : null
-                };
-
-                // Update device active status based on telemetry data
-                let updatedActive = device.active;
-                if (Object.values(telemetry).some(value => value !== null && value !== undefined)) {
-                  updatedActive = true;
-                }
-
-                return {
-                  ...device,
-                  telemetry,
-                  active: updatedActive
-                };
+              } catch (error) {
+                console.warn(`Error fetching ${attribute} for device ${deviceId}:`, error);
               }
             }
+            
+            console.log('Telemetry data for device', deviceId, ':', telemetry);
+
+            // Update device active status based on telemetry data
+            let updatedActive = device.active;
+            if (Object.values(telemetry).some(value => value !== null && value !== undefined)) {
+              updatedActive = true;
+            }
+
+            return {
+              ...device,
+              telemetry,
+              active: updatedActive
+            };
           } catch (error) {
-            console.warn(`Error fetching telemetry for device ${device.id}:`, error);
+            console.warn(`Error fetching telemetry for device ${deviceId}:`, error);
+            return device;
           }
-          
-          return device;
         })
       );
 
+      console.log('Devices with telemetry:', devicesWithTelemetry);
       return devicesWithTelemetry;
     } catch (error) {
       console.error('Error fetching telemetry data:', error);
@@ -1624,9 +1640,17 @@ export default function HeatingControl() {
     if (relatedDevices && relatedDevices.length > 0) {
       console.log('Loading devices from node.relatedDevices:', relatedDevices);
       setDevices(relatedDevices);
+      // Fetch telemetry data for the devices
+      fetchTelemetryForDevices(relatedDevices).then(devicesWithTelemetry => {
+        setDevices(devicesWithTelemetry);
+      });
     } else {
       console.log('No relatedDevices in selected node, fetching from API...');
-      fetchDevices(node.id);
+      fetchDevices(node.id).then(result => {
+        if (result && result.assigned) {
+          setDevices(result.assigned);
+        }
+      });
     }
   };
 
@@ -1721,7 +1745,7 @@ export default function HeatingControl() {
   // Function to fetch telemetry data for a node
   const fetchNodeTelemetry = async (node) => {
     if (!node || !node.relatedDevices || node.relatedDevices.length === 0) {
-      return { currentTemp: null, targetTemp: null, valvePosition: null, runStatus: node.runStatus || null };
+      return { currentTemp: null, targetTemp: null, valvePosition: null, batteryVoltage: null, rssi: null, runStatus: node.runStatus || null };
     }
 
     try {
@@ -1733,7 +1757,7 @@ export default function HeatingControl() {
       }).filter(id => id);
 
       if (deviceIds.length === 0) {
-        return { currentTemp: null, targetTemp: null, valvePosition: null, runStatus: node.runStatus || null };
+        return { currentTemp: null, targetTemp: null, valvePosition: null, batteryVoltage: null, rssi: null, runStatus: node.runStatus || null };
       }
 
       // Fetch latest data for all devices
@@ -1755,14 +1779,16 @@ export default function HeatingControl() {
               return {
                 sensorTemperature: latestData.sensor_temperature,
                 targetTemperature: latestData.target_temperature,
-                valvePosition: latestData.percent_valve_open
+                valvePosition: latestData.percent_valve_open,
+                batteryVoltage: latestData.battery_voltage,
+                rssi: latestData.rssi
               };
             }
           }
         } catch (error) {
           console.warn(`Error fetching telemetry for device ${deviceId}:`, error);
         }
-        return { sensorTemperature: null, targetTemperature: null, valvePosition: null };
+        return { sensorTemperature: null, targetTemperature: null, valvePosition: null, batteryVoltage: null, rssi: null };
       });
 
       const deviceResults = await Promise.all(devicePromises);
@@ -1783,6 +1809,16 @@ export default function HeatingControl() {
         .map(data => Number(data.valvePosition))
         .filter(pos => !isNaN(pos) && pos >= 0 && pos <= 100);
 
+      const validBatteryVoltages = deviceResults
+        .filter(data => data.batteryVoltage !== null && data.batteryVoltage !== undefined)
+        .map(data => Number(data.batteryVoltage))
+        .filter(voltage => !isNaN(voltage) && voltage > 0 && voltage < 10);
+
+      const validRssiValues = deviceResults
+        .filter(data => data.rssi !== null && data.rssi !== undefined)
+        .map(data => Number(data.rssi))
+        .filter(rssi => !isNaN(rssi) && rssi > -200 && rssi < 0);
+
       const avgCurrentTemp = validTemperatures.length > 0 
         ? validTemperatures.reduce((sum, temp) => sum + temp, 0) / validTemperatures.length 
         : null;
@@ -1795,15 +1831,25 @@ export default function HeatingControl() {
         ? validValvePositions.reduce((sum, pos) => sum + pos, 0) / validValvePositions.length 
         : null;
 
+      const avgBatteryVoltage = validBatteryVoltages.length > 0 
+        ? validBatteryVoltages.reduce((sum, voltage) => sum + voltage, 0) / validBatteryVoltages.length 
+        : null;
+
+      const avgRssi = validRssiValues.length > 0 
+        ? validRssiValues.reduce((sum, rssi) => sum + rssi, 0) / validRssiValues.length 
+        : null;
+
       return {
         currentTemp: avgCurrentTemp,
         targetTemp: avgTargetTemp,
         valvePosition: avgValvePosition,
+        batteryVoltage: avgBatteryVoltage,
+        rssi: avgRssi,
         runStatus: node.runStatus || null
       };
     } catch (error) {
       console.error('Error fetching node telemetry:', error);
-      return { currentTemp: null, targetTemp: null, valvePosition: null, runStatus: node.runStatus || null };
+      return { currentTemp: null, targetTemp: null, valvePosition: null, batteryVoltage: null, rssi: null, runStatus: node.runStatus || null };
     }
   };
 
@@ -2670,12 +2716,6 @@ export default function HeatingControl() {
                           <FontAwesomeIcon icon={faTimes} />
                         </button>
                       )}
-                      <div className="d-flex align-items-center">
-                        <span className="badge bg-warning me-2">
-                          <FontAwesomeIcon icon={faExclamationTriangle} className="me-1" />
-                          API (30s)
-                        </span>
-                      </div>
                     </h5>
                   </div>
             <div className="card-body tree-container" style={{ flex: 1, minHeight: 0 }}>
@@ -2859,6 +2899,18 @@ export default function HeatingControl() {
                         </button>
                       </li>
                     )}
+                    {selectedNode && (
+                      <li className="nav-item" role="presentation">
+                        <button
+                          className={`nav-link ${activeTab === 'settings' ? 'active' : ''}`}
+                          onClick={() => setActiveTab('settings')}
+                          type="button"
+                        >
+                          <FontAwesomeIcon icon={faBullseye} className="me-2" />
+                          Einstellungen
+                        </button>
+                      </li>
+                    )}
                     {selectedNode && (selectedNode.hasDevices === true || (selectedNode.data?.hasDevices === true)) && (
                       <li className="nav-item" role="presentation">
                         <button
@@ -2909,7 +2961,7 @@ export default function HeatingControl() {
                           
                           <div className="responsive-card">
                             <div className="card" style={{ cursor: 'pointer' }} onClick={() => {
-                              setShowTargetTemperaturePage(true);
+                              setActiveTab('settings');
                               // Initialize heating control state
                               if (selectedNode) {
                                 const runStatus = nodeDetails?.attributes?.runStatus || selectedNode.data?.runStatus || selectedNode.runStatus;
@@ -3071,37 +3123,7 @@ export default function HeatingControl() {
                       <div className="tab-pane fade show active">
                   
                   <div className="row">
-                    <div className="col-md-6">
-                      <h6 className="text-muted mb-3">Grundinformationen</h6>
-                      <table className="table table-sm">
-                        <tbody>
-                          <tr>
-                            <td><strong>ID:</strong></td>
-                            <td><code>{selectedNode.id}</code></td>
-                          </tr>
-                          <tr>
-                            <td><strong>Name:</strong></td>
-                            <td>{selectedNode.name}</td>
-                          </tr>
-                          <tr>
-                            <td><strong>Typ:</strong></td>
-                            <td>{getNodeTypeLabel(selectedNode.type)}</td>
-                          </tr>
-                          <tr>
-                            <td><strong>Hat Geräte:</strong></td>
-                            <td>
-                              {selectedNode.hasDevices ? (
-                                <span className="badge bg-success">Ja</span>
-                              ) : (
-                                <span className="badge bg-secondary">Nein</span>
-                              )}
-                            </td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                    
-                    <div className="col-md-6">
+                    <div className="col-12">
                       {console.log('Rendering devices:', devices, 'Length:', devices?.length)}
                       {devices && devices.length > 0 && (
                         <>
@@ -3110,14 +3132,12 @@ export default function HeatingControl() {
                               <FontAwesomeIcon icon={faMicrochip} className="me-2" />
                               Zugehörige Geräte ({devices.length})
                             </h6>
-                            <div className="d-flex align-items-center">
-                              <span className="badge bg-info me-2">
-                                API (30s)
-                              </span>
-                            </div>
                           </div>
                           <div className="list-group">
-                            {devices.map((device, index) => (
+                            {devices.map((device, index) => {
+                              // Debug: Log device telemetry data
+                              console.log('Device', index, 'telemetry data:', device.telemetry);
+                              return (
                               <div key={index} className="list-group-item">
                                 <div className="d-flex align-items-center">
                                   <FontAwesomeIcon 
@@ -3138,45 +3158,61 @@ export default function HeatingControl() {
                                 </div>
                                 {(device.telemetry || deviceTemperatures[device.id]) && (
                                   <div className="mt-2">
-                                    <div className="row text-center">
+                                    <div className="d-flex flex-wrap gap-2">
                                       {(deviceTemperatures[device.id]?.temperature || device.telemetry?.sensorTemperature) && (
-                                        <div className="col-4">
-                                          <small className="text-muted">
+                                        <div className="bg-light border rounded p-2 text-center" style={{ minWidth: '80px', flex: '0 0 auto' }}>
+                                          <small className="text-muted d-block">
                                             Temperatur
                                             {deviceTemperatures[device.id]?.temperature && (
-                                              <span className="badge bg-info ms-1" style={{ fontSize: '0.6em' }}>
+                                              <span className="badge bg-info ms-1" style={{ fontSize: '0.5em' }}>
                                                 API
                                               </span>
                                             )}
                                           </small>
-                                          <div className="fw-bold text-primary">
+                                          <div className="fw-bold text-primary" style={{ fontSize: '0.9rem' }}>
                                             {Number(deviceTemperatures[device.id]?.temperature || device.telemetry?.sensorTemperature).toFixed(1)}°C
                                           </div>
                                         </div>
                                       )}
-                                      {device.telemetry?.targetTemperature && (
-                                        <div className="col-4">
-                                          <small className="text-muted">Ziel</small>
-                                          <div className="fw-bold text-success">
+                                      {device.telemetry?.targetTemperature !== undefined && device.telemetry?.targetTemperature !== null && (
+                                        <div className="bg-light border rounded p-2 text-center" style={{ minWidth: '80px', flex: '0 0 auto' }}>
+                                          <small className="text-muted d-block">Ziel</small>
+                                          <div className="fw-bold text-success" style={{ fontSize: '0.9rem' }}>
                                             {Number(device.telemetry.targetTemperature).toFixed(1)}°C
                                           </div>
                                         </div>
                                       )}
-                                      {device.telemetry?.batteryVoltage && (
-                                        <div className="col-4">
-                                          <small className="text-muted">Batterie</small>
-                                          <div className="fw-bold text-warning">
+                                      {device.telemetry?.batteryVoltage !== undefined && device.telemetry?.batteryVoltage !== null && (
+                                        <div className="bg-light border rounded p-2 text-center" style={{ minWidth: '80px', flex: '0 0 auto' }}>
+                                          <small className="text-muted d-block">Batterie</small>
+                                          <div className="fw-bold text-warning" style={{ fontSize: '0.9rem' }}>
                                             {Number(device.telemetry.batteryVoltage).toFixed(2)}V
                                           </div>
                                         </div>
                                       )}
+                                      {device.telemetry?.PercentValveOpen !== undefined && device.telemetry?.PercentValveOpen !== null && (
+                                        <div className="bg-light border rounded p-2 text-center" style={{ minWidth: '80px', flex: '0 0 auto' }}>
+                                          <small className="text-muted d-block">Ventil</small>
+                                          <div className="fw-bold text-info" style={{ fontSize: '0.9rem' }}>
+                                            {Number(device.telemetry.PercentValveOpen).toFixed(0)}%
+                                          </div>
+                                        </div>
+                                      )}
+                                      {device.telemetry?.signalQuality !== undefined && device.telemetry?.signalQuality !== null && device.telemetry?.signalQuality !== 0 && (
+                                        <div className="bg-light border rounded p-2 text-center" style={{ minWidth: '80px', flex: '0 0 auto' }}>
+                                          <small className="text-muted d-block">Signal</small>
+                                          <div className="fw-bold text-secondary" style={{ fontSize: '0.8rem' }}>
+                                            {String(device.telemetry.signalQuality)}
+                                          </div>
+                                        </div>
+                                      )}
                                       {!deviceTemperatures[device.id]?.temperature && !device.telemetry?.sensorTemperature && (
-                                        <div className="col-12">
+                                        <div className="bg-warning border rounded p-2 text-center" style={{ minWidth: '120px', flex: '0 0 auto' }}>
                                           <small className="text-muted">
-                                            <span className="badge bg-warning me-1" style={{ fontSize: '0.6em' }}>
+                                            <span className="badge bg-warning me-1" style={{ fontSize: '0.5em' }}>
                                               Warten...
                                             </span>
-                                            Keine Temperaturdaten verfügbar
+                                            Keine Daten
                                           </small>
                                         </div>
                                       )}
@@ -3184,7 +3220,8 @@ export default function HeatingControl() {
                                   </div>
                                 )}
                               </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         </>
                       )}
@@ -3198,109 +3235,334 @@ export default function HeatingControl() {
                   </div>
                   
 
-                  {/* Heizungsspezifische Informationen */}
-                  {((selectedNode.data?.operationalMode || selectedNode.operationalMode) !== undefined || 
-                    (selectedNode.data?.fixValue || selectedNode.fixValue) !== undefined || 
-                    (selectedNode.data?.maxTemp || selectedNode.maxTemp) !== undefined ||
-                    (selectedNode.data?.runStatus || selectedNode.runStatus) !== undefined) && (
-                    <div className="mt-4">
-                      <h6 className="text-muted mb-3">Heizungseinstellungen</h6>
-                      <div className="row">
-                        <div className="col-md-3">
-                          <div className="card h-100">
-                            <div className="card-body text-center">
-                              <FontAwesomeIcon icon={faThermometerHalf} className="text-primary mb-2" size="lg" />
-                              <h6 className="card-title">Betriebsmodus</h6>
-                              <p className="card-text">
-                                {loadingNodeData ? (
-                                  <div className="d-flex align-items-center justify-content-center">
-                                    <div className="spinner-border spinner-border-sm me-2" role="status">
-                                      <span className="visually-hidden">Laden...</span>
-                                    </div>
-                                    Laden...
-                                  </div>
-                                ) : (
-                                  selectedNode.data?.operationalMode || selectedNode.operationalMode
-                                )}
-                                {console.log('Displaying operationalMode:', selectedNode.data?.operationalMode || selectedNode.operationalMode, 'for node:', selectedNode.id)}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                        
-                        <div className="col-md-3">
-                          <div className="card h-100">
-                            <div className="card-body text-center">
-                              <FontAwesomeIcon icon={faCog} className="text-success mb-2" size="lg" />
-                              <h6 className="card-title">Solltemperatur</h6>
-                              <p className="card-text">
-                                {loadingNodeData ? (
-                                  <div className="d-flex align-items-center justify-content-center">
-                                    <div className="spinner-border spinner-border-sm me-2" role="status">
-                                      <span className="visually-hidden">Laden...</span>
-                                    </div>
-                                    Laden...
-                                  </div>
-                                ) : (
-                                  (selectedNode.data?.fixValue || selectedNode.fixValue) ? `${selectedNode.data?.fixValue || selectedNode.fixValue}°C` : 'Nicht gesetzt'
-                                )}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                        
-                        <div className="col-md-3">
-                          <div className="card h-100">
-                            <div className="card-body text-center">
-                              <FontAwesomeIcon icon={faThermometerHalf} className="text-warning mb-2" size="lg" />
-                              <h6 className="card-title">Temperaturbereich</h6>
-                              <p className="card-text">
-                                {loadingNodeData ? (
-                                  <div className="d-flex align-items-center justify-content-center">
-                                    <div className="spinner-border spinner-border-sm me-2" role="status">
-                                      <span className="visually-hidden">Laden...</span>
-                                    </div>
-                                    Laden...
-                                  </div>
-                                ) : (
-                                  (selectedNode.data?.minTemp || selectedNode.minTemp) && (selectedNode.data?.maxTemp || selectedNode.maxTemp)
-                                    ? `${selectedNode.data?.minTemp || selectedNode.minTemp}°C - ${selectedNode.data?.maxTemp || selectedNode.maxTemp}°C`
-                                    : 'Nicht definiert'
-                                )}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                        
-                        <div className="col-md-3">
-                          <div className="card h-100">
-                            <div className="card-body text-center">
-                              <FontAwesomeIcon icon={faCog} className="text-info mb-2" size="lg" />
-                              <h6 className="card-title">Status</h6>
-                              <p className="card-text">
-                                {loadingNodeData ? (
-                                  <div className="d-flex align-items-center justify-content-center">
-                                    <div className="spinner-border spinner-border-sm me-2" role="status">
-                                      <span className="visually-hidden">Laden...</span>
-                                    </div>
-                                    Laden...
-                                  </div>
-                                ) : (
-                                  (() => {
-                                    const runStatus = selectedNode.data?.runStatus || selectedNode.runStatus;
-                                    return runStatus === 'manual' ? 'Manuell' :
-                                           runStatus === 'schedule' ? 'Zeitplan' :
-                                           runStatus === 'fix' ? 'Fest' :
-                                           runStatus || 'Unbekannt';
-                                  })()
-                                )}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
                       </div>
-                    </div>
-                  )}
+                    )}
+
+                    {/* Einstellungen Tab */}
+                    {activeTab === 'settings' && (
+                      <div className="tab-pane fade show active">
+                        <div className="row">
+                          <div className="col-12">
+
+                            {/* Status Icons Section */}
+                            <div className="mb-4">
+                              <h5><strong>Status:</strong></h5>
+                              {(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) === 'manual' && (
+                                <div className="alert alert-info mb-3" role="alert">
+                                  <FontAwesomeIcon icon={faInfoCircle} className="me-2" />
+                                  <strong>Manueller Modus:</strong> Alle Thermostate unterhalb dieses Knotens werden nicht mehr über HEATMANAGER gesteuert.
+                                </div>
+                              )}
+                              <div className="d-flex justify-content-center gap-4">
+                                <div className="text-center">
+                                  <img 
+                                    src={(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) === 'manual' ? "/assets/img/hm_manuel_active.svg" : "/assets/img/hm_manuel_inactive.svg"}
+                                    alt="Manuell"
+                                    style={{ width: '60px', height: '60px', cursor: 'pointer' }}
+                                    onClick={() => updateRunStatus('manual')}
+                                  />
+                                  <div className="mt-2">
+                                    <small className="text-muted">Manuell</small>
+                                  </div>
+                                </div>
+                                <div className="text-center">
+                                  <img 
+                                    src={(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) === 'schedule' ? "/assets/img/hm_plan_active.svg" : "/assets/img/hm_plan_inactive.svg"}
+                                    alt="Plan"
+                                    style={{ width: '60px', height: '60px', cursor: 'pointer' }}
+                                    onClick={() => updateRunStatus('schedule')}
+                                  />
+                                  <div className="mt-2">
+                                    <small className="text-muted">Plan</small>
+                                  </div>
+                                </div>
+                                <div className="text-center">
+                                  <img 
+                                    src={(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) === 'fix' ? "/assets/img/hm_fix_active.svg" : "/assets/img/hm_fix_inactive.svg"}
+                                    alt="Fix"
+                                    style={{ width: '60px', height: '60px', cursor: 'pointer' }}
+                                    onClick={() => updateRunStatus('fix')}
+                                  />
+                                  <div className="mt-2">
+                                    <small className="text-muted">Fix</small>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Fix Temperature Widget */}
+                            {(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) === 'fix' && (
+                              <div className="mb-4">
+                                <h5><strong>Fix Temperatur:</strong></h5>
+                                <div className="d-flex justify-content-center">
+                                  <div className="card" style={{
+                                    background: 'linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%)',
+                                    border: '3px solid #fbbc29',
+                                    borderRadius: '20px',
+                                    minWidth: '300px',
+                                    maxWidth: '400px',
+                                    boxShadow: '0 4px 15px rgba(251, 188, 41, 0.2)'
+                                  }}>
+                                    <div className="card-body text-center py-4">
+                                      <div style={{
+                                        fontSize: '2.5rem',
+                                        fontWeight: 'bold',
+                                        color: '#333',
+                                        lineHeight: '1',
+                                        marginBottom: '10px'
+                                      }}>
+                                        {pendingFixValue !== null ? pendingFixValue : tempSliderValue}°
+                                      </div>
+                                      <div style={{
+                                        fontSize: '0.9rem',
+                                        color: '#666',
+                                        marginBottom: '20px'
+                                      }}>
+                                        Zieltemperatur
+                                      </div>
+                                      <div className="px-3">
+                                        <input
+                                          type="range"
+                                          className="form-range"
+                                          min={nodeDetails?.attributes?.minTemp || 15}
+                                          max={nodeDetails?.attributes?.maxTemp || 30}
+                                          step="0.5"
+                                          value={pendingFixValue !== null ? pendingFixValue : tempSliderValue}
+                                          onChange={(e) => {
+                                            const newValue = parseFloat(e.target.value);
+                                            setTempSliderValue(newValue);
+                                            updateFixValue(newValue);
+                                          }}
+                                          style={{
+                                            background: `linear-gradient(to right, #fbbc29 0%, #fbbc29 ${(((pendingFixValue !== null ? pendingFixValue : tempSliderValue) - (nodeDetails?.attributes?.minTemp || 15)) / ((nodeDetails?.attributes?.maxTemp || 30) - (nodeDetails?.attributes?.minTemp || 15))) * 100}%, #ddd ${(((pendingFixValue !== null ? pendingFixValue : tempSliderValue) - (nodeDetails?.attributes?.minTemp || 15)) / ((nodeDetails?.attributes?.maxTemp || 30) - (nodeDetails?.attributes?.minTemp || 15))) * 100}%, #ddd 100%)`,
+                                            height: '8px',
+                                            borderRadius: '5px',
+                                            outline: 'none',
+                                            cursor: 'pointer'
+                                          }}
+                                        />
+                                        <div className="d-flex justify-content-between mt-2">
+                                          <small className="text-muted">{nodeDetails?.attributes?.minTemp || 15}°</small>
+                                          <small className="text-muted">{nodeDetails?.attributes?.maxTemp || 30}°</small>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Schedule Table Widget */}
+                            {(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) === 'schedule' && (
+                              <div className="mb-4">
+                                <div className="d-flex justify-content-between align-items-center mb-3">
+                                  <h5 className="mb-0"><strong>Wochenplan:</strong></h5>
+                                  {hasUnsavedChanges && (
+                                    <div className="d-flex gap-2">
+                                      <button
+                                        className="btn btn-outline-secondary btn-sm"
+                                        onClick={cancelChanges}
+                                        disabled={savingSchedule}
+                                      >
+                                        <FontAwesomeIcon icon={faTimes} className="me-1" />
+                                        Abbrechen
+                                      </button>
+                                      <button
+                                        className="btn btn-warning btn-sm"
+                                        onClick={saveChanges}
+                                        disabled={savingSchedule}
+                                      >
+                                        {savingSchedule ? (
+                                          <>
+                                            <span className="spinner-border spinner-border-sm me-1" role="status"></span>
+                                            Speichern...
+                                          </>
+                                        ) : (
+                                          <>
+                                            <FontAwesomeIcon icon={faCheckCircle} className="me-1" />
+                                            Speichern
+                                          </>
+                                        )}
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="card" style={{
+                                  border: '2px solid #fbbc29',
+                                  borderRadius: '15px',
+                                  boxShadow: '0 4px 15px rgba(251, 188, 41, 0.1)'
+                                }}>
+                                  <div className="card-body">
+                                    {loadingSchedule ? (
+                                      <div className="text-center py-5">
+                                        <div className="spinner-border text-warning" role="status">
+                                          <span className="visually-hidden">Loading...</span>
+                                        </div>
+                                        <p className="mt-2 text-muted">Lade Wochenplan...</p>
+                                      </div>
+                                    ) : scheduleData && Array.isArray(scheduleData) && scheduleData.length > 0 ? (
+                                      <div className="table-responsive">
+                                        <table className="table table-sm table-bordered">
+                                          <thead className="table-warning">
+                                            <tr>
+                                              <th style={{ width: '60px' }}>Std</th>
+                                              {['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map((day, dayIndex) => (
+                                                <th key={day} className="text-center" style={{ 
+                                                  minWidth: '120px',
+                                                  fontSize: '0.9rem',
+                                                  padding: '0.5rem 0.25rem'
+                                                }}>
+                                                  <div className="fw-bold">{day}</div>
+                                                  <div style={{ marginTop: '5px' }}>
+                                                    <select 
+                                                      className="form-select form-select-sm"
+                                                      value={(() => {
+                                                        if (selectedDayPlans[dayIndex] !== undefined) {
+                                                          return selectedDayPlans[dayIndex];
+                                                        }
+                                                        const schedulerPlanValue = nodeDetails?.attributes?.schedulerPlan;
+                                                        if (schedulerPlanValue && Array.isArray(scheduleData)) {
+                                                          try {
+                                                            const planArray = JSON.parse(schedulerPlanValue);
+                                                            if (Array.isArray(planArray) && planArray[dayIndex]) {
+                                                              const planNameForDay = planArray[dayIndex];
+                                                              const foundIndex = scheduleData.findIndex(plan => plan[0] === planNameForDay);
+                                                              return foundIndex !== -1 ? foundIndex : 0;
+                                                            }
+                                                          } catch (error) {
+                                                            console.error('Error parsing schedulerPlan:', error);
+                                                          }
+                                                        }
+                                                        return 0;
+                                                      })()}
+                                                      onChange={(e) => handlePlanChange(dayIndex, parseInt(e.target.value))}
+                                                      style={{ 
+                                                        fontSize: '0.7rem',
+                                                        border: '1px solid #dee2e6'
+                                                      }}
+                                                    >
+                                                      {Array.isArray(scheduleData) ? scheduleData.map((plan, planIndex) => (
+                                                        <option key={planIndex} value={planIndex}>
+                                                          {plan[0]}
+                                                        </option>
+                                                      )) : null}
+                                                    </select>
+                                                  </div>
+                                                </th>
+                                              ))}
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {Array.from({ length: 24 }, (_, hour) => (
+                                              <tr key={hour}>
+                                                <td className="fw-bold text-muted text-center" style={{ 
+                                                  backgroundColor: hour % 2 === 0 ? '#ffffff' : '#e8e8e8',
+                                                  fontSize: '0.8rem'
+                                                }}>
+                                                  {hour.toString().padStart(2, '0')}
+                                                </td>
+                                                {['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map((day, dayIndex) => {
+                                                  const availablePlans = Array.isArray(scheduleData) ? scheduleData : [];
+                                                  let selectedPlanIndex;
+                                                  if (selectedDayPlans[dayIndex] !== undefined) {
+                                                    selectedPlanIndex = selectedDayPlans[dayIndex];
+                                                  } else {
+                                                    const schedulerPlanValue = nodeDetails?.attributes?.schedulerPlan;
+                                                    if (schedulerPlanValue && Array.isArray(scheduleData)) {
+                                                      try {
+                                                        const planArray = JSON.parse(schedulerPlanValue);
+                                                        if (Array.isArray(planArray) && planArray[dayIndex]) {
+                                                          const planNameForDay = planArray[dayIndex];
+                                                          const foundIndex = scheduleData.findIndex(plan => plan[0] === planNameForDay);
+                                                          selectedPlanIndex = foundIndex !== -1 ? foundIndex : 0;
+                                                        } else {
+                                                          selectedPlanIndex = 0;
+                                                        }
+                                                      } catch (error) {
+                                                        console.error('Error parsing schedulerPlan:', error);
+                                                        selectedPlanIndex = 0;
+                                                      }
+                                                    } else {
+                                                      selectedPlanIndex = 0;
+                                                    }
+                                                  }
+                                                  const selectedPlanData = availablePlans[selectedPlanIndex];
+                                                  const planSchedule = selectedPlanData?.[1] || [];
+                                                  const temp = planSchedule?.[hour];
+                                                  return (
+                                                    <td key={dayIndex} className="text-center" style={{ 
+                                                      padding: '0.5rem 0.25rem',
+                                                      fontSize: '0.8rem',
+                                                      backgroundColor: hour % 2 === 0 ? '#ffffff' : '#e8e8e8',
+                                                      color: temp ? '#856404' : '#6c757d',
+                                                      fontWeight: temp ? 'bold' : 'normal'
+                                                    }}>
+                                                      {temp ? `${temp}°` : '-'}
+                                                    </td>
+                                                  );
+                                                })}
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    ) : (
+                                      <div className="alert alert-info">
+                                        <FontAwesomeIcon icon={faInfoCircle} className="me-2" />
+                                        <div>
+                                          <strong>Kein Wochenplan verfügbar.</strong>
+                                          <br />
+                                          <small>
+                                            {scheduleData ? 
+                                              'Keine gültigen Plan-Daten gefunden.' : 
+                                              'Plan-Daten werden geladen oder sind nicht verfügbar.'
+                                            }
+                                          </small>
+                                          {nodeDetails?.attributes?.schedulerPlan && (
+                                            <div className="mt-2">
+                                              <small className="text-muted">
+                                                Aktueller Plan: &quot;{nodeDetails.attributes.schedulerPlan}&quot;
+                                              </small>
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Action Buttons */}
+                            <div className="mt-4">
+                              <button
+                                className="btn btn-secondary me-2"
+                                onClick={() => setActiveTab('overview')}
+                              >
+                                Abbrechen
+                              </button>
+                              {hasUnsavedChanges && (
+                                <button
+                                  className="btn btn-success"
+                                  onClick={saveChanges}
+                                  disabled={savingSchedule}
+                                >
+                                  {savingSchedule ? (
+                                    <>
+                                      <span className="spinner-border spinner-border-sm me-1" role="status"></span>
+                                      Speichern...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <FontAwesomeIcon icon={faCheckCircle} className="me-1" />
+                                      Speichern
+                                    </>
+                                  )}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     )}
 
@@ -3630,391 +3892,7 @@ export default function HeatingControl() {
         </div>
       )}
 
-      {/* Zieltemperatur Seite */}
-      {showTargetTemperaturePage && (
-        <div className="position-fixed w-100 h-100" style={{ 
-          top: 0,
-          left: 0,
-          backgroundColor: '#f8f9fa',
-          zIndex: 1050,
-          paddingTop: '80px',
-          paddingBottom: '60px'
-        }}>
-          <div className="d-flex align-items-center justify-content-between p-3 bg-white border-bottom">
-            <div className="d-flex align-items-center">
-              <button
-                className="btn btn-outline-secondary me-3"
-                onClick={() => setShowTargetTemperaturePage(false)}
-                title="Zurück zur Übersicht"
-              >
-                <FontAwesomeIcon icon={faArrowLeft} className="me-2" />
-                Zurück
-              </button>
-              <h4 className="mb-0">
-                <FontAwesomeIcon icon={faBullseye} className="text-success me-2" />
-                Zieltemperatur Einstellungen
-              </h4>
-            </div>
-          </div>
-          
-          <div className="p-4" style={{ minHeight: 'calc(100vh - 200px)' }}>
-            <div className="row">
-              <div className="col-12">
-                {selectedNode && (
-                  <div className="alert alert-info mb-4">
-                    <strong>Ausgewählter Bereich:</strong> {selectedNode.text}
-                    <br />
-                    <small className="text-muted">ID: {selectedNode.id}</small>
-                  </div>
-                )}
-
-                {/* Status Icons Section */}
-                <div className="mb-4">
-                  <h5><strong>Status:</strong></h5>
-                  
-                  {/* Manual Mode Warning */}
-                  {(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) === 'manual' && (
-                    <div className="alert alert-info mb-3" role="alert">
-                      <FontAwesomeIcon icon={faInfoCircle} className="me-2" />
-                      <strong>Manueller Modus:</strong> Alle Thermostate unterhalb dieses Knotens werden nicht mehr über HEATMANAGER gesteuert.
-                    </div>
-                  )}
-                  
-                  <div className="d-flex justify-content-center gap-4">
-                    {/* Manuell Icon */}
-                    <div className="text-center">
-                      <img 
-                        src={(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) === 'manual' ? "/assets/img/hm_manuel_active.svg" : "/assets/img/hm_manuel_inactive.svg"}
-                        alt="Manuell"
-                        style={{ 
-                          width: '60px', 
-                          height: '60px',
-                          cursor: 'pointer'
-                        }}
-                        onClick={() => updateRunStatus('manual')}
-                      />
-                      <div className="mt-2">
-                        <small className="text-muted">Manuell</small>
-                      </div>
-                    </div>
-
-                    {/* Plan Icon */}
-                    <div className="text-center">
-                      <img 
-                        src={(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) === 'schedule' ? "/assets/img/hm_plan_active.svg" : "/assets/img/hm_plan_inactive.svg"}
-                        alt="Plan"
-                        style={{ 
-                          width: '60px', 
-                          height: '60px',
-                          cursor: 'pointer'
-                        }}
-                        onClick={() => updateRunStatus('schedule')}
-                      />
-                      <div className="mt-2">
-                        <small className="text-muted">Plan</small>
-                      </div>
-                    </div>
-
-                    {/* Fix Icon */}
-                    <div className="text-center">
-                      <img 
-                        src={(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) === 'fix' ? "/assets/img/hm_fix_active.svg" : "/assets/img/hm_fix_inactive.svg"}
-                        alt="Fix"
-                        style={{ 
-                          width: '60px', 
-                          height: '60px',
-                          cursor: 'pointer'
-                        }}
-                        onClick={() => updateRunStatus('fix')}
-                      />
-                      <div className="mt-2">
-                        <small className="text-muted">Fix</small>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Fix Temperature Widget */}
-                {(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) === 'fix' && (
-                  <div className="mb-4">
-                    <h5><strong>Fix Temperatur:</strong></h5>
-                    <div className="d-flex justify-content-center">
-                      <div className="card" style={{
-                        background: 'linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%)',
-                        border: '3px solid #fbbc29',
-                        borderRadius: '20px',
-                        minWidth: '300px',
-                        maxWidth: '400px',
-                        boxShadow: '0 4px 15px rgba(251, 188, 41, 0.2)'
-                      }}>
-                        <div className="card-body text-center py-4">
-                          <div style={{
-                            fontSize: '2.5rem',
-                            fontWeight: 'bold',
-                            color: '#333',
-                            lineHeight: '1',
-                            marginBottom: '10px'
-                          }}>
-                            {pendingFixValue !== null ? pendingFixValue : tempSliderValue}°
-                          </div>
-                          <div style={{
-                            fontSize: '0.9rem',
-                            color: '#666',
-                            marginBottom: '20px'
-                          }}>
-                            Zieltemperatur
-                          </div>
-                          
-                          {/* Temperature Slider */}
-                          <div className="px-3">
-                            <input
-                              type="range"
-                              className="form-range"
-                              min={nodeDetails?.attributes?.minTemp || 15}
-                              max={nodeDetails?.attributes?.maxTemp || 30}
-                              step="0.5"
-                              value={pendingFixValue !== null ? pendingFixValue : tempSliderValue}
-                              onChange={(e) => {
-                                const newValue = parseFloat(e.target.value);
-                                setTempSliderValue(newValue);
-                                updateFixValue(newValue);
-                              }}
-                              style={{
-                                background: `linear-gradient(to right, #fbbc29 0%, #fbbc29 ${(((pendingFixValue !== null ? pendingFixValue : tempSliderValue) - (nodeDetails?.attributes?.minTemp || 15)) / ((nodeDetails?.attributes?.maxTemp || 30) - (nodeDetails?.attributes?.minTemp || 15))) * 100}%, #ddd ${(((pendingFixValue !== null ? pendingFixValue : tempSliderValue) - (nodeDetails?.attributes?.minTemp || 15)) / ((nodeDetails?.attributes?.maxTemp || 30) - (nodeDetails?.attributes?.minTemp || 15))) * 100}%, #ddd 100%)`,
-                                height: '8px',
-                                borderRadius: '5px',
-                                outline: 'none',
-                                cursor: 'pointer'
-                              }}
-                            />
-                            <div className="d-flex justify-content-between mt-2">
-                              <small className="text-muted">{nodeDetails?.attributes?.minTemp || 15}°</small>
-                              <small className="text-muted">{nodeDetails?.attributes?.maxTemp || 30}°</small>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Schedule Table Widget */}
-                {(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) === 'schedule' && (
-                  <div className="mb-4">
-                    <div className="d-flex justify-content-between align-items-center mb-3">
-                      <h5 className="mb-0"><strong>Wochenplan:</strong></h5>
-                      {hasUnsavedChanges && (
-                        <div className="d-flex gap-2">
-                          <button
-                            className="btn btn-outline-secondary btn-sm"
-                            onClick={cancelChanges}
-                            disabled={savingSchedule}
-                          >
-                            <FontAwesomeIcon icon={faTimes} className="me-1" />
-                            Abbrechen
-                          </button>
-                          <button
-                            className="btn btn-warning btn-sm"
-                            onClick={saveChanges}
-                            disabled={savingSchedule}
-                          >
-                            {savingSchedule ? (
-                              <>
-                                <span className="spinner-border spinner-border-sm me-1" role="status"></span>
-                                Speichern...
-                              </>
-                            ) : (
-                              <>
-                                <FontAwesomeIcon icon={faCheckCircle} className="me-1" />
-                                Speichern
-                              </>
-                            )}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                    <div className="card" style={{
-                      border: '2px solid #fbbc29',
-                      borderRadius: '15px',
-                      boxShadow: '0 4px 15px rgba(251, 188, 41, 0.1)'
-                    }}>
-                      <div className="card-body">
-                        {loadingSchedule ? (
-                          <div className="text-center py-5">
-                            <div className="spinner-border text-warning" role="status">
-                              <span className="visually-hidden">Loading...</span>
-                            </div>
-                            <p className="mt-2 text-muted">Lade Wochenplan...</p>
-                          </div>
-                        ) : scheduleData && Array.isArray(scheduleData) && scheduleData.length > 0 ? (
-                          <div className="table-responsive">
-                            <table className="table table-sm table-bordered">
-                              <thead className="table-warning">
-                                <tr>
-                                  <th style={{ width: '60px' }}>Std</th>
-                                  {['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map((day, dayIndex) => (
-                                    <th key={day} className="text-center" style={{ 
-                                      minWidth: '120px',
-                                      fontSize: '0.9rem',
-                                      padding: '0.5rem 0.25rem'
-                                    }}>
-                                      <div className="fw-bold">{day}</div>
-                                      <div style={{ marginTop: '5px' }}>
-                                        <select 
-                                          className="form-select form-select-sm"
-                                          value={(() => {
-                                            if (selectedDayPlans[dayIndex] !== undefined) {
-                                              return selectedDayPlans[dayIndex];
-                                            }
-                                            const schedulerPlanValue = nodeDetails?.attributes?.schedulerPlan;
-                                            if (schedulerPlanValue && Array.isArray(scheduleData)) {
-                                              try {
-                                                const planArray = JSON.parse(schedulerPlanValue);
-                                                if (Array.isArray(planArray) && planArray[dayIndex]) {
-                                                  const planNameForDay = planArray[dayIndex];
-                                                  const foundIndex = scheduleData.findIndex(plan => plan[0] === planNameForDay);
-                                                  return foundIndex !== -1 ? foundIndex : 0;
-                                                }
-                                              } catch (error) {
-                                                console.error('Error parsing schedulerPlan:', error);
-                                              }
-                                            }
-                                            return 0;
-                                          })()}
-                                          onChange={(e) => handlePlanChange(dayIndex, parseInt(e.target.value))}
-                                          style={{ 
-                                            fontSize: '0.7rem',
-                                            border: '1px solid #dee2e6'
-                                          }}
-                                        >
-                                          {Array.isArray(scheduleData) ? scheduleData.map((plan, planIndex) => (
-                                            <option key={planIndex} value={planIndex}>
-                                              {plan[0]}
-                                            </option>
-                                          )) : null}
-                                        </select>
-                                      </div>
-                                    </th>
-                                  ))}
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {Array.from({ length: 24 }, (_, hour) => (
-                                  <tr key={hour}>
-                                    <td className="fw-bold text-muted text-center" style={{ 
-                                      backgroundColor: hour % 2 === 0 ? '#ffffff' : '#e8e8e8',
-                                      fontSize: '0.8rem'
-                                    }}>
-                                      {hour.toString().padStart(2, '0')}
-                                    </td>
-                                    {['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map((day, dayIndex) => {
-                                      const availablePlans = Array.isArray(scheduleData) ? scheduleData : [];
-                                      
-                                      let selectedPlanIndex;
-                                      if (selectedDayPlans[dayIndex] !== undefined) {
-                                        selectedPlanIndex = selectedDayPlans[dayIndex];
-                                      } else {
-                                        const schedulerPlanValue = nodeDetails?.attributes?.schedulerPlan;
-                                        if (schedulerPlanValue && Array.isArray(scheduleData)) {
-                                          try {
-                                            const planArray = JSON.parse(schedulerPlanValue);
-                                            if (Array.isArray(planArray) && planArray[dayIndex]) {
-                                              const planNameForDay = planArray[dayIndex];
-                                              const foundIndex = scheduleData.findIndex(plan => plan[0] === planNameForDay);
-                                              selectedPlanIndex = foundIndex !== -1 ? foundIndex : 0;
-                                            } else {
-                                              selectedPlanIndex = 0;
-                                            }
-                                          } catch (error) {
-                                            console.error('Error parsing schedulerPlan:', error);
-                                            selectedPlanIndex = 0;
-                                          }
-                                        } else {
-                                          selectedPlanIndex = 0;
-                                        }
-                                      }
-                                      
-                                      const selectedPlanData = availablePlans[selectedPlanIndex];
-                                      const planSchedule = selectedPlanData?.[1] || [];
-                                      const temp = planSchedule?.[hour];
-                                      
-                                      return (
-                                        <td key={dayIndex} className="text-center" style={{ 
-                                          padding: '0.5rem 0.25rem',
-                                          fontSize: '0.8rem',
-                                          backgroundColor: hour % 2 === 0 ? '#ffffff' : '#e8e8e8',
-                                          color: temp ? '#856404' : '#6c757d',
-                                          fontWeight: temp ? 'bold' : 'normal'
-                                        }}>
-                                          {temp ? `${temp}°` : '-'}
-                                        </td>
-                                      );
-                                    })}
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        ) : (
-                          <div className="alert alert-info">
-                            <FontAwesomeIcon icon={faInfoCircle} className="me-2" />
-                            <div>
-                              <strong>Kein Wochenplan verfügbar.</strong>
-                              <br />
-                              <small>
-                                {scheduleData ? 
-                                  'Keine gültigen Plan-Daten gefunden.' : 
-                                  'Plan-Daten werden geladen oder sind nicht verfügbar.'
-                                }
-                              </small>
-                              {nodeDetails?.attributes?.schedulerPlan && (
-                                <div className="mt-2">
-                                  <small className="text-muted">
-                                    Aktueller Plan: &quot;{nodeDetails.attributes.schedulerPlan}&quot;
-                                  </small>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Action Buttons */}
-                <div className="mt-4">
-                  <button
-                    className="btn btn-secondary me-2"
-                    onClick={() => setShowTargetTemperaturePage(false)}
-                  >
-                    Abbrechen
-                  </button>
-                  {hasUnsavedChanges && (
-                    <button
-                      className="btn btn-success"
-                      onClick={saveChanges}
-                      disabled={savingSchedule}
-                    >
-                      {savingSchedule ? (
-                        <>
-                          <span className="spinner-border spinner-border-sm me-1" role="status"></span>
-                          Speichern...
-                        </>
-                      ) : (
-                        <>
-                          <FontAwesomeIcon icon={faCheckCircle} className="me-1" />
-                          Speichern
-                        </>
-                      )}
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      
     </DndProvider>
   );
 }

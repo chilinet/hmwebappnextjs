@@ -31,11 +31,11 @@ function authenticateRequest(req) {
 function validateQueryParams(query) {
   const errors = [];
   
-  // Limit validieren (max 1000 Datensätze)
+  // Limit validieren (max 15000 Datensätze)
   if (query.limit) {
     const limit = parseInt(query.limit);
-    if (isNaN(limit) || limit < 1 || limit > 10000) {
-      errors.push('Limit muss zwischen 1 und 10000 liegen');
+    if (isNaN(limit) || limit < 1 || limit > 15000) {
+      errors.push('Limit muss zwischen 1 und 15000 liegen');
     }
   }
   

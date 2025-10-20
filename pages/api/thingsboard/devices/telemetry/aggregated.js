@@ -67,21 +67,25 @@ export default async function handler(req, res) {
         let response = null;
         let historicalData = null;
         
-        // Method 1: Try with aggregation and limit
-        try {
-          response = await fetch(`${process.env.THINGSBOARD_URL}/api/plugins/telemetry/DEVICE/${deviceId}/values/timeseries?keys=${attributeKeys.join(',')}&startTs=${startTime}&endTs=${endTime}&interval=${aggregationInterval}&agg=AVG&limit=${maxDataPoints}`, {
-            method: 'GET',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Authorization': `Bearer ${tbToken}`,
-            },
-          });
-          
-          if (response.ok) {
-            historicalData = await response.json();
+        // Method 1: Try with aggregation and limit (only for numeric attributes)
+        // Skip aggregation for text attributes like signalQuality
+        const isTextAttribute = attribute === 'signalQuality' || attribute === 'raw';
+        if (!isTextAttribute) {
+          try {
+            response = await fetch(`${process.env.THINGSBOARD_URL}/api/plugins/telemetry/DEVICE/${deviceId}/values/timeseries?keys=${attributeKeys.join(',')}&startTs=${startTime}&endTs=${endTime}&interval=${aggregationInterval}&agg=AVG&limit=${maxDataPoints}`, {
+              method: 'GET',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Authorization': `Bearer ${tbToken}`,
+              },
+            });
+            
+            if (response.ok) {
+              historicalData = await response.json();
+            }
+          } catch (error) {
+            // Aggregated API failed, continue to fallback
           }
-        } catch (error) {
-          // Aggregated API failed, continue to fallback
         }
         
         // Method 2: Try with limit but without aggregation if Method 1 failed
@@ -119,6 +123,34 @@ export default async function handler(req, res) {
             }
           } catch (error) {
             // All data API failed
+          }
+        }
+
+        // Method 4: For text attributes, try the latest values endpoint
+        if (!historicalData && isTextAttribute) {
+          try {
+            response = await fetch(`${process.env.THINGSBOARD_URL}/api/plugins/telemetry/DEVICE/${deviceId}/values/latest?keys=${attributeKeys.join(',')}`, {
+              method: 'GET',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Authorization': `Bearer ${tbToken}`,
+              },
+            });
+            
+            if (response.ok) {
+              const latestData = await response.json();
+              // Convert latest values format to timeseries format
+              if (latestData && latestData[attribute]) {
+                historicalData = {
+                  [attribute]: [{
+                    ts: latestData[attribute].ts,
+                    value: latestData[attribute].value
+                  }]
+                };
+              }
+            }
+          } catch (error) {
+            // Latest values API failed
           }
         }
 
