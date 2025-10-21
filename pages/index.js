@@ -31,8 +31,37 @@ export default function Home() {
   const { data: session, status } = useSession();
   const router = useRouter();
   const [dashboardData, setDashboardData] = useState(null);
+  const [heatDemandData, setHeatDemandData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  // Helper function to calculate heat demand statistics
+  const getHeatDemandStats = () => {
+    if (!heatDemandData?.data || heatDemandData.data.length === 0) {
+      return { current: '--%', average: '--%' };
+    }
+
+    const data = heatDemandData.data;
+    const currentHour = data[0]; // Most recent hour
+    const averageValveOpen = data.reduce((sum, hour) => sum + hour.avg_percentvalveopen, 0) / data.length;
+    
+    return {
+      current: currentHour ? `${Math.round(currentHour.avg_percentvalveopen)}%` : '--%',
+      average: `${Math.round(averageValveOpen)}%`
+    };
+  };
+
+  // Helper function to get chart data for heat demand
+  const getHeatDemandChartData = () => {
+    if (!heatDemandData?.data || heatDemandData.data.length === 0) {
+      return [];
+    }
+
+    return heatDemandData.data.map(hour => ({
+      time: new Date(hour.hour_start).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }),
+      value: Math.round(hour.avg_percentvalveopen)
+    }));
+  };
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -44,16 +73,28 @@ export default function Home() {
     async function fetchDashboardData() {
       if (session?.user?.customerid) {
         try {
-          const response = await fetch(`/api/dashboard/stats?customerId=${session.user.customerid}`);
+          // Fetch basic dashboard stats
+          const statsResponse = await fetch(`/api/dashboard/stats?customerId=${session.user.customerid}`);
           
-          if (!response.ok) {
-            const errorData = await response.json();
+          if (!statsResponse.ok) {
+            const errorData = await statsResponse.json();
             throw new Error(errorData.error || 'Failed to fetch dashboard data');
           }
           
-          const data = await response.json();
-          console.log('Dashboard data received:', data);
-          setDashboardData(data);
+          const statsData = await statsResponse.json();
+          console.log('Dashboard stats received:', statsData);
+          setDashboardData(statsData);
+
+          // Fetch heat demand data for last 24 hours
+          const heatDemandResponse = await fetch(`/api/customer-hourly-avg?customer_id=${session.user.customerid}&limit=24`);
+          
+          if (heatDemandResponse.ok) {
+            const heatDemandData = await heatDemandResponse.json();
+            console.log('Heat demand data received:', heatDemandData);
+            setHeatDemandData(heatDemandData);
+          } else {
+            console.warn('Failed to fetch heat demand data, using fallback');
+          }
         } catch (err) {
           console.error('Error fetching dashboard data:', err);
           setError(err.message);
@@ -161,9 +202,9 @@ export default function Home() {
                       <FontAwesomeIcon icon={faThermometerHalf} />
                     </div>
                     <div>
-                      <h3 className="mb-0 text-secondary fw-bold">{dashboardData?.heatDemand || '--%'}</h3>
+                      <h3 className="mb-0 text-secondary fw-bold">{getHeatDemandStats().current}</h3>
                       <p className="mb-0 text-muted small">WÄRMEANFORDERUNG</p>
-                      <p className="mb-0 text-muted small">Ø Ventilöffnung --%</p>
+                      <p className="mb-0 text-muted small">Ø Ventilöffnung {getHeatDemandStats().average}</p>
                     </div>
                   </div>
                 </Card.Body>
@@ -217,11 +258,36 @@ export default function Home() {
                     <h5 className="mb-0 fw-bold">HEIZUNGSSTEUERUNG & WÄRMEANFORDERUNG</h5>
                     <button className="btn btn-outline-secondary btn-sm">Letzte 24 h</button>
                   </div>
-                  <div className="chart-placeholder">
-                    <div className="text-center py-5">
-                      <FontAwesomeIcon icon={faChartLine} size="3x" className="text-muted mb-3" />
-                      <p className="text-muted">Chart-Daten werden geladen...</p>
-                    </div>
+                  <div className="heat-demand-chart">
+                    {heatDemandData?.data && heatDemandData.data.length > 0 ? (
+                      <div className="chart-container">
+                        <div className="chart-header mb-3">
+                          <div className="d-flex justify-content-between align-items-center">
+                            <span className="text-muted small">Wärmeanforderung über 24h</span>
+                            <span className="text-muted small">
+                              {heatDemandData.data.length} Stunden
+                            </span>
+                          </div>
+                        </div>
+                        <div className="chart-bars">
+                          {getHeatDemandChartData().slice(0, 12).map((item, index) => (
+                            <div key={index} className="chart-bar-container">
+                              <div className="chart-bar" style={{ 
+                                height: `${Math.min(item.value * 2, 100)}px`,
+                                backgroundColor: item.value > 20 ? '#dc3545' : item.value > 10 ? '#ffc107' : '#28a745'
+                              }}></div>
+                              <div className="chart-label">{item.time}</div>
+                              <div className="chart-value">{item.value}%</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-center py-5">
+                        <FontAwesomeIcon icon={faChartLine} size="3x" className="text-muted mb-3" />
+                        <p className="text-muted">Chart-Daten werden geladen...</p>
+                      </div>
+                    )}
                   </div>
                 </Card.Body>
               </Card>
@@ -428,6 +494,57 @@ export default function Home() {
           background-color: #6c757d;
           border-color: #6c757d;
           color: white;
+        }
+        
+        .heat-demand-chart {
+          min-height: 200px;
+        }
+        
+        .chart-container {
+          background: #f8f9fa;
+          border-radius: 8px;
+          padding: 1rem;
+        }
+        
+        .chart-bars {
+          display: flex;
+          align-items: end;
+          gap: 8px;
+          height: 150px;
+          padding: 0 4px;
+        }
+        
+        .chart-bar-container {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          min-width: 0;
+        }
+        
+        .chart-bar {
+          width: 100%;
+          min-height: 4px;
+          border-radius: 2px 2px 0 0;
+          transition: all 0.3s ease;
+          margin-bottom: 8px;
+        }
+        
+        .chart-label {
+          font-size: 0.7rem;
+          color: #6c757d;
+          text-align: center;
+          margin-bottom: 4px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        
+        .chart-value {
+          font-size: 0.65rem;
+          font-weight: 600;
+          color: #495057;
+          text-align: center;
         }
       `}</style>
     </>
