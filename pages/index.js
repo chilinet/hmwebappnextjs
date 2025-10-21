@@ -128,7 +128,10 @@ export default function Home() {
     const data = heatDemandData.data;
     const maxItems = selectedTimePeriod === '24h' ? 12 : selectedTimePeriod === '7d' ? 7 : selectedTimePeriod === '30d' ? 15 : 20;
     
-    return data.slice(0, maxItems).map(hour => {
+    // Sort data by hour_start in ascending order (oldest first)
+    const sortedData = [...data].sort((a, b) => new Date(a.hour_start) - new Date(b.hour_start));
+    
+    return sortedData.slice(0, maxItems).map(hour => {
       let timeLabel;
       const date = new Date(hour.hour_start);
       
