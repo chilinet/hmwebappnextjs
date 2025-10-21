@@ -86,7 +86,14 @@ export default function Home() {
           setDashboardData(statsData);
 
           // Fetch heat demand data for last 24 hours
-          const heatDemandResponse = await fetch(`/api/customer-hourly-avg?customer_id=${session.user.customerid}&limit=24`);
+          const today = new Date();
+          const yesterday = new Date(today);
+          yesterday.setDate(yesterday.getDate() - 1);
+          
+          const startDate = yesterday.toISOString().split('T')[0]; // YYYY-MM-DD format
+          const endDate = today.toISOString().split('T')[0]; // YYYY-MM-DD format
+          
+          const heatDemandResponse = await fetch(`/api/dashboard/heat-demand?customer_id=${session.user.customerid}&start_date=${startDate}&end_date=${endDate}&limit=24`);
           
           if (heatDemandResponse.ok) {
             const heatDemandData = await heatDemandResponse.json();
