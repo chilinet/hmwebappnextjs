@@ -34,6 +34,74 @@ export default function Home() {
   const [heatDemandData, setHeatDemandData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [showTimeModal, setShowTimeModal] = useState(false);
+  const [selectedTimePeriod, setSelectedTimePeriod] = useState('24h');
+
+  // Time period options
+  const timePeriodOptions = [
+    { value: '24h', label: '24 Stunden', days: 1 },
+    { value: '7d', label: '7 Tage', days: 7 },
+    { value: '30d', label: '30 Tage', days: 30 },
+    { value: '90d', label: '90 Tage', days: 90 }
+  ];
+
+  // Helper function to get date range based on time period
+  const getDateRange = (period) => {
+    const today = new Date();
+    const startDate = new Date(today);
+    
+    switch (period) {
+      case '24h':
+        startDate.setDate(startDate.getDate() - 1);
+        break;
+      case '7d':
+        startDate.setDate(startDate.getDate() - 7);
+        break;
+      case '30d':
+        startDate.setDate(startDate.getDate() - 30);
+        break;
+      case '90d':
+        startDate.setDate(startDate.getDate() - 90);
+        break;
+      default:
+        startDate.setDate(startDate.getDate() - 1);
+    }
+    
+    return {
+      startDate: startDate.toISOString().split('T')[0],
+      endDate: today.toISOString().split('T')[0]
+    };
+  };
+
+  // Function to handle time period change
+  const handleTimePeriodChange = async (period) => {
+    console.log('handleTimePeriodChange called with period:', period);
+    setSelectedTimePeriod(period);
+    setShowTimeModal(false);
+    
+    if (session?.user?.customerid) {
+      try {
+        const { startDate, endDate } = getDateRange(period);
+        const limit = period === '24h' ? 24 : period === '7d' ? 168 : period === '30d' ? 720 : 2160;
+        
+        console.log('Fetching data for period:', period, 'startDate:', startDate, 'endDate:', endDate, 'limit:', limit);
+        
+        const heatDemandResponse = await fetch(`/api/dashboard/heat-demand?customer_id=${session.user.customerid}&start_date=${startDate}&end_date=${endDate}&limit=${limit}`);
+        
+        if (heatDemandResponse.ok) {
+          const heatDemandData = await heatDemandResponse.json();
+          console.log('Heat demand data received for period:', period, heatDemandData);
+          setHeatDemandData(heatDemandData);
+        } else {
+          console.warn('Failed to fetch heat demand data for period:', period);
+        }
+      } catch (err) {
+        console.error('Error fetching heat demand data for period:', period, err);
+      }
+    } else {
+      console.warn('No customer ID in session');
+    }
+  };
 
   // Helper function to calculate heat demand statistics
   const getHeatDemandStats = () => {
@@ -57,10 +125,26 @@ export default function Home() {
       return [];
     }
 
-    return heatDemandData.data.map(hour => ({
-      time: new Date(hour.hour_start).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }),
-      value: Math.round(hour.avg_percentvalveopen)
-    }));
+    const data = heatDemandData.data;
+    const maxItems = selectedTimePeriod === '24h' ? 12 : selectedTimePeriod === '7d' ? 7 : selectedTimePeriod === '30d' ? 15 : 20;
+    
+    return data.slice(0, maxItems).map(hour => {
+      let timeLabel;
+      const date = new Date(hour.hour_start);
+      
+      if (selectedTimePeriod === '24h') {
+        timeLabel = date.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+      } else if (selectedTimePeriod === '7d') {
+        timeLabel = date.toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit' });
+      } else {
+        timeLabel = date.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
+      }
+      
+      return {
+        time: timeLabel,
+        value: Math.round(hour.avg_percentvalveopen)
+      };
+    });
   };
 
   useEffect(() => {
@@ -263,21 +347,31 @@ export default function Home() {
                 <Card.Body className="p-4">
                   <div className="d-flex justify-content-between align-items-center mb-4">
                     <h5 className="mb-0 fw-bold">HEIZUNGSSTEUERUNG & WÄRMEANFORDERUNG</h5>
-                    <button className="btn btn-outline-secondary btn-sm">Letzte 24 h</button>
+                    <button 
+                      className="btn btn-outline-secondary btn-sm"
+                      onClick={() => {
+                        console.log('Opening time modal...');
+                        setShowTimeModal(true);
+                      }}
+                    >
+                      {timePeriodOptions.find(opt => opt.value === selectedTimePeriod)?.label || 'Letzte 24 h'}
+                    </button>
                   </div>
                   <div className="heat-demand-chart">
                     {heatDemandData?.data && heatDemandData.data.length > 0 ? (
                       <div className="chart-container">
                         <div className="chart-header mb-3">
                           <div className="d-flex justify-content-between align-items-center">
-                            <span className="text-muted small">Wärmeanforderung über 24h</span>
                             <span className="text-muted small">
-                              {heatDemandData.data.length} Stunden
+                              Wärmeanforderung über {timePeriodOptions.find(opt => opt.value === selectedTimePeriod)?.label || '24h'}
+                            </span>
+                            <span className="text-muted small">
+                              {heatDemandData.data.length} Datenpunkte
                             </span>
                           </div>
                         </div>
                         <div className="chart-bars">
-                          {getHeatDemandChartData().slice(0, 12).map((item, index) => (
+                          {getHeatDemandChartData().map((item, index) => (
                             <div key={index} className="chart-bar-container">
                               <div className="chart-bar" style={{ 
                                 height: `${Math.min(item.value * 2, 100)}px`,
@@ -436,6 +530,57 @@ export default function Home() {
         </div>
       </div>
 
+      {/* Time Period Selection Modal */}
+      {showTimeModal && (
+        <div 
+          className="modal-overlay"
+          onClick={() => setShowTimeModal(false)}
+        >
+          <div 
+            className="modal-content-custom"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header-custom">
+              <h5 className="modal-title">Zeitraum auswählen</h5>
+              <button 
+                type="button" 
+                className="btn-close-custom" 
+                onClick={() => setShowTimeModal(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="modal-body-custom">
+              <div className="row g-3">
+                {timePeriodOptions.map((option) => (
+                  <div key={option.value} className="col-6">
+                    <button
+                      type="button"
+                      className={`btn w-100 ${selectedTimePeriod === option.value ? 'btn-primary' : 'btn-outline-primary'}`}
+                      onClick={() => {
+                        console.log('Selected time period:', option.value);
+                        handleTimePeriodChange(option.value);
+                      }}
+                    >
+                      {option.label}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="modal-footer-custom">
+              <button 
+                type="button" 
+                className="btn btn-secondary" 
+                onClick={() => setShowTimeModal(false)}
+              >
+                Abbrechen
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <style jsx>{`
         .status-card {
           border-radius: 12px;
@@ -552,6 +697,72 @@ export default function Home() {
           font-weight: 600;
           color: #495057;
           text-align: center;
+        }
+        
+        .modal-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background-color: rgba(0, 0, 0, 0.5);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 1050;
+        }
+        
+        .modal-content-custom {
+          background: white;
+          border-radius: 8px;
+          box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+          max-width: 500px;
+          width: 90%;
+          max-height: 90vh;
+          overflow-y: auto;
+        }
+        
+        .modal-header-custom {
+          padding: 1rem 1.5rem;
+          border-bottom: 1px solid #dee2e6;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        
+        .modal-title {
+          margin: 0;
+          font-size: 1.25rem;
+          font-weight: 600;
+        }
+        
+        .btn-close-custom {
+          background: none;
+          border: none;
+          font-size: 1.5rem;
+          cursor: pointer;
+          color: #6c757d;
+          padding: 0;
+          width: 30px;
+          height: 30px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        
+        .btn-close-custom:hover {
+          color: #000;
+        }
+        
+        .modal-body-custom {
+          padding: 1.5rem;
+        }
+        
+        .modal-footer-custom {
+          padding: 1rem 1.5rem;
+          border-top: 1px solid #dee2e6;
+          display: flex;
+          justify-content: flex-end;
         }
       `}</style>
     </>
