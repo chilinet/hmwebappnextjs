@@ -17,7 +17,13 @@ import {
   faHome,
   faShieldAlt,
   faChartLine,
-  faUsers
+  faUsers,
+  faCloud,
+  faCloudRain,
+  faSun,
+  faHeartbeat,
+  faWarning,
+  faInfoCircle
 } from '@fortawesome/free-solid-svg-icons';
 import Head from 'next/head';
 
@@ -120,293 +126,234 @@ export default function Home() {
   return (
     <>
       <Head>
-        <title>HeatManager - Übersicht</title>
+        <title>HeatManager - Dashboard</title>
         <meta name="description" content="HeatManager - Intelligente Heizungssteuerung und -überwachung" />
       </Head>
       
-      <div className="light-theme">
+      <div className="light-theme" style={{ backgroundColor: '#f5f5f5', minHeight: '100vh' }}>
         <div className="container-fluid py-4">
-          {/* Spacer for top margin */}
-          <div className="row mb-4">
-            <div className="col-12">
-              <div style={{ height: '20px' }}></div>
-            </div>
-          </div>
-          
-          {/* Main Dashboard Tiles */}
-          <div className="row g-4 mb-5">
-            {/* 1. Wärme Kachel */}
-            <div className="col-xl-6 col-lg-6">
-              <Card 
-                className="h-100 dashboard-tile shadow border-2 border-dark" 
-                style={{ cursor: 'pointer' }}
-                onClick={() => router.push('/heating-control')}
-              >
+          {/* Top Row - Status Cards */}
+          <div className="row g-3 mb-4">
+            {/* Active Devices Card */}
+            <div className="col-xl-3 col-lg-6 col-md-6">
+              <Card className="status-card shadow-sm">
                 <Card.Body className="p-4">
-                  <div className="d-flex justify-content-between align-items-start mb-3">
+                  <div className="d-flex align-items-center mb-3">
+                    <div className="status-icon bg-success me-3">
+                      <FontAwesomeIcon icon={faCheckCircle} />
+                    </div>
                     <div>
-                      <h4 className="mb-1 fw-bold text-dark">
-                        <FontAwesomeIcon icon={faFire} className="me-2 text-danger" />
-                        Wärme
-                      </h4>
-                      <p className="mb-0 text-muted fw-semibold">Heizungssteuerung & Monitoring</p>
-                    </div>
-                    <div className="icon-shape bg-danger text-white border border-dark">
-                      <FontAwesomeIcon icon={faFire} size="lg" />
-                    </div>
-                  </div>
-                  
-                            <div className="row g-3">
-            <div className="col-4">
-              <div className="text-center">
-                <h3 className="mb-1 fw-bold text-primary">{dashboardData?.devices || 0}</h3>
-                <small className="text-dark fw-semibold">Gesamt</small>
-              </div>
-            </div>
-            <div className="col-4">
-              <div className="text-center">
-                <h3 className="mb-1 fw-bold text-success">{dashboardData?.activeDevices || 0}</h3>
-                <small className="text-dark fw-semibold">Aktiv</small>
-              </div>
-            </div>
-            <div className="col-4">
-              <div className="text-center">
-                <h3 className="mb-1 fw-bold text-danger">{dashboardData?.inactiveDevices || 0}</h3>
-                <small className="text-dark fw-semibold">Inaktiv</small>
-              </div>
-            </div>
-                  </div>
-                  
-                  <div className="row g-3 mt-2">
-                    <div className="col-12">
-                      <div className="text-center">
-                        <h3 className="mb-1 fw-bold text-info">{dashboardData?.heatDemand || '85%'}</h3>
-                        <small className="text-dark fw-semibold">Wärmeanforderung</small>
-                      </div>
+                      <h3 className="mb-0 text-success fw-bold">{dashboardData?.activeDevices || '--'}</h3>
+                      <p className="mb-0 text-muted small">AKTIVE GERÄTE</p>
+                      <p className="mb-0 text-muted small">Gesamt {dashboardData?.devices || '--'}</p>
                     </div>
                   </div>
                 </Card.Body>
               </Card>
             </div>
 
-            {/* 2. Verbrauch Kachel */}
-            <div className="col-xl-6 col-lg-6">
-              <Card 
-                className="h-100 dashboard-tile shadow border-2 border-dark disabled-card"
-                style={{
-                  opacity: 0.3,
-                  filter: 'grayscale(100%) brightness(0.6) blur(2px)',
-                  pointerEvents: 'none',
-                  cursor: 'not-allowed'
-                }}
-              >
+            {/* Heat Demand Card */}
+            <div className="col-xl-3 col-lg-6 col-md-6">
+              <Card className="status-card shadow-sm">
                 <Card.Body className="p-4">
-                  <div className="d-flex justify-content-between align-items-start mb-3">
+                  <div className="d-flex align-items-center mb-3">
+                    <div className="status-icon bg-secondary me-3">
+                      <FontAwesomeIcon icon={faThermometerHalf} />
+                    </div>
                     <div>
-                      <h4 className="mb-1 fw-bold text-dark">
-                        <FontAwesomeIcon icon={faTachometerAlt} className="me-2 text-secondary" />
-                        Verbrauch
-                      </h4>
-                      <p className="mb-0 text-muted fw-semibold">Energieverbrauch & Effizienz</p>
+                      <h3 className="mb-0 text-secondary fw-bold">{dashboardData?.heatDemand || '--%'}</h3>
+                      <p className="mb-0 text-muted small">WÄRMEANFORDERUNG</p>
+                      <p className="mb-0 text-muted small">Ø Ventilöffnung --%</p>
                     </div>
-                    <div className="icon-shape bg-secondary text-white border border-dark">
-                      <FontAwesomeIcon icon={faTachometerAlt} size="lg" />
-                    </div>
-                  </div>
-                  
-                  <div className="row g-3">
-                    <div className="col-4">
-                      <div className="text-center">
-                        <h3 className="mb-1 fw-bold text-primary">---</h3>
-                        <small className="text-dark fw-semibold">kWh/h</small>
-                      </div>
-                    </div>
-                    <div className="col-4">
-                      <div className="text-center">
-                        <h3 className="mb-1 fw-bold text-success">
-                          <FontAwesomeIcon icon={faArrowDown} className="me-1" />
-                          ---
-                        </h3>
-                        <small className="text-dark fw-semibold">Effizienz</small>
-                      </div>
-                    </div>
-                    <div className="col-4">
-                      <div className="text-center">
-                        <h3 className="mb-1 fw-bold text-primary">---</h3>
-                        <small className="text-dark fw-semibold">Monatlich</small>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="mt-3">
-                    <div className="d-flex justify-content-between align-items-center mb-1">
-                      <small className="text-dark fw-semibold">Energieeinsparung</small>
-                      <Badge bg="success" className="border border-dark">---</Badge>
-                    </div>
-                    <ProgressBar variant="info" now={0} className="border border-dark" />
                   </div>
                 </Card.Body>
               </Card>
             </div>
 
-            {/* 3. Raumklima Kachel */}
-            <div className="col-xl-6 col-lg-6">
-              <Card 
-                className="h-100 dashboard-tile shadow border-2 border-dark disabled-card"
-                style={{
-                  opacity: 0.3,
-                  filter: 'grayscale(100%) brightness(0.6) blur(2px)',
-                  pointerEvents: 'none',
-                  cursor: 'not-allowed'
-                }}
-              >
+            {/* Inactive/Faulty Devices Card */}
+            <div className="col-xl-3 col-lg-6 col-md-6">
+              <Card className="status-card shadow-sm">
                 <Card.Body className="p-4">
-                  <div className="d-flex justify-content-between align-items-start mb-3">
+                  <div className="d-flex align-items-center mb-3">
+                    <div className="status-icon bg-danger me-3">
+                      <FontAwesomeIcon icon={faHeartbeat} />
+                    </div>
                     <div>
-                      <h4 className="mb-1 fw-bold text-dark">
-                        <FontAwesomeIcon icon={faThermometerHalf} className="me-2 text-secondary" />
-                        Raumklima
-                      </h4>
-                      <p className="mb-0 text-muted fw-semibold">Temperatur & Luftqualität</p>
+                      <h3 className="mb-0 text-danger fw-bold">{dashboardData?.inactiveDevices || '--'}</h3>
+                      <p className="mb-0 text-muted small">INAKTIVE / FEHLERHAFT</p>
+                      <p className="mb-0 text-muted small">Letzte 24 h: -- neu</p>
                     </div>
-                    <div className="icon-shape bg-secondary text-white border border-dark">
-                      <FontAwesomeIcon icon={faThermometerHalf} size="lg" />
-                    </div>
-                  </div>
-                  
-                  <div className="row g-3">
-                    <div className="col-4">
-                      <div className="text-center">
-                        <h3 className="mb-1 fw-bold text-primary">---°C</h3>
-                        <small className="text-dark fw-semibold">Durchschnitt</small>
-                      </div>
-                    </div>
-                    <div className="col-4">
-                      <div className="text-center">
-                        <h3 className="mb-1 fw-bold text-info">---%</h3>
-                        <small className="text-dark fw-semibold">Luftfeuchtigkeit</small>
-                      </div>
-                    </div>
-                    <div className="col-4">
-                      <div className="text-center">
-                        <h3 className="mb-1 fw-bold text-success">
-                          <FontAwesomeIcon icon={faCheckCircle} className="me-1" />
-                          ---
-                        </h3>
-                        <small className="text-dark fw-semibold">Komfort</small>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="mt-3">
-                    <div className="d-flex justify-content-between align-items-center mb-1">
-                      <small className="text-dark fw-semibold">Klimaqualität</small>
-                      <Badge bg="success" className="border border-dark">---</Badge>
-                    </div>
-                    <ProgressBar variant="success" now={0} className="border border-dark" />
                   </div>
                 </Card.Body>
               </Card>
             </div>
 
-            {/* 4. Einstellungen Kachel */}
-            <div className="col-xl-6 col-lg-6">
-              <Card className="h-100 dashboard-tile shadow border-2 border-dark">
+            {/* Open Alarms Card */}
+            <div className="col-xl-3 col-lg-6 col-md-6">
+              <Card className="status-card shadow-sm">
                 <Card.Body className="p-4">
-                  <div className="d-flex justify-content-between align-items-start mb-3">
+                  <div className="d-flex align-items-center mb-3">
+                    <div className="status-icon bg-danger me-3">
+                      <FontAwesomeIcon icon={faExclamationTriangle} />
+                    </div>
                     <div>
-                      <h4 className="mb-1 fw-bold text-dark">
-                        <FontAwesomeIcon icon={faCog} className="me-2 text-warning" />
-                        Einstellungen
-                      </h4>
-                      <p className="mb-0 text-muted fw-semibold">System & Benutzerverwaltung</p>
+                      <h3 className="mb-0 text-danger fw-bold">--</h3>
+                      <p className="mb-0 text-muted small">ALARME OFFEN</p>
+                      <p className="mb-0 text-muted small">-- kritisch, -- Info</p>
                     </div>
-                    <div className="icon-shape bg-warning text-white border border-dark">
-                      <FontAwesomeIcon icon={faCog} size="lg" />
-                    </div>
-                  </div>
-                  
-                  <div className="row g-3">
-                    <div className="col-4">
-                      <div className="text-center">
-                        <h3 className="mb-1 fw-bold text-primary">{dashboardData?.users || 0}</h3>
-                        <small className="text-dark fw-semibold">Benutzer</small>
-                      </div>
-                    </div>
-                    <div className="col-4">
-                      <div className="text-center">
-                        <h3 className="mb-1 fw-bold text-warning">
-                          <FontAwesomeIcon icon={faShieldAlt} className="me-1" />
-                          {dashboardData?.securityLevel || 'Hoch'}
-                        </h3>
-                        <small className="text-dark fw-semibold">Sicherheit</small>
-                      </div>
-                    </div>
-                    <div className="col-4">
-                      <div className="text-center">
-                        <h3 className="mb-1 fw-bold text-success">
-                          <FontAwesomeIcon icon={faBolt} className="me-1" />
-                          {dashboardData?.systemStatus || 'Online'}
-                        </h3>
-                        <small className="text-dark fw-semibold">Status</small>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="mt-3">
-                    <div className="d-flex justify-content-between align-items-center mb-1">
-                      <small className="text-dark fw-semibold">Systemverfügbarkeit</small>
-                      <Badge bg="success" className="border border-dark">99.9%</Badge>
-                    </div>
-                    <ProgressBar variant="warning" now={99} className="border border-dark" />
                   </div>
                 </Card.Body>
               </Card>
             </div>
           </div>
 
-          {/* Quick Actions */}
-          <div className="row mt-4">
-            <div className="col-12">
-              <Card className="border-0 shadow-sm">
+          {/* Middle Row - Charts and Weather */}
+          <div className="row g-4 mb-4">
+            {/* Heating Control & Heat Demand Chart */}
+            <div className="col-xl-8 col-lg-7">
+              <Card className="chart-card shadow-sm">
                 <Card.Body className="p-4">
-                  <h5 className="text-primary mb-3">Schnellzugriff</h5>
-                  <div className="row g-3">
-                    <div className="col-md-3">
-                      <button 
-                        className="btn btn-outline-primary w-100"
-                        onClick={() => router.push('/dashboard')}
-                      >
-                        <FontAwesomeIcon icon={faChartLine} className="me-2" />
-                        Dashboard
-                      </button>
+                  <div className="d-flex justify-content-between align-items-center mb-4">
+                    <h5 className="mb-0 fw-bold">HEIZUNGSSTEUERUNG & WÄRMEANFORDERUNG</h5>
+                    <button className="btn btn-outline-secondary btn-sm">Letzte 24 h</button>
+                  </div>
+                  <div className="chart-placeholder">
+                    <div className="text-center py-5">
+                      <FontAwesomeIcon icon={faChartLine} size="3x" className="text-muted mb-3" />
+                      <p className="text-muted">Chart-Daten werden geladen...</p>
                     </div>
-                    <div className="col-md-3">
-                      <button 
-                        className="btn btn-outline-success w-100"
-                        onClick={() => router.push('/config/devices')}
-                      >
-                        <FontAwesomeIcon icon={faThermometerHalf} className="me-2" />
-                        Geräte
-                      </button>
+                  </div>
+                </Card.Body>
+              </Card>
+            </div>
+
+            {/* Weather & External Influence */}
+            <div className="col-xl-4 col-lg-5">
+              <Card className="weather-card shadow-sm">
+                <Card.Body className="p-4">
+                  <h5 className="mb-4 fw-bold">WETTER & AUSSENEINFLUSS</h5>
+                  
+                  <div className="weather-current mb-4">
+                    <div className="d-flex align-items-center mb-3">
+                      <FontAwesomeIcon icon={faCloud} size="2x" className="text-muted me-3" />
+                      <div>
+                        <h3 className="mb-0 fw-bold">--°C</h3>
+                        <p className="mb-0 text-muted small">Gefühlte --°C · -- m/s Wind</p>
+                      </div>
                     </div>
-                    <div className="col-md-3">
-                      <button 
-                        className="btn btn-outline-info w-100"
-                        onClick={() => router.push('/config/users')}
-                      >
-                        <FontAwesomeIcon icon={faUsers} className="me-2" />
-                        Benutzer
-                      </button>
+                    <p className="mb-2"><strong>Heizbedarf:</strong> --</p>
+                    <p className="mb-0"><strong>Trend:</strong> --</p>
+                  </div>
+
+                  <div className="weather-forecast">
+                    <div className="row g-2">
+                      <div className="col-3">
+                        <div className="text-center">
+                          <small className="text-muted">+3h</small>
+                          <div className="mt-1">
+                            <FontAwesomeIcon icon={faCloud} className="text-muted" />
+                          </div>
+                          <small>--°C</small>
+                        </div>
+                      </div>
+                      <div className="col-3">
+                        <div className="text-center">
+                          <small className="text-muted">+6h</small>
+                          <div className="mt-1">
+                            <FontAwesomeIcon icon={faCloudRain} className="text-muted" />
+                          </div>
+                          <small>--°C</small>
+                        </div>
+                      </div>
+                      <div className="col-3">
+                        <div className="text-center">
+                          <small className="text-muted">+9h</small>
+                          <div className="mt-1">
+                            <FontAwesomeIcon icon={faCloudRain} className="text-muted" />
+                          </div>
+                          <small>--°C</small>
+                        </div>
+                      </div>
+                      <div className="col-3">
+                        <div className="text-center">
+                          <small className="text-muted">+12h</small>
+                          <div className="mt-1">
+                            <FontAwesomeIcon icon={faCloudRain} className="text-muted" />
+                          </div>
+                          <small>--°C</small>
+                        </div>
+                      </div>
                     </div>
-                    <div className="col-md-3">
-                      <button 
-                        className="btn btn-outline-warning w-100"
-                        onClick={() => router.push('/config')}
-                      >
-                        <FontAwesomeIcon icon={faCog} className="me-2" />
-                        Einstellungen
-                      </button>
+                  </div>
+                </Card.Body>
+              </Card>
+            </div>
+          </div>
+
+          {/* Bottom Row - Consumption and Alerts */}
+          <div className="row g-4">
+            {/* Consumption & Efficiency Chart */}
+            <div className="col-xl-8 col-lg-7">
+              <Card className="chart-card shadow-sm">
+                <Card.Body className="p-4">
+                  <h5 className="mb-4 fw-bold">VERBRAUCH & EFFIZIENZ</h5>
+                  <div className="chart-placeholder">
+                    <div className="text-center py-5">
+                      <FontAwesomeIcon icon={faChartLine} size="3x" className="text-muted mb-3" />
+                      <p className="text-muted">Verbrauchsdaten werden geladen...</p>
+                    </div>
+                  </div>
+                  <div className="mt-3">
+                    <div className="d-flex justify-content-between align-items-center">
+                      <span className="text-muted">Energieeinsparung ggü. Referenz:</span>
+                      <Badge bg="success">--%</Badge>
+                    </div>
+                  </div>
+                </Card.Body>
+              </Card>
+            </div>
+
+            {/* Alarms & Messages */}
+            <div className="col-xl-4 col-lg-5">
+              <Card className="alerts-card shadow-sm">
+                <Card.Body className="p-4">
+                  <div className="d-flex justify-content-between align-items-center mb-4">
+                    <h5 className="mb-0 fw-bold">ALARME & MELDUNGEN</h5>
+                    <button className="btn btn-outline-secondary btn-sm">Alarm-Center öffnen</button>
+                  </div>
+                  
+                  <div className="alerts-list">
+                    <div className="alert-item mb-3">
+                      <div className="d-flex align-items-start">
+                        <FontAwesomeIcon icon={faExclamationTriangle} className="text-danger me-2 mt-1" />
+                        <div className="flex-grow-1">
+                          <p className="mb-1 fw-semibold">Thermostat #040 keine Verbindung seit 45 min</p>
+                          <small className="text-muted">Kritisch · 12:05 Uhr</small>
+                        </div>
+                        <button className="btn btn-outline-danger btn-sm">Details</button>
+                      </div>
+                    </div>
+                    
+                    <div className="alert-item mb-3">
+                      <div className="d-flex align-items-start">
+                        <FontAwesomeIcon icon={faWarning} className="text-warning me-2 mt-1" />
+                        <div className="flex-grow-1">
+                          <p className="mb-1 fw-semibold">Batterie niedrig in Raum 207 (18%)</p>
+                          <small className="text-muted">Warnung · 11:50 Uhr</small>
+                        </div>
+                        <button className="btn btn-outline-warning btn-sm">Details</button>
+                      </div>
+                    </div>
+                    
+                    <div className="alert-item">
+                      <div className="d-flex align-items-start">
+                        <FontAwesomeIcon icon={faInfoCircle} className="text-info me-2 mt-1" />
+                        <div className="flex-grow-1">
+                          <p className="mb-1 fw-semibold">Fenster offen erkannt in Raum 315</p>
+                          <small className="text-muted">Info · 11:21 Uhr</small>
+                        </div>
+                        <button className="btn btn-outline-info btn-sm">Details</button>
+                      </div>
                     </div>
                   </div>
                 </Card.Body>
@@ -417,45 +364,70 @@ export default function Home() {
       </div>
 
       <style jsx>{`
-        .dashboard-tile {
-          transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
-          border-radius: 16px;
-          overflow: hidden;
-        }
-        
-        .dashboard-tile:hover {
-          transform: translateY(-5px);
-          box-shadow: 0 10px 25px rgba(0,0,0,0.15) !important;
-        }
-        
-        .icon-shape {
-          width: 60px;
-          height: 60px;
+        .status-card {
           border-radius: 12px;
+          border: none;
+          background: white;
+          transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+        }
+        
+        .status-card:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 8px 20px rgba(0,0,0,0.1) !important;
+        }
+        
+        .status-icon {
+          width: 48px;
+          height: 48px;
+          border-radius: 8px;
           display: flex;
           align-items: center;
           justify-content: center;
+          font-size: 1.2rem;
         }
         
-        .dashboard-tile .progress {
-          height: 8px;
-          border-radius: 4px;
+        .chart-card, .weather-card, .alerts-card {
+          border-radius: 12px;
+          border: none;
+          background: white;
+          transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
         }
         
-        .dashboard-tile .badge {
-          font-size: 0.75rem;
+        .chart-card:hover, .weather-card:hover, .alerts-card:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 8px 20px rgba(0,0,0,0.1) !important;
         }
         
-        .disabled-card {
-          opacity: 0.3 !important;
-          filter: grayscale(100%) brightness(0.6) blur(2px) !important;
-          pointer-events: none !important;
-          cursor: not-allowed !important;
+        .chart-placeholder {
+          background: #f8f9fa;
+          border-radius: 8px;
+          border: 2px dashed #dee2e6;
         }
         
-        .disabled-card * {
-          opacity: 0.5 !important;
-          filter: blur(1px) !important;
+        .weather-forecast {
+          border-top: 1px solid #dee2e6;
+          padding-top: 1rem;
+        }
+        
+        .alert-item {
+          border-bottom: 1px solid #f0f0f0;
+          padding-bottom: 1rem;
+        }
+        
+        .alert-item:last-child {
+          border-bottom: none;
+          padding-bottom: 0;
+        }
+        
+        .btn-outline-secondary {
+          border-color: #6c757d;
+          color: #6c757d;
+        }
+        
+        .btn-outline-secondary:hover {
+          background-color: #6c757d;
+          border-color: #6c757d;
+          color: white;
         }
       `}</style>
     </>
