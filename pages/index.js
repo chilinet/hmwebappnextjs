@@ -126,7 +126,7 @@ export default function Home() {
     }
 
     const data = heatDemandData.data;
-    const maxItems = selectedTimePeriod === '24h' ? 12 : selectedTimePeriod === '7d' ? 7 : selectedTimePeriod === '30d' ? 15 : 20;
+    const maxItems = selectedTimePeriod === '24h' ? 24 : selectedTimePeriod === '7d' ? 7 : selectedTimePeriod === '30d' ? 15 : 20;
     
     // Sort data by hour_start in ascending order (oldest first)
     const sortedData = [...data].sort((a, b) => new Date(a.hour_start) - new Date(b.hour_start));
@@ -664,9 +664,10 @@ export default function Home() {
         .chart-bars {
           display: flex;
           align-items: end;
-          gap: 8px;
+          gap: 4px;
           height: 150px;
           padding: 0 4px;
+          overflow-x: auto;
         }
         
         .chart-bar-container {
@@ -675,6 +676,7 @@ export default function Home() {
           flex-direction: column;
           align-items: center;
           min-width: 0;
+          flex-shrink: 0;
         }
         
         .chart-bar {
