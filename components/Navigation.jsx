@@ -11,6 +11,26 @@ export default function Navigation() {
     const router = useRouter();
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+    const [customerName, setCustomerName] = useState('');
+
+    // Load customer name when session is available
+    useEffect(() => {
+        const loadCustomerName = async () => {
+            if (session?.user?.customerid) {
+                try {
+                    const response = await fetch(`/api/thingsboard/customers/${session.user.customerid}`);
+                    if (response.ok) {
+                        const customerData = await response.json();
+                        setCustomerName(customerData.title || '');
+                    }
+                } catch (error) {
+                    console.error('Error loading customer name:', error);
+                }
+            }
+        };
+
+        loadCustomerName();
+    }, [session?.user?.customerid]);
 
     // Close dropdown when clicking outside
     useEffect(() => {
@@ -56,12 +76,15 @@ export default function Navigation() {
 
                 {/* Navigation Items */}
                 <div className={`navbar-collapse ${isMobileMenuOpen ? 'show' : ''}`} id="navbarNav">
-                    <ul className="navbar-nav mx-auto">
-                        {/* Navigation items removed - only logo and user menu remain */}
-                    </ul>
-
                     {/* User Menu */}
-                    <div className="navbar-nav ms-auto">
+                    <div className="navbar-nav ms-auto d-flex align-items-center">
+                        {/* Customer Name */}
+                        {customerName && (
+                            <span className="nav-link text-muted fw-semibold me-3">
+                                {customerName}
+                            </span>
+                        )}
+                        
                         {session ? (
                             <div className="nav-item dropdown">
                                 <button 

@@ -149,7 +149,8 @@ export default function Home() {
       
       return {
         time: timeLabel,
-        value: Math.round(hour.avg_percentvalveopen)
+        value: Math.round(hour.avg_percentvalveopen),
+        temperature: Math.round(hour.avg_sensortemperature * 10) / 10
       };
     });
   };
@@ -383,8 +384,11 @@ export default function Home() {
                                 height: `${Math.min(item.value * 2, 100)}px`,
                                 backgroundColor: item.value > 20 ? '#dc3545' : item.value > 10 ? '#ffc107' : '#28a745'
                               }}></div>
-                              <div className="chart-label">{item.time}</div>
-                              <div className="chart-value">{item.value}%</div>
+                               <div className="chart-label">{item.time}</div>
+                               <div className="chart-values">
+                                 <div className="chart-value valve-value">{item.value}%</div>
+                                 <div className="chart-value temp-value">{item.temperature}°C</div>
+                               </div>
                             </div>
                           ))}
                         </div>
@@ -700,11 +704,24 @@ export default function Home() {
           text-overflow: ellipsis;
         }
         
+        .chart-values {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+        
         .chart-value {
-          font-size: 0.65rem;
+          font-size: 0.6rem;
           font-weight: 600;
-          color: #495057;
           text-align: center;
+        }
+        
+        .valve-value {
+          color: #495057;
+        }
+        
+        .temp-value {
+          color: #4ecdc4;
         }
         
         .modal-overlay {
