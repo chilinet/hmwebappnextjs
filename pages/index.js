@@ -32,6 +32,7 @@ export default function Home() {
   const router = useRouter();
   const [dashboardData, setDashboardData] = useState(null);
   const [heatDemandData, setHeatDemandData] = useState(null);
+  const [alarmsData, setAlarmsData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showTimeModal, setShowTimeModal] = useState(false);
@@ -155,6 +156,76 @@ export default function Home() {
     });
   };
 
+  // Helper function to calculate alarm statistics (same logic as alarms page)
+  const getAlarmStats = () => {
+    if (!alarmsData?.data || alarmsData.data.length === 0) {
+      return { 
+        total: 0, 
+        critical: 0, 
+        info: 0,
+        criticalLabel: '-- kritisch',
+        infoLabel: '-- Info'
+      };
+    }
+
+    const alarms = alarmsData.data;
+    
+    // Same severity mapping as alarms page
+    const critical = alarms.filter(alarm => {
+      const severity = alarm.severity?.toLowerCase();
+      return severity === 'critical' || severity === 'major';
+    }).length;
+    
+    const info = alarms.filter(alarm => {
+      const severity = alarm.severity?.toLowerCase();
+      return severity === 'minor' || severity === 'warning' || severity === 'indeterminate';
+    }).length;
+
+    return {
+      total: alarms.length,
+      critical: critical,
+      info: info,
+      criticalLabel: critical > 0 ? `${critical} kritisch` : '-- kritisch',
+      infoLabel: info > 0 ? `${info} Info` : '-- Info'
+    };
+  };
+
+  // Helper function to get recent alarms
+  const getRecentAlarms = () => {
+    if (!alarmsData?.data || alarmsData.data.length === 0) {
+      return [];
+    }
+
+    // Sort by createdTime descending (newest first) and take first 3
+    const sortedAlarms = [...alarmsData.data]
+      .sort((a, b) => new Date(b.createdTime || b.startTs) - new Date(a.createdTime || a.startTs))
+      .slice(0, 3);
+
+    return sortedAlarms.map(alarm => {
+      const alarmTime = new Date(alarm.createdTime || alarm.startTs);
+      const timeString = alarmTime.toLocaleString('de-DE', {
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+      const dateString = alarmTime.toLocaleDateString('de-DE', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      });
+
+      return {
+        id: alarm.id?.id,
+        type: alarm.type || 'Unbekannter Alarm',
+        severity: alarm.severity || 'UNKNOWN',
+        device: alarm.originatorLabel || alarm.device?.name || 'Unbekanntes Gerät',
+        time: timeString,
+        date: dateString,
+        acknowledged: !!alarm.ackTs,
+        cleared: !!alarm.clearTs
+      };
+    });
+  };
+
   useEffect(() => {
     if (status === "unauthenticated") {
       router.push("/auth/signin");
@@ -192,6 +263,17 @@ export default function Home() {
             setHeatDemandData(heatDemandData);
           } else {
             console.warn('Failed to fetch heat demand data, using fallback');
+          }
+
+          // Fetch all active alarms for statistics
+          const alarmsResponse = await fetch(`/api/alarms?customer_id=${session.user.customerid}&status=ACTIVE&limit=100`);
+          
+          if (alarmsResponse.ok) {
+            const alarmsData = await alarmsResponse.json();
+            console.log('All alarms data received:', alarmsData);
+            setAlarmsData(alarmsData);
+          } else {
+            console.warn('Failed to fetch alarms data, using fallback');
           }
         } catch (err) {
           console.error('Error fetching dashboard data:', err);
@@ -336,9 +418,9 @@ export default function Home() {
                       <FontAwesomeIcon icon={faExclamationTriangle} />
                     </div>
                     <div>
-                      <h3 className="mb-0 text-danger fw-bold">--</h3>
+                      <h3 className="mb-0 text-danger fw-bold">{getAlarmStats().total}</h3>
                       <p className="mb-0 text-muted small">ALARME OFFEN</p>
-                      <p className="mb-0 text-muted small">-- kritisch, -- Info</p>
+                      <p className="mb-0 text-muted small">{getAlarmStats().criticalLabel}, {getAlarmStats().infoLabel}</p>
                     </div>
                   </div>
                 </Card.Body>
@@ -496,42 +578,98 @@ export default function Home() {
                 <Card.Body className="p-4">
                   <div className="d-flex justify-content-between align-items-center mb-4">
                     <h5 className="mb-0 fw-bold">ALARME & MELDUNGEN</h5>
-                    <button className="btn btn-outline-secondary btn-sm">Alarm-Center öffnen</button>
+                    <button 
+                      className="btn btn-outline-secondary btn-sm"
+                      onClick={() => router.push('/alarms')}
+                    >
+                      Alarm-Center öffnen
+                    </button>
                   </div>
                   
                   <div className="alerts-list">
-                    <div className="alert-item mb-3">
-                      <div className="d-flex align-items-start">
-                        <FontAwesomeIcon icon={faExclamationTriangle} className="text-danger me-2 mt-1" />
-                        <div className="flex-grow-1">
-                          <p className="mb-1 fw-semibold">Thermostat #040 keine Verbindung seit 45 min</p>
-                          <small className="text-muted">Kritisch · 12:05 Uhr</small>
-                        </div>
-                        <button className="btn btn-outline-danger btn-sm">Details</button>
+                    {getRecentAlarms().length > 0 ? (
+                      getRecentAlarms().map((alarm, index) => {
+                        const getAlarmIcon = (severity) => {
+                          switch (severity?.toLowerCase()) {
+                            case 'critical':
+                            case 'major':
+                              return faExclamationTriangle;
+                            case 'warning':
+                            case 'minor':
+                              return faWarning;
+                            default:
+                              return faInfoCircle;
+                          }
+                        };
+
+                        const getAlarmColor = (severity) => {
+                          switch (severity?.toLowerCase()) {
+                            case 'critical':
+                            case 'major':
+                              return 'danger';
+                            case 'warning':
+                            case 'minor':
+                              return 'warning';
+                            default:
+                              return 'info';
+                          }
+                        };
+
+                        const getSeverityLabel = (severity) => {
+                          switch (severity?.toLowerCase()) {
+                            case 'critical':
+                              return 'Kritisch';
+                            case 'major':
+                              return 'Hoch';
+                            case 'warning':
+                              return 'Warnung';
+                            case 'minor':
+                              return 'Niedrig';
+                            default:
+                              return 'Info';
+                          }
+                        };
+
+                        return (
+                          <div key={alarm.id || index} className="alert-item mb-3">
+                            <div className="d-flex align-items-start">
+                              <FontAwesomeIcon 
+                                icon={getAlarmIcon(alarm.severity)} 
+                                className={`text-${getAlarmColor(alarm.severity)} me-2 mt-1`} 
+                              />
+                              <div className="flex-grow-1">
+                                <p className="mb-1 fw-semibold">{alarm.type}</p>
+                                <small className="text-muted">
+                                  {getSeverityLabel(alarm.severity)} · {alarm.date} {alarm.time} Uhr
+                                </small>
+                                <br />
+                                <small className="text-muted">
+                                  Gerät: {alarm.device}
+                                </small>
+                                {alarm.acknowledged && (
+                                  <Badge bg="success" className="ms-2">Bestätigt</Badge>
+                                )}
+                                {alarm.cleared && (
+                                  <Badge bg="info" className="ms-2">Behoben</Badge>
+                                )}
+                              </div>
+                              <button 
+                                className={`btn btn-outline-${getAlarmColor(alarm.severity)} btn-sm`}
+                                onClick={() => router.push('/alarms')}
+                              >
+                                Details
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="text-center py-3">
+                        <FontAwesomeIcon icon={faCheckCircle} size="2x" className="text-success mb-2" />
+                        <p className="text-muted mb-0">Keine aktiven Alarme</p>
+                        <small className="text-muted">Alle Systeme funktionieren normal</small>
                       </div>
-                    </div>
-                    
-                    <div className="alert-item mb-3">
-                      <div className="d-flex align-items-start">
-                        <FontAwesomeIcon icon={faWarning} className="text-warning me-2 mt-1" />
-                        <div className="flex-grow-1">
-                          <p className="mb-1 fw-semibold">Batterie niedrig in Raum 207 (18%)</p>
-                          <small className="text-muted">Warnung · 11:50 Uhr</small>
-                        </div>
-                        <button className="btn btn-outline-warning btn-sm">Details</button>
-                      </div>
-                    </div>
-                    
-                    <div className="alert-item">
-                      <div className="d-flex align-items-start">
-                        <FontAwesomeIcon icon={faInfoCircle} className="text-info me-2 mt-1" />
-                        <div className="flex-grow-1">
-                          <p className="mb-1 fw-semibold">Fenster offen erkannt in Raum 315</p>
-                          <small className="text-muted">Info · 11:21 Uhr</small>
-                        </div>
-                        <button className="btn btn-outline-info btn-sm">Details</button>
-                      </div>
-                    </div>
+                    )}
                   </div>
                 </Card.Body>
               </Card>

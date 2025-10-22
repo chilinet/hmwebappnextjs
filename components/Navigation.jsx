@@ -1,7 +1,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faUser, faTachometerAlt, faSliders, faCog, faSignOutAlt, faBars, faUsers, faThermometerHalf } from "@fortawesome/free-solid-svg-icons";
+import { faUser, faTachometerAlt, faSliders, faCog, faSignOutAlt, faBars, faUsers, faThermometerHalf, faBell } from "@fortawesome/free-solid-svg-icons";
 import { useSession, signIn, signOut } from "next-auth/react";
 import { useRouter } from 'next/router';
 import { useState, useEffect } from 'react';
@@ -109,6 +109,15 @@ export default function Navigation() {
                                         >
                                             <FontAwesomeIcon icon={faThermometerHalf} className="me-2" />
                                             Heizungssteuerung
+                                        </Link>
+                                        <Link 
+                                            href="/alarms" 
+                                            className={`dropdown-item d-flex align-items-center ${
+                                                router.pathname === '/alarms' ? 'active-menu-item' : ''
+                                            }`}
+                                        >
+                                            <FontAwesomeIcon icon={faBell} className="me-2" />
+                                            Alarme
                                         </Link>
                                         <div className="dropdown-divider"></div>
                                         <Link href="/profile" className={`dropdown-item d-flex align-items-center ${
