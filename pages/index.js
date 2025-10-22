@@ -47,12 +47,13 @@ export default function Home() {
 
   // Helper function to get date range based on time period
   const getDateRange = (period) => {
-    const today = new Date();
-    const startDate = new Date(today);
+    const now = new Date();
+    const startDate = new Date(now);
     
     switch (period) {
       case '24h':
-        startDate.setDate(startDate.getDate() - 1);
+        // Rolling 24 hours: from 24 hours ago to now
+        startDate.setTime(now.getTime() - 24 * 60 * 60 * 1000);
         break;
       case '7d':
         startDate.setDate(startDate.getDate() - 7);
@@ -64,12 +65,12 @@ export default function Home() {
         startDate.setDate(startDate.getDate() - 90);
         break;
       default:
-        startDate.setDate(startDate.getDate() - 1);
+        startDate.setTime(now.getTime() - 24 * 60 * 60 * 1000);
     }
     
     return {
-      startDate: startDate.toISOString().split('T')[0],
-      endDate: today.toISOString().split('T')[0]
+      startDate: startDate.toISOString(),
+      endDate: now.toISOString()
     };
   };
 
@@ -110,11 +111,13 @@ export default function Home() {
     }
 
     const data = heatDemandData.data;
-    const currentHour = data[0]; // Most recent hour
+    // Sort data chronologically to get the most recent (last) value
+    const sortedData = [...data].sort((a, b) => new Date(a.hour_start) - new Date(b.hour_start));
+    const lastHour = sortedData[sortedData.length - 1]; // Last (most recent) hour
     const averageValveOpen = data.reduce((sum, hour) => sum + hour.avg_percentvalveopen, 0) / data.length;
     
     return {
-      current: currentHour ? `${Math.round(currentHour.avg_percentvalveopen)}%` : '--%',
+      current: lastHour ? `${Math.round(lastHour.avg_percentvalveopen)}%` : '--%',
       average: `${Math.round(averageValveOpen)}%`
     };
   };
@@ -128,7 +131,8 @@ export default function Home() {
     const data = heatDemandData.data;
     const maxItems = selectedTimePeriod === '24h' ? 24 : selectedTimePeriod === '7d' ? 7 : selectedTimePeriod === '30d' ? 15 : 20;
     
-    // Sort data by hour_start in ascending order (oldest first)
+    // Sort data by hour_start in ascending order (oldest first) for all periods
+    // This ensures the chart shows time progression from left to right
     const sortedData = [...data].sort((a, b) => new Date(a.hour_start) - new Date(b.hour_start));
     
     return sortedData.slice(0, maxItems).map(hour => {
@@ -172,13 +176,12 @@ export default function Home() {
           console.log('Dashboard stats received:', statsData);
           setDashboardData(statsData);
 
-          // Fetch heat demand data for last 24 hours
-          const today = new Date();
-          const yesterday = new Date(today);
-          yesterday.setDate(yesterday.getDate() - 1);
+          // Fetch heat demand data for last 24 hours (rolling window)
+          const now = new Date();
+          const startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000); // 24 hours ago
           
-          const startDate = yesterday.toISOString().split('T')[0]; // YYYY-MM-DD format
-          const endDate = today.toISOString().split('T')[0]; // YYYY-MM-DD format
+          const startDate = startTime.toISOString(); // Full UTC timestamp
+          const endDate = now.toISOString(); // Full UTC timestamp
           
           const heatDemandResponse = await fetch(`/api/dashboard/heat-demand?customer_id=${session.user.customerid}&start_date=${startDate}&end_date=${endDate}&limit=24`);
           

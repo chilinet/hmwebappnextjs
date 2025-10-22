@@ -91,67 +91,6 @@ async function getDashboardStats(pool, customerId, session) {
           inactiveDevices = devices.filter(device => device.active === false).length;
           
           console.log(`Successfully fetched ${devicesCount} devices from ThingsBoard (${activeDevices} active, ${inactiveDevices} inactive)`);
-          
-          // Für heatDemand: Berechne Mittelwert aller PercentValveOpen Werte
-          let totalValveOpen = 0;
-          let devicesWithValveData = 0;
-          
-          console.log(`Processing ${devices.length} devices for valve data...`);
-          
-          for (const device of devices) {
-            try {
-              // Telemetriedaten für PercentValveOpen abrufen
-              const telemetryResponse = await fetch(
-                `${process.env.THINGSBOARD_URL}/api/plugins/telemetry/DEVICE/${device.id.id}/values/timeseries?keys=PercentValveOpen&limit=1`,
-                {
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'X-Authorization': `Bearer ${session.tbToken}`
-                  }
-                }
-              );
-
-              if (telemetryResponse.ok) {
-                const telemetryData = await telemetryResponse.json();
-                console.log(`Device ${device.id.id} telemetry data:`, telemetryData);
-                
-                if (telemetryData.PercentValveOpen && telemetryData.PercentValveOpen.length > 0) {
-                  const valveValue = telemetryData.PercentValveOpen[0].value;
-                  console.log(`Device ${device.id.id} valve value:`, valveValue, typeof valveValue);
-                  
-                  if (valveValue !== null && valveValue !== undefined && !isNaN(valveValue)) {
-                    const numericValue = Number(valveValue);
-                    if (!isNaN(numericValue)) {
-                      totalValveOpen += numericValue;
-                      devicesWithValveData++;
-                      console.log(`Added valve value ${numericValue}, total: ${totalValveOpen}, count: ${devicesWithValveData}`);
-                    } else {
-                      console.log(`Device ${device.id.id} valve value is not a number:`, valveValue);
-                    }
-                  } else {
-                    console.log(`Device ${device.id.id} valve value is null/undefined/NaN:`, valveValue);
-                  }
-                } else {
-                  console.log(`Device ${device.id.id} has no PercentValveOpen data`);
-                }
-              } else {
-                console.log(`Failed to fetch telemetry for device ${device.id.id}:`, telemetryResponse.status);
-              }
-            } catch (error) {
-              console.log(`Error fetching valve data for device ${device.id.id}:`, error.message);
-            }
-          }
-          
-          console.log(`Final calculation: totalValveOpen=${totalValveOpen}, devicesWithValveData=${devicesWithValveData}`);
-          
-          // Berechne Mittelwert für heatDemand
-          if (devicesWithValveData > 0 && !isNaN(totalValveOpen)) {
-            const averageValveOpen = (totalValveOpen / devicesWithValveData).toFixed(1);
-            heatDemand = `${averageValveOpen}%`;
-            console.log(`Calculated heatDemand: ${heatDemand} (from ${devicesWithValveData} devices)`);
-          } else {
-            console.log(`No valid valve data available (totalValveOpen=${totalValveOpen}, devicesWithValveData=${devicesWithValveData}), using fallback heatDemand`);
-          }
         } else {
           console.log('ThingsBoard devices API failed, trying fallback...');
         }

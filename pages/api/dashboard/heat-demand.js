@@ -1,7 +1,6 @@
-import { getPgConnection } from '../../../lib/pgdb.js';
-
 // Preshared Key für Authentifizierung
 const PRESHARED_KEY = process.env.REPORTING_PRESHARED_KEY || 'default-reporting-key-2024';
+const REPORTING_URL = process.env.REPORTING_URL || 'http://localhost:3000';
 
 export default async function handler(req, res) {
   // CORS-Header setzen
@@ -40,67 +39,73 @@ export default async function handler(req, res) {
       });
     }
     
-    // PostgreSQL Verbindung holen
-    const pool = await getPgConnection();
-    const client = await pool.connect();
+    // HTTP Request an die externe Reporting-API
+    const reportingApiUrl = `${REPORTING_URL}/api/customer-hourly-avg`;
+    const queryParams = new URLSearchParams({
+      customer_id: customer_id,
+      start_date: start_date,
+      end_date: end_date,
+      limit: limit.toString(),
+      key: PRESHARED_KEY
+    });
+    
+    const fullUrl = `${reportingApiUrl}?${queryParams.toString()}`;
+    
+    console.log('Calling external reporting API:', fullUrl);
     
     try {
-      // SQL Query mit der Funktion
-      const query = `
-        SELECT * FROM hmreporting.f_customer_hourly_avg($1, $2) 
-        WHERE customer_id = $3 
-        ORDER BY hour_start DESC 
-        LIMIT $4
-      `;
+      const response = await fetch(fullUrl, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': PRESHARED_KEY
+        }
+      });
       
-      const queryParams = [start_date, end_date, customer_id, parseInt(limit)];
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('External API error:', response.status, errorText);
+        return res.status(response.status).json({
+          error: 'External API Error',
+          message: `Reporting API returned ${response.status}`,
+          details: errorText
+        });
+      }
       
-      console.log('Heat Demand API Query:', query);
-      console.log('Query Parameters:', queryParams);
-      
-      // Query ausführen
-      const result = await client.query(query, queryParams);
+      const data = await response.json();
       
       // Metadaten für die Antwort
       const metadata = {
-        total_records: result.rows.length,
+        total_records: data.data?.length || 0,
         limit: parseInt(limit),
         query_time: new Date().toISOString(),
         function_name: 'hmreporting.f_customer_hourly_avg',
         time_range: {
           start_date: start_date,
           end_date: end_date
-        }
+        },
+        external_api: true,
+        reporting_url: REPORTING_URL
       };
       
       // Antwort senden
       res.status(200).json({
         success: true,
         metadata: metadata,
-        data: result.rows
+        data: data.data || []
       });
       
-    } finally {
-      client.release();
+    } catch (fetchError) {
+      console.error('Fetch error:', fetchError);
+      return res.status(503).json({
+        error: 'External API Connection Failed',
+        message: 'Verbindung zur Reporting-API fehlgeschlagen',
+        details: fetchError.message
+      });
     }
     
   } catch (error) {
     console.error('Heat Demand API Error:', error);
-    
-    // Spezifische Fehlerbehandlung
-    if (error.code === '42P01') {
-      return res.status(404).json({
-        error: 'Function not found',
-        message: 'Die Funktion hmreporting.f_customer_hourly_avg wurde nicht gefunden'
-      });
-    }
-    
-    if (error.code === 'ECONNREFUSED') {
-      return res.status(503).json({
-        error: 'Database connection failed',
-        message: 'Verbindung zur Datenbank fehlgeschlagen'
-      });
-    }
     
     // Generischer Fehler
     return res.status(500).json({
