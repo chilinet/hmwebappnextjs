@@ -420,7 +420,11 @@ export default function Home() {
           <div className="row g-3 mb-4">
             {/* Active Devices Card */}
             <div className="col-xl-3 col-lg-6 col-md-6">
-              <Card className="status-card shadow-sm">
+              <Card 
+                className="status-card shadow-sm" 
+                style={{ cursor: 'pointer' }}
+                onClick={() => router.push('/config/devices?status=active')}
+              >
                 <Card.Body className="p-4">
                   <div className="d-flex align-items-center mb-3">
                     <div className="status-icon bg-success me-3">
@@ -456,7 +460,11 @@ export default function Home() {
 
             {/* Inactive/Faulty Devices Card */}
             <div className="col-xl-3 col-lg-6 col-md-6">
-              <Card className="status-card shadow-sm">
+              <Card 
+                className="status-card shadow-sm" 
+                style={{ cursor: 'pointer' }}
+                onClick={() => router.push('/config/devices?status=inactive')}
+              >
                 <Card.Body className="p-4">
                   <div className="d-flex align-items-center mb-3">
                     <div className="status-icon bg-danger me-3">
@@ -474,7 +482,11 @@ export default function Home() {
 
             {/* Open Alarms Card */}
             <div className="col-xl-3 col-lg-6 col-md-6">
-              <Card className="status-card shadow-sm">
+              <Card 
+                className="status-card shadow-sm" 
+                style={{ cursor: 'pointer' }}
+                onClick={() => router.push('/alarms')}
+              >
                 <Card.Body className="p-4">
                   <div className="d-flex align-items-center mb-3">
                     <div className="status-icon bg-danger me-3">
@@ -495,13 +507,18 @@ export default function Home() {
           <div className="row g-4 mb-4">
             {/* Heating Control & Heat Demand Chart */}
             <div className="col-12">
-              <Card className="chart-card shadow-sm">
+              <Card 
+                className="chart-card shadow-sm" 
+                style={{ cursor: 'pointer' }}
+                onClick={() => router.push('/heating-control')}
+              >
                 <Card.Body className="p-4">
                   <div className="d-flex justify-content-between align-items-center mb-4">
                     <h5 className="mb-0 fw-bold">HEIZUNGSSTEUERUNG & WÄRMEANFORDERUNG</h5>
                     <button 
                       className="btn btn-outline-secondary btn-sm"
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.stopPropagation(); // Prevent card click when button is clicked
                         console.log('Opening time modal...');
                         setShowTimeModal(true);
                       }}
@@ -552,7 +569,7 @@ export default function Home() {
           </div>
 
           {/* Weather History Row */}
-          <div className="row g-4">
+          <div className="row g-4 mb-4">
             <div className="col-12">
               <Card className="weather-history-card shadow-sm">
                 <Card.Body className="p-4">
@@ -796,6 +813,12 @@ export default function Home() {
           box-shadow: 0 8px 20px rgba(0,0,0,0.1) !important;
         }
         
+        .status-card[style*="cursor: pointer"]:hover {
+          transform: translateY(-3px);
+          box-shadow: 0 10px 25px rgba(0,0,0,0.15) !important;
+          background-color: #f8f9fa;
+        }
+        
         .status-icon {
           width: 48px;
           height: 48px;
@@ -816,6 +839,12 @@ export default function Home() {
         .chart-card:hover, .weather-card:hover, .weather-history-card:hover, .alerts-card:hover {
           transform: translateY(-2px);
           box-shadow: 0 8px 20px rgba(0,0,0,0.1) !important;
+        }
+        
+        .chart-card[style*="cursor: pointer"]:hover {
+          transform: translateY(-3px);
+          box-shadow: 0 10px 25px rgba(0,0,0,0.15) !important;
+          background-color: #f8f9fa;
         }
         
         .chart-placeholder {
