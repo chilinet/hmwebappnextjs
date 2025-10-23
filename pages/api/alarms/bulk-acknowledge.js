@@ -1,5 +1,7 @@
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../auth/[...nextauth]";
+import { makeThingsBoardRequest } from "../../../lib/utils/thingsboardRequest";
+
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -33,13 +35,12 @@ export default async function handler(req, res) {
     // Bulk acknowledge alarms
     const acknowledgePromises = alarmIds.map(async (alarmId) => {
       try {
-        const response = await fetch(`${thingsboardUrl}/api/alarm/${alarmId}/ack`, {
+        const response = await makeThingsBoardRequest(`${thingsboardUrl}/api/alarm/${alarmId}/ack`, {
           method: 'POST',
           headers: {
-            'X-Authorization': `Bearer ${tbToken}`,
             'Content-Type': 'application/json'
           }
-        });
+        }, customer_id);
 
         if (!response.ok) {
           console.error(`Failed to acknowledge alarm ${alarmId}:`, response.status);

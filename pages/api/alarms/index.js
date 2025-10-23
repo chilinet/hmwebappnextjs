@@ -1,5 +1,7 @@
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../auth/[...nextauth]";
+import { makeThingsBoardRequest } from "../../../lib/utils/thingsboardRequest";
+
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -50,13 +52,12 @@ export default async function handler(req, res) {
     
     console.log(`ThingsBoard alarms request URL: ${alarmsUrl}?${queryParams}`);
 
-    const response = await fetch(`${alarmsUrl}?${queryParams}`, {
+    const response = await makeThingsBoardRequest(`${alarmsUrl}?${queryParams}`, {
       method: 'GET',
       headers: {
-        'X-Authorization': `Bearer ${tbToken}`,
         'Content-Type': 'application/json'
       }
-    });
+    }, customer_id);
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -128,13 +129,12 @@ export default async function handler(req, res) {
         const enrichedAlarms = await Promise.all(alarms.map(async (alarm) => {
           if (alarm.originator?.id?.entityType === 'DEVICE' && alarm.originator?.id?.id) {
             try {
-              const deviceResponse = await fetch(`${thingsboardUrl}/api/device/${alarm.originator.id.id}`, {
+              const deviceResponse = await makeThingsBoardRequest(`${thingsboardUrl}/api/device/${alarm.originator.id.id}`, {
                 method: 'GET',
                 headers: {
-                  'X-Authorization': `Bearer ${tbToken}`,
                   'Content-Type': 'application/json'
                 }
-              });
+              }, customer_id);
               
               if (deviceResponse.ok) {
                 const deviceData = await deviceResponse.json();

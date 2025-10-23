@@ -2,7 +2,7 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../auth/[...nextauth]';
 import { getConnection } from '../../../../lib/db';
 import sql from 'mssql';
-import thingsboardAuth from '../../thingsboard/auth';
+import { makeThingsBoardRequest } from '../../../../lib/utils/thingsboardRequest';
 
 // Hilfsfunktion zum Finden eines Nodes in der Tree-Struktur
 function findNodeInTree(nodes, nodeId) {
@@ -77,51 +77,6 @@ function updateNodeInTree(nodes, nodeId, updates) {
   });
 }
 
-// Hilfsfunktion für ThingsBoard-API-Calls mit Token-Erneuerung
-async function makeThingsBoardRequest(url, options, session) {
-  try {
-    const response = await fetch(url, options);
-    
-    // Wenn der Token abgelaufen ist, versuche ihn zu erneuern
-    if (response.status === 401) {
-      console.log('Token expired, attempting to refresh...');
-      
-      try {
-        // Hole neue Anmeldedaten aus der Session
-        const newToken = await thingsboardAuth(
-          process.env.THINGSBOARD_USERNAME,
-          process.env.THINGSBOARD_PASSWORD
-        );
-        
-        // Aktualisiere den Token in der Session
-        session.tbToken = newToken;
-        
-        // Wiederhole den ursprünglichen Request mit dem neuen Token
-        const newOptions = {
-          ...options,
-          headers: {
-            ...options.headers,
-            'X-Authorization': `Bearer ${newToken}`
-          }
-        };
-        
-        const retryResponse = await fetch(url, newOptions);
-        if (!retryResponse.ok) {
-          throw new Error(`Request failed after token refresh: ${retryResponse.statusText}`);
-        }
-        
-        return retryResponse;
-      } catch (refreshError) {
-        console.error('Failed to refresh token:', refreshError);
-        throw new Error('Token refresh failed');
-      }
-    }
-    
-    return response;
-  } catch (error) {
-    throw error;
-  }
-}
 
 export default async function handler(req, res) {
   const session = await getServerSession(req, res, authOptions);
@@ -142,10 +97,9 @@ export default async function handler(req, res) {
         const response = await makeThingsBoardRequest(`${TB_API_URL}/api/asset/${id}`, {
           method: 'GET',
           headers: {
-            'Content-Type': 'application/json',
-            'X-Authorization': `Bearer ${session.tbToken}`
+            'Content-Type': 'application/json'
           }
-        }, session);
+        }, session.user.customerid);
 
         if (!response.ok) {
           throw new Error(`Error fetching asset details: ${response.statusText}`);
@@ -605,14 +559,15 @@ export default async function handler(req, res) {
         }
 
         // 3. Lösche den Asset in ThingsBoard
-        const deleteAssetResponse = await fetch(
+        const deleteAssetResponse = await makeThingsBoardRequest(
           `${process.env.THINGSBOARD_URL}/api/asset/${id}`,
           {
             method: 'DELETE',
             headers: {
-              'X-Authorization': `Bearer ${session.tbToken}`
+              'Content-Type': 'application/json'
             }
-          }
+          },
+          session
         );
 
         if (!deleteAssetResponse.ok) {

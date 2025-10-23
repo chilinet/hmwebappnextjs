@@ -1,5 +1,7 @@
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../auth/[...nextauth]";
+import { makeThingsBoardRequest } from "../../../lib/utils/thingsboardRequest";
+
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -31,16 +33,15 @@ export default async function handler(req, res) {
     }
 
     // Acknowledge alarm with solution
-    const response = await fetch(`${thingsboardUrl}/api/alarm/${alarmId}/ack`, {
+    const response = await makeThingsBoardRequest(`${thingsboardUrl}/api/alarm/${alarmId}/ack`, {
       method: 'POST',
       headers: {
-        'X-Authorization': `Bearer ${tbToken}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
         comment: solution.trim()
       })
-    });
+    }, customer_id);
 
     if (!response.ok) {
       const errorText = await response.text();

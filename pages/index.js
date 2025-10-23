@@ -33,6 +33,7 @@ export default function Home() {
   const [dashboardData, setDashboardData] = useState(null);
   const [heatDemandData, setHeatDemandData] = useState(null);
   const [alarmsData, setAlarmsData] = useState(null);
+  const [weatherHistoryData, setWeatherHistoryData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showTimeModal, setShowTimeModal] = useState(false);
@@ -190,6 +191,65 @@ export default function Home() {
     };
   };
 
+  // Helper function to load weather history
+  const loadWeatherHistory = async () => {
+    try {
+      console.log('Loading weather history...');
+      const response = await fetch('/api/weather/history');
+      console.log('Weather history response status:', response.status);
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Weather history data received:', data);
+        setWeatherHistoryData(data);
+      } else {
+        const errorText = await response.text();
+        console.warn('Failed to fetch weather history data:', response.status, errorText);
+      }
+    } catch (error) {
+      console.error('Error fetching weather history:', error);
+    }
+  };
+
+  // Helper function to get weather history chart data
+  const getWeatherHistoryChartData = () => {
+    console.log('Weather history data structure:', weatherHistoryData);
+    
+    if (!weatherHistoryData?.list || weatherHistoryData.list.length === 0) {
+      console.log('No weather history data available');
+      return [];
+    }
+
+    // Take all 24 hours (hourly data) and sort chronologically (oldest first, newest last)
+    const data = weatherHistoryData.list;
+    console.log('Processing weather data:', data.length, 'items');
+    
+    // Sort data by timestamp (dt) in ascending order (oldest first, newest last)
+    // This ensures the chart shows time progression from left to right
+    const sortedData = [...data].sort((a, b) => a.dt - b.dt);
+    
+    console.log('Sorted weather data (first 3 items):', sortedData.slice(0, 3).map(item => ({
+      dt: item.dt,
+      time: new Date(item.dt * 1000).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }),
+      temp: item.main.temp
+    })));
+    
+    return sortedData.map(item => {
+      const date = new Date(item.dt * 1000);
+      const timeLabel = date.toLocaleTimeString('de-DE', { 
+        hour: '2-digit', 
+        minute: '2-digit' 
+      });
+      
+      return {
+        time: timeLabel,
+        temperature: Math.round(item.main.temp),
+        description: item.weather[0].description,
+        icon: item.weather[0].icon
+      };
+    });
+  };
+
   // Helper function to get recent alarms
   const getRecentAlarms = () => {
     if (!alarmsData?.data || alarmsData.data.length === 0) {
@@ -275,6 +335,9 @@ export default function Home() {
           } else {
             console.warn('Failed to fetch alarms data, using fallback');
           }
+
+          // Load weather history
+          await loadWeatherHistory();
         } catch (err) {
           console.error('Error fetching dashboard data:', err);
           setError(err.message);
@@ -431,7 +494,7 @@ export default function Home() {
           {/* Middle Row - Charts and Weather */}
           <div className="row g-4 mb-4">
             {/* Heating Control & Heat Demand Chart */}
-            <div className="col-xl-8 col-lg-7">
+            <div className="col-12">
               <Card className="chart-card shadow-sm">
                 <Card.Body className="p-4">
                   <div className="d-flex justify-content-between align-items-center mb-4">
@@ -486,63 +549,54 @@ export default function Home() {
               </Card>
             </div>
 
-            {/* Weather & External Influence */}
-            <div className="col-xl-4 col-lg-5">
-              <Card className="weather-card shadow-sm">
-                <Card.Body className="p-4">
-                  <h5 className="mb-4 fw-bold">WETTER & AUSSENEINFLUSS</h5>
-                  
-                  <div className="weather-current mb-4">
-                    <div className="d-flex align-items-center mb-3">
-                      <FontAwesomeIcon icon={faCloud} size="2x" className="text-muted me-3" />
-                      <div>
-                        <h3 className="mb-0 fw-bold">--°C</h3>
-                        <p className="mb-0 text-muted small">Gefühlte --°C · -- m/s Wind</p>
-                      </div>
-                    </div>
-                    <p className="mb-2"><strong>Heizbedarf:</strong> --</p>
-                    <p className="mb-0"><strong>Trend:</strong> --</p>
-                  </div>
+          </div>
 
-                  <div className="weather-forecast">
-                    <div className="row g-2">
-                      <div className="col-3">
-                        <div className="text-center">
-                          <small className="text-muted">+3h</small>
-                          <div className="mt-1">
-                            <FontAwesomeIcon icon={faCloud} className="text-muted" />
+          {/* Weather History Row */}
+          <div className="row g-4">
+            <div className="col-12">
+              <Card className="weather-history-card shadow-sm">
+                <Card.Body className="p-4">
+                  <h5 className="mb-4 fw-bold">WETTERHISTORIE</h5>
+                  
+                  <div className="weather-history-chart">
+                    {weatherHistoryData?.list && weatherHistoryData.list.length > 0 ? (
+                      <div className="weather-chart-container">
+                        <div className="weather-chart-header mb-3">
+                          <div className="d-flex justify-content-between align-items-center">
+                            <span className="text-muted small">
+                              Temperaturverlauf der letzten 24h
+                            </span>
+                            <span className="text-muted small">
+                              {getWeatherHistoryChartData().length} Stunden
+                            </span>
                           </div>
-                          <small>--°C</small>
+                        </div>
+                        <div className="weather-chart-bars">
+                          {getWeatherHistoryChartData().map((item, index) => (
+                            <div key={index} className="weather-chart-bar-container">
+                              <div className="weather-chart-bar" style={{ 
+                                height: `${Math.max(20, Math.min(100, (item.temperature + 20) * 2))}px`,
+                                backgroundColor: item.temperature > 20 ? '#ff6b6b' : item.temperature > 10 ? '#4ecdc4' : '#45b7d1'
+                              }}></div>
+                              <div className="weather-chart-label">{item.time}</div>
+                              <div className="weather-chart-value">{item.temperature}°C</div>
+                            </div>
+                          ))}
                         </div>
                       </div>
-                      <div className="col-3">
-                        <div className="text-center">
-                          <small className="text-muted">+6h</small>
-                          <div className="mt-1">
-                            <FontAwesomeIcon icon={faCloudRain} className="text-muted" />
-                          </div>
-                          <small>--°C</small>
-                        </div>
+                    ) : (
+                      <div className="text-center py-5">
+                        <FontAwesomeIcon icon={faThermometerHalf} size="3x" className="text-muted mb-3" />
+                        <p className="text-muted">
+                          {weatherHistoryData ? 'Keine Wetterdaten verfügbar' : 'Wetterdaten werden geladen...'}
+                        </p>
+                        {weatherHistoryData && (
+                          <p className="text-muted small">
+                            Debug: {JSON.stringify(weatherHistoryData).substring(0, 100)}...
+                          </p>
+                        )}
                       </div>
-                      <div className="col-3">
-                        <div className="text-center">
-                          <small className="text-muted">+9h</small>
-                          <div className="mt-1">
-                            <FontAwesomeIcon icon={faCloudRain} className="text-muted" />
-                          </div>
-                          <small>--°C</small>
-                        </div>
-                      </div>
-                      <div className="col-3">
-                        <div className="text-center">
-                          <small className="text-muted">+12h</small>
-                          <div className="mt-1">
-                            <FontAwesomeIcon icon={faCloudRain} className="text-muted" />
-                          </div>
-                          <small>--°C</small>
-                        </div>
-                      </div>
-                    </div>
+                    )}
                   </div>
                 </Card.Body>
               </Card>
@@ -752,14 +806,14 @@ export default function Home() {
           font-size: 1.2rem;
         }
         
-        .chart-card, .weather-card, .alerts-card {
+        .chart-card, .weather-card, .weather-history-card, .alerts-card {
           border-radius: 12px;
           border: none;
           background: white;
           transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
         }
         
-        .chart-card:hover, .weather-card:hover, .alerts-card:hover {
+        .chart-card:hover, .weather-card:hover, .weather-history-card:hover, .alerts-card:hover {
           transform: translateY(-2px);
           box-shadow: 0 8px 20px rgba(0,0,0,0.1) !important;
         }
@@ -860,6 +914,59 @@ export default function Home() {
         
         .temp-value {
           color: #4ecdc4;
+        }
+        
+        .weather-history-chart {
+          min-height: 200px;
+        }
+        
+        .weather-chart-container {
+          background: #f8f9fa;
+          border-radius: 8px;
+          padding: 1rem;
+        }
+        
+        .weather-chart-bars {
+          display: flex;
+          align-items: end;
+          gap: 2px;
+          height: 150px;
+          padding: 0 2px;
+          overflow-x: auto;
+        }
+        
+        .weather-chart-bar-container {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          min-width: 0;
+          flex-shrink: 0;
+        }
+        
+        .weather-chart-bar {
+          width: 100%;
+          min-height: 2px;
+          border-radius: 1px 1px 0 0;
+          transition: all 0.3s ease;
+          margin-bottom: 4px;
+        }
+        
+        .weather-chart-label {
+          font-size: 0.6rem;
+          color: #6c757d;
+          text-align: center;
+          margin-bottom: 2px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        
+        .weather-chart-value {
+          font-size: 0.5rem;
+          font-weight: 600;
+          text-align: center;
+          color: #495057;
         }
         
         .modal-overlay {
