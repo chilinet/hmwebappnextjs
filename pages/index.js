@@ -458,49 +458,60 @@ export default function Home() {
               </Card>
             </div>
 
-            {/* Inactive/Faulty Devices Card */}
+            {/* Open Windows Card */}
             <div className="col-xl-3 col-lg-6 col-md-6">
-              <Card 
-                className="status-card shadow-sm" 
-                style={{ cursor: 'pointer' }}
-                onClick={() => router.push('/config/devices?status=inactive')}
-              >
+              <Card className="status-card shadow-sm">
                 <Card.Body className="p-4">
                   <div className="d-flex align-items-center mb-3">
-                    <div className="status-icon bg-danger me-3">
-                      <FontAwesomeIcon icon={faHeartbeat} />
+                    <div className="status-icon bg-info me-3">
+                      <FontAwesomeIcon icon={faHome} />
                     </div>
                     <div>
-                      <h3 className="mb-0 text-danger fw-bold">{dashboardData?.inactiveDevices || '--'}</h3>
-                      <p className="mb-0 text-muted small">INAKTIVE / FEHLERHAFT</p>
-                      <p className="mb-0 text-muted small">Letzte 24 h: -- neu</p>
+                      <h3 className="mb-0 text-info fw-bold">--</h3>
+                      <p className="mb-0 text-muted small">OFFENE FENSTER</p>
+                      <p className="mb-0 text-muted small">Keine Fensterkontakte vorhanden</p>
                     </div>
                   </div>
                 </Card.Body>
               </Card>
             </div>
 
-            {/* Open Alarms Card */}
+            {/* Battery Status Card */}
             <div className="col-xl-3 col-lg-6 col-md-6">
-              <Card 
-                className="status-card shadow-sm" 
-                style={{ cursor: 'pointer' }}
-                onClick={() => router.push('/alarms')}
-              >
+              <Card className="status-card shadow-sm">
                 <Card.Body className="p-4">
                   <div className="d-flex align-items-center mb-3">
-                    <div className="status-icon bg-danger me-3">
-                      <FontAwesomeIcon icon={faExclamationTriangle} />
+                    <div className="status-icon bg-success me-3">
+                      <FontAwesomeIcon icon={faBolt} />
                     </div>
                     <div>
-                      <h3 className="mb-0 text-danger fw-bold">{getAlarmStats().total}</h3>
-                      <p className="mb-0 text-muted small">ALARME OFFEN</p>
-                      <p className="mb-0 text-muted small">{getAlarmStats().criticalLabel}, {getAlarmStats().infoLabel}</p>
+                      <p className="mb-0 text-muted small">BATTERIESTATUS</p>
+                      <p className="mb-0 text-muted small">gut → --</p>
+                      <p className="mb-0 text-muted small">kritisch → --</p>
+                      <p className="mb-0 text-muted small">leer → --</p>
                     </div>
                   </div>
                 </Card.Body>
               </Card>
             </div>
+
+            {/* Full Width Card */}
+            <div className="col-12">
+              <Card className="status-card shadow-sm">
+                <Card.Body className="p-4">
+                  <div className="d-flex justify-content-center align-items-center">
+                    <button 
+                      className="btn btn-warning btn-lg"
+                      style={{ width: '400px' }}
+                      onClick={() => router.push('/heating-control')}
+                    >
+                      Heatmanager starten
+                    </button>
+                  </div>
+                </Card.Body>
+              </Card>
+            </div>
+
           </div>
 
           {/* Middle Row - Charts and Weather */}
@@ -544,7 +555,7 @@ export default function Home() {
                             <div key={index} className="chart-bar-container">
                               <div className="chart-bar" style={{ 
                                 height: `${Math.min(item.value * 2, 100)}px`,
-                                backgroundColor: item.value > 20 ? '#dc3545' : item.value > 10 ? '#ffc107' : '#28a745'
+                                backgroundColor: '#9E9E9E'
                               }}></div>
                                <div className="chart-label">{item.time}</div>
                                <div className="chart-values">
@@ -938,7 +949,7 @@ export default function Home() {
         }
         
         .valve-value {
-          color: #495057;
+          color: #9E9E9E;
         }
         
         .temp-value {
@@ -1071,3 +1082,4 @@ export default function Home() {
 Home.getLayout = function getLayout(page) {
   return <Layout>{page}</Layout>;
 };
+

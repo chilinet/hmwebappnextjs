@@ -2225,11 +2225,11 @@ export default function HeatingControl() {
             y: 1
           },
           lineStyle: {
-            color: '#2196F3',
+            color: '#F44336',
             width: 2
           },
           itemStyle: {
-            color: '#2196F3'
+            color: '#F44336'
           },
           areaStyle: {
             color: {
@@ -2239,9 +2239,9 @@ export default function HeatingControl() {
               x2: 0,
               y2: 1,
               colorStops: [{
-                offset: 0, color: 'rgba(33, 150, 243, 0.3)'
+                offset: 0, color: 'rgba(244, 67, 54, 0.3)'
               }, {
-                offset: 1, color: 'rgba(33, 150, 243, 0.05)'
+                offset: 1, color: 'rgba(244, 67, 54, 0.05)'
               }]
             }
           }
@@ -2260,8 +2260,7 @@ export default function HeatingControl() {
           },
           lineStyle: {
             color: '#4CAF50',
-            width: 2,
-            type: 'dashed'
+            width: 2
           },
           itemStyle: {
             color: '#4CAF50'
@@ -2281,11 +2280,11 @@ export default function HeatingControl() {
             y: 1
           },
           lineStyle: {
-            color: '#FF9800',
+            color: '#9E9E9E',
             width: 2
           },
           itemStyle: {
-            color: '#FF9800'
+            color: '#9E9E9E'
           }
         }] : [])
       ],
@@ -2773,8 +2772,8 @@ export default function HeatingControl() {
            filter: grayscale(100%);
          }
       `}</style>
-      <div className="container-fluid p-0 heating-control-page">
-        <div className="d-flex" style={{ height: windowHeight ? `${windowHeight - 80}px` : 'calc(100vh - 80px)' }}>
+      <div className="container-fluid p-0 heating-control-page" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: 'white' }}>
+        <div className="d-flex" style={{ flex: 1, minHeight: 0 }}>
           {/* Mobile Toggle Button */}
           {isMobile && (
             <button
@@ -2811,11 +2810,11 @@ export default function HeatingControl() {
           
            {/* Linke Seite: Hierarchie */}
            <div 
-             className={`card bg-light text-white ${isMobile ? (showTree ? 'd-block' : 'd-none') : 'd-block'}`}
+             className={`card bg-white text-dark ${isMobile ? (showTree ? 'd-block' : 'd-none') : 'd-block'}`}
              style={{ 
                minWidth: isMobile ? '100%' : '400px',
                width: isMobile ? '100%' : '400px',
-               height: windowHeight ? `${windowHeight - 80}px` : 'calc(100vh - 80px)',
+               height: '100%',
                position: isMobile ? 'fixed' : 'relative',
                top: isMobile ? '0' : 'auto',
                left: isMobile ? '0' : 'auto',
@@ -2825,7 +2824,7 @@ export default function HeatingControl() {
                overflow: 'hidden'
              }}
            >
-                  <div className="card-header bg-light border-secondary">
+                  <div className="card-header bg-white border-secondary">
                     <h5 className="mb-0 d-flex align-items-center justify-content-between">
                       <div className="d-flex align-items-center">
                         <FontAwesomeIcon icon={faBuilding} className="me-2 text-primary" />
@@ -2846,12 +2845,12 @@ export default function HeatingControl() {
               <div className="tree-header">
                 <div className="d-flex gap-2">
                 <div className="input-group">
-                  <span className="input-group-text bg-light text-white border-secondary">
+                  <span className="input-group-text bg-white text-dark border-secondary">
                     <FontAwesomeIcon icon={faSearch} />
                   </span>
                   <input
                     type="text"
-                    className="form-control bg-light text-white border-secondary"
+                    className="form-control bg-white text-dark border-secondary"
                     placeholder="Suchen..."
                     value={treeSearchTerm}
                     onChange={(e) => setTreeSearchTerm(e.target.value)}
@@ -2978,9 +2977,9 @@ export default function HeatingControl() {
           </div>
 
           {/* Rechte Seite: Dashboard Content */}
-          <div className={`flex-grow-1 d-flex flex-column main-content ${isMobile && showTree ? 'd-none' : 'd-flex'}`}>
+          <div className={`flex-grow-1 d-flex flex-column main-content ${isMobile && showTree ? 'd-none' : 'd-flex'}`} style={{ minHeight: 0, backgroundColor: 'white' }}>
             {selectedNode ? (
-              <div className="flex-grow-1 p-4">
+              <div className="flex-grow-1 p-4" style={{ overflow: 'auto' }}>
                 <div className="node-details">
                   <div className="d-flex align-items-center mb-3">
                     <FontAwesomeIcon 
@@ -3157,7 +3156,7 @@ export default function HeatingControl() {
                           <div className="responsive-card">
                             <div className="card">
                               <div className="card-body text-center">
-                                <FontAwesomeIcon icon={faCog} className="text-warning mb-3" size="2x" />
+                                <FontAwesomeIcon icon={faCog} className="text-secondary mb-3" size="2x" />
                                 <h4 className="card-title">Ventilöffnung</h4>
                                 {loadingTemperature ? (
                                   <div className="d-flex align-items-center justify-content-center">
@@ -3168,7 +3167,7 @@ export default function HeatingControl() {
                                   </div>
                                 ) : currentValveOpen ? (
                                   <div>
-                                    <div className="display-4 text-warning mb-2">
+                                    <div className="display-4 text-secondary mb-2">
                                       {Number(currentValveOpen.value).toFixed(1)}%
                                     </div>
                                   </div>
