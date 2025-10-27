@@ -10,23 +10,67 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: 'OpenWeather API key not configured' });
     }
 
-    // Get coordinates for Gelnhausen, Germany
-    const lat = 50.2014;
-    const lon = 9.1875;
+    // Get location from query parameter or default to Gelnhausen
+    const location = req.query.location || 'Gelnhausen, DE';
+    console.log('Weather history requested for location:', location);
+
+    // Default coordinates for Gelnhausen, Germany
+    let lat = 50.2014;
+    let lon = 9.1875;
+    let cityName = 'Gelnhausen';
+    let country = 'DE';
+    let geocodeSuccess = false;
+
+    // If location is provided and not default, try to geocode it
+    if (location !== 'Gelnhausen, DE') {
+      try {
+        // Try different geocoding approaches for better results
+        let geocodeQueries = [
+          location, // Original location from customer data
+          `${location}, Deutschland`, // Add country
+          `${location}, Germany`, // Add country in English
+          `${location}, DE` // Add country code
+        ];
+        
+        for (const query of geocodeQueries) {
+          const geocodeUrl = `https://api.openweathermap.org/geo/1.0/direct?q=${encodeURIComponent(query)}&limit=1&appid=${apiKey}`;
+          const geocodeResponse = await fetch(geocodeUrl);
+          
+          if (geocodeResponse.ok) {
+            const geocodeData = await geocodeResponse.json();
+            if (geocodeData.length > 0) {
+              lat = geocodeData[0].lat;
+              lon = geocodeData[0].lon;
+              cityName = geocodeData[0].name;
+              country = geocodeData[0].country;
+              console.log(`Successfully geocoded customer location: ${cityName}, ${country} (${lat}, ${lon})`);
+              geocodeSuccess = true;
+              break;
+            }
+          }
+        }
+        
+        if (!geocodeSuccess) {
+          console.warn(`Could not geocode location: ${location}, using default Gelnhausen`);
+        }
+      } catch (error) {
+        console.warn(`Error geocoding location: ${location}, using default Gelnhausen:`, error);
+      }
+    }
     
-    // Get real weather data from OpenWeatherMap for Gelnhausen, Germany
-    console.log('Fetching real weather data for Gelnhausen, Germany...');
+    // Get real weather data from OpenWeatherMap for the specified location
+    console.log(`Fetching real weather data for ${cityName}, ${country}...`);
     
     let historicalData = [];
     
     try {
-      // Get current weather for Gelnhausen to use as baseline
+      // Get current weather for the specified location to use as baseline
       const currentWeatherUrl = `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${apiKey}&units=metric&lang=de`;
       const currentResponse = await fetch(currentWeatherUrl);
       
       if (currentResponse.ok) {
         const currentData = await currentResponse.json();
-        console.log('Current weather for Gelnhausen:', currentData.name, currentData.main.temp + '°C');
+        console.log(`Current weather for ${currentData.name}:`, currentData.main.temp + '°C');
         
         // Use current weather as baseline and generate historical data backwards
         const now = new Date();
@@ -87,7 +131,7 @@ export default async function handler(req, res) {
         // Sort chronologically (oldest first, newest last)
         historicalData.sort((a, b) => a.dt - b.dt);
         
-        console.log('Generated historical weather data for Gelnhausen:');
+        console.log(`Generated historical weather data for ${cityName}:`);
         console.log('First (oldest):', new Date(historicalData[0].dt * 1000).toLocaleString('de-DE'), historicalData[0].main.temp + '°C');
         console.log('Last (newest):', new Date(historicalData[historicalData.length - 1].dt * 1000).toLocaleString('de-DE'), historicalData[historicalData.length - 1].main.temp + '°C');
         
@@ -95,10 +139,10 @@ export default async function handler(req, res) {
         throw new Error('Failed to fetch current weather data');
       }
     } catch (error) {
-      console.error('Error fetching real weather data for Gelnhausen:', error);
-      console.log('Falling back to simulated data for Gelnhausen...');
+      console.error(`Error fetching real weather data for ${cityName}:`, error);
+      console.log(`Falling back to simulated data for ${cityName}...`);
       
-      // Fallback to simulated data specific to Gelnhausen climate
+      // Fallback to simulated data specific to the location's climate
       const now = new Date();
       
       for (let i = 0; i < 24; i++) {
@@ -107,13 +151,13 @@ export default async function handler(req, res) {
         const roundedTimestamp = new Date(timestamp.getFullYear(), timestamp.getMonth(), timestamp.getDate(), timestamp.getHours(), 0, 0, 0);
         const hour = roundedTimestamp.getHours();
         
-        // Gelnhausen-specific temperature simulation (typical for Hesse, Germany)
-        const baseTemp = 12; // Typical winter temperature for Gelnhausen
+        // Location-specific temperature simulation
+        const baseTemp = 12; // Typical winter temperature
         const dailyVariation = Math.sin((hour - 6) * Math.PI / 12) * 6; // Daily temperature cycle
         const randomVariation = (Math.random() - 0.5) * 1.5; // Small random variation
         const temperature = baseTemp + dailyVariation + randomVariation;
         
-        // Weather conditions typical for Gelnhausen
+        // Weather conditions typical for the location
         let condition, description, icon;
         if (temperature < 3) {
           condition = 'snow';
@@ -138,7 +182,7 @@ export default async function handler(req, res) {
           main: {
             temp: Math.round(temperature * 10) / 10,
             feels_like: Math.round((temperature - 1) * 10) / 10,
-            humidity: Math.floor(Math.random() * 25) + 65, // Typical humidity for Gelnhausen
+            humidity: Math.floor(Math.random() * 25) + 65, // Typical humidity for the location
             pressure: Math.floor(Math.random() * 15) + 1005 // Typical pressure
           },
           weather: [{
@@ -148,7 +192,7 @@ export default async function handler(req, res) {
             icon: icon
           }],
           wind: {
-            speed: Math.random() * 6 + 3, // Typical wind speed for Gelnhausen
+            speed: Math.random() * 6 + 3, // Typical wind speed for the location
             deg: Math.floor(Math.random() * 360)
           },
           visibility: Math.floor(Math.random() * 3000) + 7000
@@ -163,18 +207,19 @@ export default async function handler(req, res) {
       list: historicalData,
       city: {
         id: 2925534,
-        name: "Gelnhausen",
+        name: cityName,
         coord: { lat: lat, lon: lon },
-        country: "DE",
+        country: country,
         timezone: 3600
       },
       metadata: {
         total_records: historicalData.length,
         time_range: '24h',
-        location: "Gelnhausen, Deutschland",
+        location: geocodeSuccess ? `${cityName}, ${country}` : location,
+        original_query: location,
         coordinates: { lat: lat, lon: lon },
         query_time: new Date().toISOString(),
-        data_source: 'openweathermap_gelnhausen'
+        data_source: `openweathermap_${cityName.toLowerCase()}`
       }
     });
 

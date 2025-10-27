@@ -34,6 +34,8 @@ export default function Home() {
   const [heatDemandData, setHeatDemandData] = useState(null);
   const [alarmsData, setAlarmsData] = useState(null);
   const [weatherHistoryData, setWeatherHistoryData] = useState(null);
+  const [batteryData, setBatteryData] = useState(null);
+  const [customerData, setCustomerData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showTimeModal, setShowTimeModal] = useState(false);
@@ -191,25 +193,36 @@ export default function Home() {
     };
   };
 
-  // Helper function to load weather history
-  const loadWeatherHistory = async () => {
-    try {
-      console.log('Loading weather history...');
-      const response = await fetch('/api/weather/history');
-      console.log('Weather history response status:', response.status);
-      
-      if (response.ok) {
-        const data = await response.json();
-        console.log('Weather history data received:', data);
-        setWeatherHistoryData(data);
-      } else {
-        const errorText = await response.text();
-        console.warn('Failed to fetch weather history data:', response.status, errorText);
-      }
-    } catch (error) {
-      console.error('Error fetching weather history:', error);
+  // Helper function to calculate battery statistics
+  const getBatteryStats = () => {
+    if (!batteryData?.data || batteryData.data.length === 0) {
+      return { 
+        total: 0, 
+        good: 0, 
+        critical: 0, 
+        empty: 0,
+        goodLabel: 'gut → --',
+        criticalLabel: 'kritisch → --',
+        emptyLabel: 'leer → --'
+      };
     }
+
+    const devices = batteryData.data;
+    const good = devices.filter(d => d.battery_status === 'gut').length;
+    const critical = devices.filter(d => d.battery_status === 'kritisch').length;
+    const empty = devices.filter(d => d.battery_status === 'leer').length;
+
+    return {
+      total: devices.length,
+      good: good,
+      critical: critical,
+      empty: empty,
+      goodLabel: `gut → ${good}`,
+      criticalLabel: `kritisch → ${critical}`,
+      emptyLabel: `leer → ${empty}`
+    };
   };
+
 
   // Helper function to get weather history chart data
   const getWeatherHistoryChartData = () => {
@@ -336,8 +349,63 @@ export default function Home() {
             console.warn('Failed to fetch alarms data, using fallback');
           }
 
-          // Load weather history
-          await loadWeatherHistory();
+          // Load customer data from ThingsBoard
+          const customerResponse = await fetch(`/api/thingsboard/customers/${session.user.customerid}`);
+          
+          let customerData = null;
+          if (customerResponse.ok) {
+            customerData = await customerResponse.json();
+            console.log('+++++++++++++++++++++++++++++++++++++++++++++++');
+            console.log('Customer data received:', customerData);
+            console.log('+++++++++++++++++++++++++++++++++++++++++++++');
+            setCustomerData(customerData);
+          } else {
+            console.warn('Failed to fetch customer data, using fallback');
+          }
+
+          // Load weather history with customer address or fallback
+          try {
+            console.log('Loading weather history...');
+            
+            // Build complete address from customer data if available, otherwise fallback to Gelnhausen
+            let location = 'Gelnhausen, DE';
+            if (customerData?.address || customerData?.city || customerData?.country || customerData?.zip) {
+              // Build complete address string from available fields
+              const addressParts = [];
+              if (customerData.address) addressParts.push(customerData.address);
+              if (customerData.zip) addressParts.push(customerData.zip);
+              if (customerData.city) addressParts.push(customerData.city);
+              if (customerData.country) addressParts.push(customerData.country);
+              location = addressParts.join(', ');
+            }
+            console.log('Using location for weather:', location);
+            
+            const weatherResponse = await fetch(`/api/weather/history?location=${encodeURIComponent(location)}`);
+            console.log('Weather history response status:', weatherResponse.status);
+            
+            if (weatherResponse.ok) {
+              const weatherData = await weatherResponse.json();
+              console.log('Weather history data received:', weatherData);
+              setWeatherHistoryData(weatherData);
+            } else {
+              const errorText = await weatherResponse.text();
+              console.warn('Failed to fetch weather history data:', weatherResponse.status, errorText);
+            }
+          } catch (error) {
+            console.error('Error fetching weather history:', error);
+          }
+
+          // Load battery status data
+          const reportingUrl = process.env.REPORTING_URL || 'https://webapptest.heatmanager.cloud';
+          const batteryResponse = await fetch(`${reportingUrl}/api/reporting/battery-status?key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD&customer_id=${session.user.customerid}`);
+
+          if (batteryResponse.ok) {
+            const batteryData = await batteryResponse.json();
+            console.log('Battery status data received:', batteryData);
+            setBatteryData(batteryData);
+          } else {
+            console.warn('Failed to fetch battery status data, using fallback');
+          }
         } catch (err) {
           console.error('Error fetching dashboard data:', err);
           setError(err.message);
@@ -478,7 +546,11 @@ export default function Home() {
 
             {/* Battery Status Card */}
             <div className="col-xl-3 col-lg-6 col-md-6">
-              <Card className="status-card shadow-sm">
+              <Card 
+                className="status-card shadow-sm"
+                style={{ cursor: 'pointer' }}
+                onClick={() => router.push('/battery-status')}
+              >
                 <Card.Body className="p-4">
                   <div className="d-flex align-items-center mb-3">
                     <div className="status-icon bg-success me-3">
@@ -486,9 +558,9 @@ export default function Home() {
                     </div>
                     <div>
                       <p className="mb-0 text-muted small">BATTERIESTATUS</p>
-                      <p className="mb-0 text-muted small">gut → --</p>
-                      <p className="mb-0 text-muted small">kritisch → --</p>
-                      <p className="mb-0 text-muted small">leer → --</p>
+                      <p className="mb-0 text-muted small">{getBatteryStats().goodLabel}</p>
+                      <p className="mb-0 text-muted small">{getBatteryStats().criticalLabel}</p>
+                      <p className="mb-0 text-muted small">{getBatteryStats().emptyLabel}</p>
                     </div>
                   </div>
                 </Card.Body>
@@ -556,10 +628,11 @@ export default function Home() {
                               <div className="chart-bar" style={{ 
                                 height: `${Math.min(item.value * 2, 100)}px`,
                                 backgroundColor: '#9E9E9E'
-                              }}></div>
+                              }}>
+                                <div className="chart-value-inside">{item.value}%</div>
+                              </div>
                                <div className="chart-label">{item.time}</div>
                                <div className="chart-values">
-                                 <div className="chart-value valve-value">{item.value}%</div>
                                  <div className="chart-value temp-value">{item.temperature}°C</div>
                                </div>
                             </div>
@@ -584,7 +657,16 @@ export default function Home() {
             <div className="col-12">
               <Card className="weather-history-card shadow-sm">
                 <Card.Body className="p-4">
-                  <h5 className="mb-4 fw-bold">WETTERHISTORIE</h5>
+                  <div className="d-flex justify-content-between align-items-center mb-4">
+                    <h5 className="mb-0 fw-bold">WETTERHISTORIE</h5>
+                    <div className="text-end">
+                      <small className="text-muted">
+                        <FontAwesomeIcon icon={faHome} className="me-1" />
+                        {weatherHistoryData?.metadata?.location || 
+                         (customerData ? [customerData.address, customerData.zip, customerData.city, customerData.country].filter(Boolean).join(', ') : 'Gelnhausen, DE')}
+                      </small>
+                    </div>
+                  </div>
                   
                   <div className="weather-history-chart">
                     {weatherHistoryData?.list && weatherHistoryData.list.length > 0 ? (
@@ -605,9 +687,10 @@ export default function Home() {
                               <div className="weather-chart-bar" style={{ 
                                 height: `${Math.max(20, Math.min(100, (item.temperature + 20) * 2))}px`,
                                 backgroundColor: item.temperature > 20 ? '#ff6b6b' : item.temperature > 10 ? '#4ecdc4' : '#45b7d1'
-                              }}></div>
+                              }}>
+                                <div className="weather-chart-value-inside">{item.temperature}°C</div>
+                              </div>
                               <div className="weather-chart-label">{item.time}</div>
-                              <div className="weather-chart-value">{item.temperature}°C</div>
                             </div>
                           ))}
                         </div>
@@ -924,6 +1007,21 @@ export default function Home() {
           border-radius: 2px 2px 0 0;
           transition: all 0.3s ease;
           margin-bottom: 8px;
+          position: relative;
+          display: flex;
+          align-items: flex-end;
+          justify-content: center;
+        }
+        
+        .chart-value-inside {
+          font-size: 0.75rem;
+          font-weight: 600;
+          text-align: center;
+          color: white;
+          padding: 2px;
+          text-shadow: 0 0 3px rgba(0, 0, 0, 0.5);
+          white-space: nowrap;
+          word-break: keep-all;
         }
         
         .chart-label {
@@ -990,6 +1088,21 @@ export default function Home() {
           border-radius: 1px 1px 0 0;
           transition: all 0.3s ease;
           margin-bottom: 4px;
+          position: relative;
+          display: flex;
+          align-items: flex-end;
+          justify-content: center;
+        }
+        
+        .weather-chart-value-inside {
+          font-size: 0.9rem;
+          font-weight: 600;
+          text-align: center;
+          color: white;
+          padding: 2px;
+          text-shadow: 0 0 3px rgba(0, 0, 0, 0.5);
+          white-space: nowrap;
+          word-break: keep-all;
         }
         
         .weather-chart-label {
