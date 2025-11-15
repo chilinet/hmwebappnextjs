@@ -61,7 +61,7 @@ async function getAssetHierarchy(deviceId, tbToken, session) {
     //console.log('relations: ' + JSON.stringify(relations, null, 2));
 
     const assetRelation = relations.find(r => r.from.entityType === 'ASSET');
-    if (!assetRelation) return '';
+    if (!assetRelation) return null;
     
     try {
       const treePath = await fetch(`${process.env.NEXTAUTH_URL}/api/treepath/${assetRelation.from.id}?customerId=${session.user.customerid}`, {
@@ -74,15 +74,17 @@ async function getAssetHierarchy(deviceId, tbToken, session) {
         const treePathData = await treePath.json();
         //console.log('treePath.pathString:', treePathData.pathString);
         return {
-          id: assetRelation.to.id,
-          pathString: treePathData.pathString
+          id: assetRelation.from.id,
+          pathString: treePathData.pathString || '',
+          fullPath: treePathData.fullPath || null
         };
       } else {
         console.warn(`TreePath API failed for asset ${assetRelation.from.id}: ${treePath.status}`);
         // Fallback: Gib nur die Asset-ID zurück
         return {
           id: assetRelation.from.id,
-          pathString: `Asset ${assetRelation.from.id}`
+          pathString: `Asset ${assetRelation.from.id}`,
+          fullPath: null
         };
       }
     } catch (treePathError) {
@@ -90,7 +92,8 @@ async function getAssetHierarchy(deviceId, tbToken, session) {
       // Fallback: Gib nur die Asset-ID zurück
       return {
         id: assetRelation.from.id,
-        pathString: `Asset ${assetRelation.from.id}`
+        pathString: `Asset ${assetRelation.from.id}`,
+        fullPath: null
       };
     }
 
@@ -100,7 +103,7 @@ async function getAssetHierarchy(deviceId, tbToken, session) {
       error: error.message,
       cause: error.cause
     });
-    return '';
+    return null;
   }
 }
 

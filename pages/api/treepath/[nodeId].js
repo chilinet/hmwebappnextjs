@@ -33,20 +33,39 @@ export default async function handler(req, res) {
     // Load the tree structure from customer_settings table for specific customer
     const treeData = await loadTreeData(connection, customerId);
     
+    // Debug: Log tree structure info
+    console.log(`[treepath] Looking for node ID: ${id}, customerId: ${customerId}`);
+    console.log(`[treepath] Tree has ${treeData.length} root nodes`);
+    
     // Find the node with the given ID
     const targetNode = findNodeById(treeData, id);
     
     if (!targetNode) {
+      // Debug: Try to find all node IDs in the tree for debugging
+      const allNodeIds = getAllNodeIds(treeData);
+      console.log(`[treepath] Node not found. Total nodes in tree: ${allNodeIds.length}`);
+      console.log(`[treepath] First 10 node IDs:`, allNodeIds.slice(0, 10));
+      
       return res.status(404).json({ 
         error: 'Node not found',
-        message: `No node found with ID: ${id}`
+        message: `No node found with ID: ${id} in customer tree`,
+        customerId: customerId,
+        searchedId: id,
+        totalNodesInTree: allNodeIds.length
       });
     }
 
+    // Find the path from root to this node
+    const pathToNode = findPathToNode(treeData, id, []);
+    
+    // Build labels array for fullPath
+    const labels = pathToNode.map(node => node.label || node.name || '');
+    const pathString = labels.join(' / ');
+    
     // Extract all related devices recursively
     const relatedDevices = extractRelatedDevices(targetNode, []);
     
-    // Build response
+    // Build response with both old format (for backward compatibility) and new format
     const response = {
       success: true,
       node_id: id,
@@ -54,7 +73,13 @@ export default async function handler(req, res) {
       node_type: targetNode.type || 'Unknown',
       node_label: targetNode.label || 'Unknown',
       total_devices: relatedDevices.length,
-      devices: relatedDevices
+      devices: relatedDevices,
+      // New format for pathString and fullPath
+      pathString: pathString,
+      fullPath: {
+        labels: labels,
+        nodes: pathToNode
+      }
     };
 
     res.status(200).json(response);
@@ -154,6 +179,63 @@ function findNodeInChildren(children, nodeId) {
     }
   }
   return null;
+}
+
+/**
+ * Find the path from root to a specific node
+ * @param {Array} treeData - Array of root nodes
+ * @param {string} nodeId - ID to search for
+ * @param {Array} currentPath - Current path being built
+ * @returns {Array} Array of nodes from root to target node, or empty array if not found
+ */
+function findPathToNode(treeData, nodeId, currentPath = []) {
+  for (const node of treeData) {
+    const newPath = [...currentPath, {
+      id: node.id,
+      name: node.name,
+      type: node.type,
+      label: node.label
+    }];
+    
+    // If this is the target node, return the path
+    if (node.id === nodeId) {
+      return newPath;
+    }
+    
+    // Search in children recursively
+    if (node.children && Array.isArray(node.children)) {
+      const found = findPathToNode(node.children, nodeId, newPath);
+      if (found.length > 0) {
+        return found;
+      }
+    }
+  }
+  return [];
+}
+
+/**
+ * Get all node IDs from the tree (for debugging)
+ * @param {Array} treeData - Array of root nodes
+ * @returns {Array} Array of all node IDs
+ */
+function getAllNodeIds(treeData) {
+  const ids = [];
+  
+  function collectIds(nodes) {
+    if (!nodes || !Array.isArray(nodes)) return;
+    
+    for (const node of nodes) {
+      if (node.id) {
+        ids.push(node.id);
+      }
+      if (node.children && Array.isArray(node.children)) {
+        collectIds(node.children);
+      }
+    }
+  }
+  
+  collectIds(treeData);
+  return ids;
 }
 
 /**

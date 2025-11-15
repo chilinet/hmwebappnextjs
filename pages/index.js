@@ -528,7 +528,11 @@ export default function Home() {
 
             {/* Open Windows Card */}
             <div className="col-xl-3 col-lg-6 col-md-6">
-              <Card className="status-card shadow-sm">
+              <Card 
+                className="status-card shadow-sm"
+                style={{ cursor: 'pointer' }}
+                onClick={() => router.push('/window-status')}
+              >
                 <Card.Body className="p-4">
                   <div className="d-flex align-items-center mb-3">
                     <div className="status-icon bg-info me-3">
@@ -537,7 +541,7 @@ export default function Home() {
                     <div>
                       <h3 className="mb-0 text-info fw-bold">--</h3>
                       <p className="mb-0 text-muted small">OFFENE FENSTER</p>
-                      <p className="mb-0 text-muted small">Keine Fensterkontakte vorhanden</p>
+                      <p className="mb-0 text-muted small">Fensterstatus anzeigen</p>
                     </div>
                   </div>
                 </Card.Body>

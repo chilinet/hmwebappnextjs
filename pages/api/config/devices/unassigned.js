@@ -15,16 +15,36 @@ export default async function handler(req, res) {
 
   try {
     // Hole zuerst die customer_id des Users aus der Datenbank
-    const pool = await getConnection();
-    const userResult = await pool.request()
-      .input('userid', sql.Int, session.user.userid)
-      .query(`
-        SELECT customerid
-        FROM hm_users
-        WHERE userid = @userid
-      `);
+    // Mit Retry-Mechanismus für geschlossene Verbindungen
+    let pool;
+    let userResult;
+    let retries = 3;
+    
+    while (retries > 0) {
+      try {
+        pool = await getConnection();
+        userResult = await pool.request()
+          .input('userid', sql.Int, session.user.userid)
+          .query(`
+            SELECT customerid
+            FROM hm_users
+            WHERE userid = @userid
+          `);
+        break; // Erfolgreich, beende die Schleife
+      } catch (error) {
+        if ((error.code === 'ECONNCLOSED' || error.code === 'ECONNRESET') && retries > 1) {
+          console.log(`Database connection closed, retrying... (${retries - 1} retries left)`);
+          retries--;
+          // Kurz warten vor dem Retry
+          await new Promise(resolve => setTimeout(resolve, 500));
+          continue;
+        } else {
+          throw error; // Anderer Fehler oder keine Retries mehr
+        }
+      }
+    }
 
-    if (userResult.recordset.length === 0) {
+    if (!userResult || userResult.recordset.length === 0) {
       throw new Error('User not found');
     }
 

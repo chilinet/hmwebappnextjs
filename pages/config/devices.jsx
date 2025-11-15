@@ -214,7 +214,8 @@ function Devices() {
             
             // Verbessere den Asset-Pfad, falls er nur eine ID ist
             let improvedAsset = device.asset;
-            if (device.asset?.pathString && device.asset.pathString.startsWith('Asset ')) {
+            // Nur verbessern, wenn asset ein Objekt ist und pathString vorhanden ist
+            if (device.asset && typeof device.asset === 'object' && device.asset.pathString && device.asset.pathString.startsWith('Asset ')) {
               const assetId = device.asset.pathString.replace('Asset ', '');
               try {
                 // Versuche den Asset-Pfad zu verbessern
@@ -224,11 +225,25 @@ function Devices() {
                   improvedAsset = {
                     ...device.asset,
                     pathString: treepathData.pathString || device.asset.pathString,
-                    fullPath: treepathData.fullPath
+                    fullPath: treepathData.fullPath || device.asset.fullPath || null
+                  };
+                } else if (treepathResponse.status === 404) {
+                  // Wenn Asset nicht im Tree gefunden wird, setze pathString auf null, damit "-" angezeigt wird
+                  // statt der UUID
+                  improvedAsset = {
+                    ...device.asset,
+                    pathString: null,
+                    fullPath: null
                   };
                 }
               } catch (treepathError) {
                 console.warn(`Could not improve asset path for ${assetId}:`, treepathError);
+                // Setze pathString auf null, damit "-" angezeigt wird
+                improvedAsset = {
+                  ...device.asset,
+                  pathString: null,
+                  fullPath: null
+                };
               }
             }
             
@@ -779,16 +794,16 @@ function Devices() {
                     {device.telemetry?.gatewayId || '-'}
                   </td>
                   <td>
-                    {device.asset?.fullPath?.labels ? (
-                      <div>
-                        {device.asset.fullPath.labels.join(' / ')}
-                      </div>
-                    ) : device.asset?.pathString ? (
-                      <div>
-                        {device.asset.pathString.startsWith('Asset ') 
-                          ? device.asset.pathString.replace('Asset ', '') 
-                          : device.asset.pathString}
-                      </div>
+                    {device.asset && typeof device.asset === 'object' ? (
+                      device.asset.fullPath?.labels && device.asset.fullPath.labels.length > 0 ? (
+                        <div>
+                          {device.asset.fullPath.labels.join(' / ')}
+                        </div>
+                      ) : device.asset.pathString && !device.asset.pathString.startsWith('Asset ') ? (
+                        <div>
+                          {device.asset.pathString}
+                        </div>
+                      ) : '-'
                     ) : '-'}
                   </td>
                   <td>
@@ -1005,7 +1020,15 @@ function Devices() {
                     </span>
                   </div>
                   <div className="mb-3">
-                    <strong>Pfad:</strong> {selectedDevice?.asset?.pathString || 'Nicht zugewiesen'}
+                    <strong>Pfad:</strong> {
+                      selectedDevice?.asset && typeof selectedDevice.asset === 'object' ? (
+                        selectedDevice.asset.fullPath?.labels && selectedDevice.asset.fullPath.labels.length > 0 ? (
+                          selectedDevice.asset.fullPath.labels.join(' / ')
+                        ) : selectedDevice.asset.pathString && !selectedDevice.asset.pathString.startsWith('Asset ') ? (
+                          selectedDevice.asset.pathString
+                        ) : 'Nicht zugewiesen'
+                      ) : 'Nicht zugewiesen'
+                    }
                   </div>
                   {/* Weitere Geräteinformationen hier */}
                 </div>

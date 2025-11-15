@@ -169,7 +169,7 @@ export default function HeatingControl() {
     setHasUnsavedChanges(true);
     
     // Load schedule data when switching to schedule mode
-    if (newStatus === 'schedule' && customerData?.customerid && !scheduleData) {
+    if (newStatus === 'schedule' && customerData?.customerid) {
       fetchScheduleData(customerData.customerid);
     }
   };
@@ -3025,7 +3025,52 @@ export default function HeatingControl() {
                       <li className="nav-item" role="presentation">
                         <button
                           className={`nav-link ${activeTab === 'settings' ? 'active' : ''}`}
-                          onClick={() => setActiveTab('settings')}
+                          onClick={() => {
+                            setActiveTab('settings');
+                            // Initialize heating control state when opening settings tab
+                            if (selectedNode) {
+                              const runStatus = nodeDetails?.attributes?.runStatus || selectedNode.data?.runStatus || selectedNode.runStatus;
+                              const fixValue = nodeDetails?.attributes?.fixValue || selectedNode.data?.fixValue || selectedNode.fixValue;
+                              
+                              // Set original values
+                              setOriginalRunStatus(runStatus);
+                              setOriginalFixValue(fixValue);
+                              
+                              // Initialize slider value
+                              if (fixValue) {
+                                setTempSliderValue(parseFloat(fixValue));
+                              } else {
+                                const minTemp = nodeDetails?.attributes?.minTemp || selectedNode.data?.minTemp || 15;
+                                const maxTemp = nodeDetails?.attributes?.maxTemp || selectedNode.data?.maxTemp || 30;
+                                setTempSliderValue((minTemp + maxTemp) / 2);
+                              }
+                              
+                              // Load schedule data if customer data is available AND current status is 'schedule'
+                              if (customerData?.customerid && runStatus === 'schedule') {
+                                fetchScheduleData(customerData.customerid);
+                              }
+                              
+                              // Parse existing scheduler plan
+                              const schedulerPlanValue = nodeDetails?.attributes?.schedulerPlan || selectedNode.data?.schedulerPlan;
+                              if (schedulerPlanValue) {
+                                try {
+                                  const planArray = JSON.parse(schedulerPlanValue);
+                                  setOriginalSchedulerPlan(Array.isArray(planArray) ? planArray : []);
+                                } catch (error) {
+                                  console.error('Error parsing original schedulerPlan:', error);
+                                  setOriginalSchedulerPlan([]);
+                                }
+                              } else {
+                                setOriginalSchedulerPlan([]);
+                              }
+                              
+                              // Reset pending changes
+                              setPendingRunStatus(null);
+                              setPendingFixValue(null);
+                              setSelectedDayPlans({});
+                              setHasUnsavedChanges(false);
+                            }
+                          }}
                           type="button"
                         >
                           <FontAwesomeIcon icon={faBullseye} className="me-2" />
@@ -3102,23 +3147,23 @@ export default function HeatingControl() {
                                   setTempSliderValue((minTemp + maxTemp) / 2);
                                 }
                                 
-                                // Load schedule data if customer data is available
-                                if (customerData?.customerid) {
+                                // Load schedule data if customer data is available AND current status is 'schedule'
+                                if (customerData?.customerid && runStatus === 'schedule') {
                                   fetchScheduleData(customerData.customerid);
-                                  
-                                  // Parse existing scheduler plan
-                                  const schedulerPlanValue = nodeDetails?.attributes?.schedulerPlan || selectedNode.data?.schedulerPlan;
-                                  if (schedulerPlanValue) {
-                                    try {
-                                      const planArray = JSON.parse(schedulerPlanValue);
-                                      setOriginalSchedulerPlan(Array.isArray(planArray) ? planArray : []);
-                                    } catch (error) {
-                                      console.error('Error parsing original schedulerPlan:', error);
-                                      setOriginalSchedulerPlan([]);
-                                    }
-                                  } else {
+                                }
+                                
+                                // Parse existing scheduler plan
+                                const schedulerPlanValue = nodeDetails?.attributes?.schedulerPlan || selectedNode.data?.schedulerPlan;
+                                if (schedulerPlanValue) {
+                                  try {
+                                    const planArray = JSON.parse(schedulerPlanValue);
+                                    setOriginalSchedulerPlan(Array.isArray(planArray) ? planArray : []);
+                                  } catch (error) {
+                                    console.error('Error parsing original schedulerPlan:', error);
                                     setOriginalSchedulerPlan([]);
                                   }
+                                } else {
+                                  setOriginalSchedulerPlan([]);
                                 }
                                 
                                 // Reset pending changes
@@ -3269,6 +3314,12 @@ export default function HeatingControl() {
                                     </div>
                                   </div>
                                 )}
+                              </div>
+                              <div className="card-footer bg-light">
+                                <small className="text-muted">
+                                  <FontAwesomeIcon icon={faInfoCircle} className="me-2" />
+                                  Die angezeigten Werte entsprechen den vom Gerät zurückgesendeten Daten.
+                                </small>
                               </div>
                             </div>
                           </div>
