@@ -39,13 +39,13 @@ function validateQueryParams(query) {
     }
   }
   
-  // Limit validieren (max 1000 Datensätze)
-  if (query.limit) {
-    const limit = parseInt(query.limit);
-    if (isNaN(limit) || limit < 1 || limit > 1000) {
-      errors.push('Limit muss zwischen 1 und 1000 liegen');
-    }
-  }
+      // Limit validieren (max 5000 Datensätze)
+      if (query.limit) {
+        const limit = parseInt(query.limit);
+        if (isNaN(limit) || limit < 1 || limit > 5000) {
+          errors.push('Limit muss zwischen 1 und 5000 liegen');
+        }
+      }
   
   // Offset validieren
   if (query.offset) {
@@ -111,18 +111,34 @@ export default async function handler(req, res) {
       }
       
       const customerId = req.query.customer_id;
-      const limit = parseInt(req.query.limit) || 100;
+      const limit = parseInt(req.query.limit) || 5000; // Standard-Limit erhöht für mehr Geräte
       const offset = parseInt(req.query.offset) || 0;
       
       // SQL Query zusammenbauen - verwende die View hmreporting.v_device_hall_sensor_state_latest
-      let query = 'SELECT * FROM hmreporting.v_device_hall_sensor_state_latest';
+      // und JOIN mit device-Tabelle für device_label
+      let query = `
+        SELECT 
+          v.customer_id,
+          v.customer_name,
+          v.asset_id,
+          v.asset_name,
+          v.asset_type,
+          v.device_id,
+          v.device_name,
+          v.device_type,
+          COALESCE(d.label, '') AS device_label,
+          v.hall_sensor_state,
+          v.last_update_utc
+        FROM hmreporting.v_device_hall_sensor_state_latest v
+        LEFT JOIN device d ON d.id = v.device_id
+      `;
       const queryParams = [];
       let paramIndex = 1;
       const conditions = [];
       
       // Customer ID Filter (erforderlich)
       if (customerId) {
-        conditions.push(`customer_id = $${paramIndex}`);
+        conditions.push(`v.customer_id = $${paramIndex}`);
         queryParams.push(customerId);
         paramIndex++;
       } else {
@@ -138,7 +154,7 @@ export default async function handler(req, res) {
       }
       
       // ORDER BY hinzufügen
-      query += ' ORDER BY asset_name, device_name';
+      query += ' ORDER BY v.asset_name, v.device_name';
       
       // LIMIT und OFFSET hinzufügen
       query += ` LIMIT $${paramIndex}`;

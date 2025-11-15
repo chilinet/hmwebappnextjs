@@ -148,9 +148,9 @@ export default function WindowStatus() {
         try {
           setLoading(true);
           
-          // Fetch window status data
+          // Fetch window status data - erhöhtes Limit für mehr als 2000 Geräte
           const reportingUrl = process.env.REPORTING_URL || 'https://webapptest.heatmanager.cloud';
-          const windowResponse = await fetch(`${reportingUrl}/api/reporting/window-status?key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD&customer_id=${session.user.customerid}`);
+          const windowResponse = await fetch(`${reportingUrl}/api/reporting/window-status?key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD&customer_id=${session.user.customerid}&limit=5000`);
           
           if (!windowResponse.ok) {
             throw new Error(`HTTP error! status: ${windowResponse.status}`);
@@ -258,6 +258,9 @@ export default function WindowStatus() {
         // Search in asset path
         const assetPath = getAssetPathString(device.asset_id);
         if (assetPath.toLowerCase().includes(searchLower)) return true;
+        
+        // Search in device label
+        if (device.device_label?.toLowerCase().includes(searchLower)) return true;
         
         return false;
       });
@@ -532,6 +535,10 @@ export default function WindowStatus() {
                                     <code className="text-primary">{device.device_name || 'Unbekannt'}</code>
                                     <br />
                                     <small className="text-muted">{device.device_type || 'Unbekannt'}</small>
+                                    <br />
+                                    {device.device_label && (
+                                      <small className="text-info">{device.device_label}</small>
+                                    )}
                                   </div>
                                 </td>
                                 <td>
