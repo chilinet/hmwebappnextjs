@@ -136,6 +136,18 @@ export default function Structure() {
     }
   }, [selectedNode?.id]);
 
+  // Lade unassigned Devices nur einmal beim ersten Öffnen des "Devices" Tabs
+  // Nicht beim Node-Wechsel - die Daten bleiben im Server-Cache
+  useEffect(() => {
+    if (activeTab === 'devices') {
+      // Lade nur wenn noch nie geladen wurden (lastUnassignedFetch ist null)
+      // Der Server-Cache wird automatisch verwendet (5 Minuten TTL)
+      if (!lastUnassignedFetch) {
+        fetchUnassignedDevices();
+      }
+    }
+  }, [activeTab]); // Nur activeTab als Dependency, nicht selectedNode
+
   useEffect(() => {
     if (customerData?.customerid) {
       fetchCustomerSettings();
@@ -301,41 +313,34 @@ export default function Structure() {
     }, []);
   };
 
-  const fetchNodeDetails = async (nodeId) => {
-    if (!nodeId) return;
+  const fetchNodeDetails = (node) => {
+    if (!node) return;
     
-    setLoadingDetails(true);
-    try {
-      const response = await fetch(`/api/config/assets/${nodeId}`, {
-        headers: {
-          'Authorization': `Bearer ${session.token}`
-        }
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch node details');
-      }
-
-      const data = await response.json();
-      setNodeDetails(data);
-      
-      // Setze den operationalMode basierend auf den geladenen Daten
-      if (data.operationalMode !== undefined) {
-        setOperationalMode(data.operationalMode.toString());
-      } else {
-        setOperationalMode('0');
-      }
-    } catch (error) {
-      console.error('Error fetching node details:', error);
-      setError('Fehler beim Laden der Node-Details');
-    } finally {
-      setLoadingDetails(false);
-    }
+    // Lade die Daten direkt aus dem Tree-Node statt von der API
+    // Alle benötigten Daten (name, label, type, operationalMode) stehen im Tree
+    const nodeDetails = {
+      id: node.id,
+      name: node.name || node.text,
+      label: node.label || node.text,
+      type: node.type || node.data?.type || '',
+      operationalMode: node.operationalMode || node.data?.operationalMode || '0',
+      operationalDevice: node.operationalDevice || node.data?.operationalDevice || '',
+      // Für Kompatibilität mit bestehendem Code
+      extTempDevice: node.operationalDevice || node.data?.operationalDevice || ''
+    };
+    
+    setNodeDetails(nodeDetails);
+    
+    // Setze den operationalMode
+    setOperationalMode(nodeDetails.operationalMode.toString());
+    
+    // Setze den operationalDevice
+    setOperationalDevice(nodeDetails.operationalDevice || '');
   };
 
   const handleNodeSelect = (node) => {
     setSelectedNode(node);
-    fetchNodeDetails(node.id);
+    fetchNodeDetails(node);
   };
 
   const handleAddNode = (parentNode) => {
@@ -872,13 +877,11 @@ export default function Structure() {
       const data = await response.json();
       setDevices(data.assigned);
       
-      // Aktualisiere die nicht zugeordneten Geräte nur wenn:
-      // 1. Sie noch nie geladen wurden
-      // 2. Der letzte Fetch ist älter als 5 Minuten
-      // 3. Nach einer Zuordnungs-/Entfernungsaktion
-      if (!lastUnassignedFetch || Date.now() - lastUnassignedFetch > 300000) {
-        await fetchUnassignedDevices();
-      }
+      // Unassigned Devices werden NICHT automatisch geladen bei jedem Node-Klick
+      // Sie werden nur geladen:
+      // 1. Wenn der User explizit auf den "Devices" Tab klickt (siehe useEffect für activeTab)
+      // 2. Nach einer Zuordnungs-/Entfernungsaktion (siehe handleAssignDevice/handleUnassignDevice)
+      // 3. Wenn der User auf den Refresh-Button klickt
       
       return data;
     } catch (error) {

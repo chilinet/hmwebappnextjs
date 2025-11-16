@@ -40,41 +40,93 @@ export default async function handler(req, res) {
       // Cache miss - hole Devices von ThingsBoard (mit Pagination)
       console.log(`Cache miss for customer ${customerId}, fetching from ThingsBoard...`);
       
-      // Lade alle Devices mit Pagination
+      // Lade alle Devices mit Pagination und Timeouts
       allDevices = [];
       let page = 0;
       const pageSize = 1000;
       let hasNext = true;
+      const maxPages = 10; // Sicherheitslimit: max 10.000 Devices
+      const requestTimeout = 30000; // 30 Sekunden pro Request
+      let paginationError = null;
       
-      while (hasNext) {
-        const devicesResponse = await fetch(
-          `${process.env.THINGSBOARD_URL}/api/customer/${customerId}/devices?pageSize=${pageSize}&page=${page}`,
-          {
-            headers: {
-              'X-Authorization': `Bearer ${session.tbToken}`
+      while (hasNext && page < maxPages) {
+        let timeoutId = null;
+        try {
+          const controller = new AbortController();
+          timeoutId = setTimeout(() => controller.abort(), requestTimeout);
+          
+          const devicesResponse = await fetch(
+            `${process.env.THINGSBOARD_URL}/api/customer/${customerId}/devices?pageSize=${pageSize}&page=${page}`,
+            {
+              headers: {
+                'X-Authorization': `Bearer ${session.tbToken}`
+              },
+              signal: controller.signal
             }
+          );
+
+          if (timeoutId) clearTimeout(timeoutId);
+
+          if (!devicesResponse.ok) {
+            const errorText = await devicesResponse.text();
+            console.error(`Failed to fetch devices (page ${page}):`, devicesResponse.status, errorText);
+            // Bei Fehler: verwende bereits geladene Devices oder breche ab
+            if (allDevices.length === 0) {
+              paginationError = new Error(`Failed to fetch all devices (page ${page}): ${devicesResponse.status}`);
+              break;
+            }
+            // Wenn bereits Devices geladen wurden, breche ab und verwende diese
+            console.warn(`Stopping pagination after error on page ${page}, using ${allDevices.length} already loaded devices`);
+            break;
           }
-        );
 
-        if (!devicesResponse.ok) {
-          console.error(`Failed to fetch devices (page ${page}):`, await devicesResponse.text());
-          throw new Error(`Failed to fetch all devices (page ${page})`);
+          const devicesData = await devicesResponse.json();
+          const pageDevices = devicesData.data || [];
+          allDevices.push(...pageDevices);
+          
+          // Prüfe ob es weitere Seiten gibt
+          hasNext = devicesData.hasNext || (devicesData.totalPages && page + 1 < devicesData.totalPages);
+          page++;
+          
+          console.log(`Loaded page ${page - 1}: ${pageDevices.length} devices (total so far: ${allDevices.length})`);
+        } catch (fetchError) {
+          if (timeoutId) clearTimeout(timeoutId);
+          // Prüfe auf verschiedene Timeout-Fehler
+          const isTimeoutError = 
+            fetchError.name === 'AbortError' || 
+            fetchError.message?.includes('timeout') ||
+            fetchError.message?.includes('Timeout') ||
+            fetchError.cause?.code === 'UND_ERR_CONNECT_TIMEOUT' ||
+            fetchError.cause?.code === 'UND_ERR_SOCKET';
+          
+          if (isTimeoutError) {
+            console.warn(`Timeout while fetching devices (page ${page}), using ${allDevices.length} already loaded devices`);
+            // Bei Timeout: verwende bereits geladene Devices oder setze Fehler
+            if (allDevices.length === 0) {
+              paginationError = new Error(`Timeout while fetching devices: No devices loaded`);
+            }
+            break;
+          }
+          // Andere Fehler: setze Fehler und breche ab
+          paginationError = fetchError;
+          break;
         }
-
-        const devicesData = await devicesResponse.json();
-        const pageDevices = devicesData.data || [];
-        allDevices.push(...pageDevices);
-        
-        // Prüfe ob es weitere Seiten gibt
-        hasNext = devicesData.hasNext || (devicesData.totalPages && page + 1 < devicesData.totalPages);
-        page++;
-        
-        console.log(`Loaded page ${page - 1}: ${pageDevices.length} devices (total so far: ${allDevices.length})`);
       }
       
-      // Speichere im Cache (5 Minuten TTL)
-      setCachedDevices(customerId, allDevices, 5 * 60 * 1000);
-      console.log(`Cached ${allDevices.length} devices for customer ${customerId}`);
+      if (page >= maxPages) {
+        console.warn(`Reached max pages limit (${maxPages}), loaded ${allDevices.length} devices`);
+      }
+      
+      // Speichere im Cache nur wenn Devices geladen wurden
+      if (allDevices.length > 0) {
+        setCachedDevices(customerId, allDevices, 5 * 60 * 1000);
+        console.log(`Cached ${allDevices.length} devices for customer ${customerId}`);
+      } else if (paginationError) {
+        // Wenn keine Devices geladen wurden, logge Warnung aber wirf keinen Fehler
+        // Die API kann trotzdem die zugeordneten Devices für das Asset zurückgeben
+        console.warn(`Could not load all devices due to error, but continuing with asset-specific device loading:`, paginationError.message);
+        allDevices = []; // Leeres Array, damit die API weiterläuft
+      }
     } else {
       console.log(`Cache hit for customer ${customerId}, using ${allDevices.length} cached devices`);
     }
