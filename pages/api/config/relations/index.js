@@ -1,5 +1,8 @@
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../auth/[...nextauth]';
+import { getConnection } from '../../../../lib/db';
+import sql from 'mssql';
+import { invalidateCache, invalidateUnassignedCache } from '../../../../lib/utils/deviceCache';
 
 export default async function handler(req, res) {
   const session = await getServerSession(req, res, authOptions);
@@ -49,6 +52,30 @@ export default async function handler(req, res) {
         throw new Error('Failed to create relation in ThingsBoard');
       }
 
+      // Invalidiere den Cache wenn eine Device-Relation erstellt wurde
+      if (toType === 'DEVICE') {
+        try {
+          const pool = await getConnection();
+          const userResult = await pool.request()
+            .input('userid', sql.Int, session.user.userid)
+            .query(`
+              SELECT customerid
+              FROM hm_users
+              WHERE userid = @userid
+            `);
+          
+          if (userResult.recordset.length > 0) {
+            const customerId = userResult.recordset[0].customerid;
+            invalidateCache(customerId);
+            invalidateUnassignedCache(customerId);
+            console.log(`Cache invalidated for customer ${customerId} after device relation creation`);
+          }
+        } catch (error) {
+          console.warn('Failed to invalidate cache after relation creation:', error);
+          // Nicht kritisch, Cache wird automatisch nach TTL ablaufen
+        }
+      }
+
       return res.status(200).json({ 
         success: true,
         message: 'Relation created successfully' 
@@ -85,6 +112,30 @@ export default async function handler(req, res) {
         const errorText = await response.text();
         console.error('ThingsBoard API error:', errorText);
         throw new Error('Failed to delete relation in ThingsBoard');
+      }
+
+      // Invalidiere den Cache wenn eine Device-Relation gelöscht wurde
+      if (toType === 'DEVICE') {
+        try {
+          const pool = await getConnection();
+          const userResult = await pool.request()
+            .input('userid', sql.Int, session.user.userid)
+            .query(`
+              SELECT customerid
+              FROM hm_users
+              WHERE userid = @userid
+            `);
+          
+          if (userResult.recordset.length > 0) {
+            const customerId = userResult.recordset[0].customerid;
+            invalidateCache(customerId);
+            invalidateUnassignedCache(customerId);
+            console.log(`Cache invalidated for customer ${customerId} after device relation deletion`);
+          }
+        } catch (error) {
+          console.warn('Failed to invalidate cache after relation deletion:', error);
+          // Nicht kritisch, Cache wird automatisch nach TTL ablaufen
+        }
       }
 
       return res.status(200).json({ 

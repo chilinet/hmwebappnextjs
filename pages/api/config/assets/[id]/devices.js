@@ -2,6 +2,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../../auth/[...nextauth]";
 import { getConnection } from '../../../../../lib/db';
 import sql from 'mssql';
+import { getCachedDevices, setCachedDevices } from '../../../../../lib/utils/deviceCache';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -32,25 +33,51 @@ export default async function handler(req, res) {
 
     const customerId = userResult.recordset[0].customerid;
 
-    // Hole alle Devices des Customers von ThingsBoard
-    const allDevicesResponse = await fetch(
-      `${process.env.THINGSBOARD_URL}/api/customer/${customerId}/devices?pageSize=1000&page=0`,
-      {
-        headers: {
-          'X-Authorization': `Bearer ${session.tbToken}`
-        }
-      }
-    );
-
-    if (!allDevicesResponse.ok) {
-      console.error('Failed to fetch all devices:', await allDevicesResponse.text());
-      throw new Error('Failed to fetch all devices');
-    }
+    // Prüfe zuerst den Cache
+    let allDevices = getCachedDevices(customerId);
     
-    console.log('allDevicesResponse:', allDevicesResponse);
+    if (!allDevices) {
+      // Cache miss - hole Devices von ThingsBoard (mit Pagination)
+      console.log(`Cache miss for customer ${customerId}, fetching from ThingsBoard...`);
+      
+      // Lade alle Devices mit Pagination
+      allDevices = [];
+      let page = 0;
+      const pageSize = 1000;
+      let hasNext = true;
+      
+      while (hasNext) {
+        const devicesResponse = await fetch(
+          `${process.env.THINGSBOARD_URL}/api/customer/${customerId}/devices?pageSize=${pageSize}&page=${page}`,
+          {
+            headers: {
+              'X-Authorization': `Bearer ${session.tbToken}`
+            }
+          }
+        );
 
-    const allDevicesData = await allDevicesResponse.json();
-    const allDevices = allDevicesData.data || [];
+        if (!devicesResponse.ok) {
+          console.error(`Failed to fetch devices (page ${page}):`, await devicesResponse.text());
+          throw new Error(`Failed to fetch all devices (page ${page})`);
+        }
+
+        const devicesData = await devicesResponse.json();
+        const pageDevices = devicesData.data || [];
+        allDevices.push(...pageDevices);
+        
+        // Prüfe ob es weitere Seiten gibt
+        hasNext = devicesData.hasNext || (devicesData.totalPages && page + 1 < devicesData.totalPages);
+        page++;
+        
+        console.log(`Loaded page ${page - 1}: ${pageDevices.length} devices (total so far: ${allDevices.length})`);
+      }
+      
+      // Speichere im Cache (5 Minuten TTL)
+      setCachedDevices(customerId, allDevices, 5 * 60 * 1000);
+      console.log(`Cached ${allDevices.length} devices for customer ${customerId}`);
+    } else {
+      console.log(`Cache hit for customer ${customerId}, using ${allDevices.length} cached devices`);
+    }
 
     // Hole die zugeordneten Devices
     const response = await fetch(
@@ -193,41 +220,68 @@ export default async function handler(req, res) {
     );
 
     // Prüfe für jedes nicht zugeordnete Device, ob es bereits irgendwo zugeordnet ist
-    const trulyUnassignedDevices = await Promise.all(
+    // Verwende Promise.allSettled mit Timeouts, damit einzelne Fehler nicht alles blockieren
+    const trulyUnassignedDevicesResults = await Promise.allSettled(
       unassignedDevices.map(async device => {
         try {
-          // Prüfe ob das Device bereits eine "To"-Relation hat
-          const relationResponse = await fetch(
-            `${process.env.THINGSBOARD_URL}/api/relations/info?toId=${device.id.id}&toType=DEVICE`,
-            {
-              headers: {
-                'X-Authorization': `Bearer ${session.tbToken}`
-              }
-            }
-          );
-
-          if (!relationResponse.ok) {
-            console.error(`Failed to fetch relations for device ${device.id.id}:`, await relationResponse.text());
-            return null;
-          }
-
-          const relations = await relationResponse.json();
+          // Prüfe ob das Device bereits eine "To"-Relation hat mit Timeout
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 Sekunden Timeout
           
-          // Wenn keine Relations gefunden wurden, ist das Device wirklich nicht zugeordnet
-          if (!Array.isArray(relations) || relations.length === 0) {
+          try {
+            const relationResponse = await fetch(
+              `${process.env.THINGSBOARD_URL}/api/relations/info?toId=${device.id.id}&toType=DEVICE`,
+              {
+                headers: {
+                  'X-Authorization': `Bearer ${session.tbToken}`
+                },
+                signal: controller.signal
+              }
+            );
+
+            clearTimeout(timeoutId);
+
+            if (!relationResponse.ok) {
+              // Bei Fehler behandle Device als nicht zugeordnet (konservativ)
+              return device;
+            }
+
+            const relations = await relationResponse.json();
+            
+            // Wenn keine Relations gefunden wurden, ist das Device wirklich nicht zugeordnet
+            if (!Array.isArray(relations) || relations.length === 0) {
+              return device;
+            }
+            
+            // Wenn es Relations gibt, prüfen ob eine davon vom Typ "Contains" ist
+            const hasContainsRelation = relations.some(rel => rel.type === 'Contains');
+            return hasContainsRelation ? null : device;
+
+          } catch (fetchError) {
+            clearTimeout(timeoutId);
+            // Bei Timeout oder AbortError behandle Device als nicht zugeordnet (konservativ)
+            if (fetchError.name === 'AbortError' || fetchError.message?.includes('timeout')) {
+              // Timeout: behandle als nicht zugeordnet (konservativ)
+              return device;
+            }
+            // Andere Fehler: logge Warnung, aber behandle als nicht zugeordnet
+            console.warn(`Error checking relations for device ${device.id.id}:`, fetchError.message || fetchError);
             return device;
           }
-          
-          // Wenn es Relations gibt, prüfen ob eine davon vom Typ "Contains" ist
-          const hasContainsRelation = relations.some(rel => rel.type === 'Contains');
-          return hasContainsRelation ? null : device;
-
         } catch (error) {
-          console.error(`Error checking relations for device ${device.id.id}:`, error);
-          return null;
+          // Bei Fehler behandle Device als nicht zugeordnet (konservativ)
+          if (!error.message?.includes('timeout') && !error.message?.includes('aborted')) {
+            console.warn(`Error checking relations for device ${device.id.id}:`, error.message || error);
+          }
+          return device;
         }
       })
     );
+    
+    // Extrahiere erfolgreiche Ergebnisse
+    const trulyUnassignedDevices = trulyUnassignedDevicesResults
+      .filter(result => result.status === 'fulfilled' && result.value !== null)
+      .map(result => result.value);
 
     // Filtere null-Werte heraus
     const filteredUnassignedDevices = trulyUnassignedDevices.filter(device => device !== null);

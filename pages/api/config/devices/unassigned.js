@@ -2,6 +2,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../auth/[...nextauth]";
 import { getConnection } from "../../../../lib/db";
 import sql from 'mssql';
+import { getCachedUnassignedDevices, setCachedUnassignedDevices } from '../../../../lib/utils/deviceCache';
 
 export default async function handler(req, res) {
   const session = await getServerSession(req, res, authOptions);
@@ -50,22 +51,48 @@ export default async function handler(req, res) {
 
     const customerId = userResult.recordset[0].customerid;
 
-    // Hole alle Devices des Customers
-    const allDevicesResponse = await fetch(
-      `${process.env.THINGSBOARD_URL}/api/customer/${customerId}/devices?pageSize=1000&page=0`,
-      {
-        headers: {
-          'X-Authorization': `Bearer ${session.tbToken}`
-        }
-      }
-    );
-
-    if (!allDevicesResponse.ok) {
-      throw new Error('Failed to fetch devices');
+    // Prüfe zuerst den Cache für unassigned devices
+    let cachedUnassigned = getCachedUnassignedDevices(customerId);
+    if (cachedUnassigned) {
+      console.log(`Cache hit for unassigned devices (customer ${customerId}), returning ${cachedUnassigned.length} cached devices`);
+      return res.json(cachedUnassigned);
     }
 
-    const allDevicesData = await allDevicesResponse.json();
-    const allDevices = allDevicesData.data || [];
+    // Cache miss - hole alle Devices des Customers (mit Pagination)
+    console.log(`Cache miss for unassigned devices (customer ${customerId}), fetching from ThingsBoard...`);
+    
+    // Lade alle Devices mit Pagination
+    const allDevices = [];
+    let page = 0;
+    const pageSize = 1000;
+    let hasNext = true;
+    
+    while (hasNext) {
+      const devicesResponse = await fetch(
+        `${process.env.THINGSBOARD_URL}/api/customer/${customerId}/devices?pageSize=${pageSize}&page=${page}`,
+        {
+          headers: {
+            'X-Authorization': `Bearer ${session.tbToken}`
+          }
+        }
+      );
+
+      if (!devicesResponse.ok) {
+        throw new Error(`Failed to fetch devices (page ${page})`);
+      }
+
+      const devicesData = await devicesResponse.json();
+      const pageDevices = devicesData.data || [];
+      allDevices.push(...pageDevices);
+      
+      // Prüfe ob es weitere Seiten gibt
+      hasNext = devicesData.hasNext || (devicesData.totalPages && page + 1 < devicesData.totalPages);
+      page++;
+      
+      console.log(`Loaded page ${page - 1}: ${pageDevices.length} devices (total so far: ${allDevices.length})`);
+    }
+    
+    console.log(`Total devices loaded: ${allDevices.length}`);
 
     // Hilfsfunktion zum Abrufen aller Attribute für ein Device mit Timeout
     const fetchAllDeviceAttributes = async (deviceId) => {
@@ -186,6 +213,10 @@ export default async function handler(req, res) {
 
     // Filtere null-Werte heraus
     const unassignedDevices = devicesWithAttributes.filter(device => device !== null);
+
+    // Speichere im Cache (5 Minuten TTL)
+    setCachedUnassignedDevices(customerId, unassignedDevices, 5 * 60 * 1000);
+    console.log(`Cached ${unassignedDevices.length} unassigned devices for customer ${customerId}`);
 
     return res.json(unassignedDevices);
 
