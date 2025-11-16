@@ -35,6 +35,7 @@ export default function Home() {
   const [alarmsData, setAlarmsData] = useState(null);
   const [weatherHistoryData, setWeatherHistoryData] = useState(null);
   const [batteryData, setBatteryData] = useState(null);
+  const [windowData, setWindowData] = useState(null);
   const [customerData, setCustomerData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -223,6 +224,30 @@ export default function Home() {
     };
   };
 
+  const getWindowStats = () => {
+    if (!windowData?.data || windowData.data.length === 0) {
+      return { 
+        total: 0, 
+        open: 0
+      };
+    }
+
+    // Filtere nur Geräte mit device_type 'dnt-LW-WSCI'
+    const devices = windowData.data.filter(device => 
+      device.device_type === 'dnt-LW-WSCI'
+    );
+    
+    const open = devices.filter(d => {
+      const state = String(d.hall_sensor_state || '').toUpperCase();
+      return state === 'LOW';
+    }).length;
+
+    return {
+      total: devices.length,
+      open: open
+    };
+  };
+
 
   // Helper function to get weather history chart data
   const getWeatherHistoryChartData = () => {
@@ -406,6 +431,17 @@ export default function Home() {
           } else {
             console.warn('Failed to fetch battery status data, using fallback');
           }
+
+          // Fetch window status data
+          const windowResponse = await fetch(`${reportingUrl}/api/reporting/window-status?key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD&customer_id=${session.user.customerid}&limit=5000`);
+
+          if (windowResponse.ok) {
+            const windowData = await windowResponse.json();
+            console.log('Window status data received:', windowData);
+            setWindowData(windowData);
+          } else {
+            console.warn('Failed to fetch window status data, using fallback');
+          }
         } catch (err) {
           console.error('Error fetching dashboard data:', err);
           setError(err.message);
@@ -539,9 +575,9 @@ export default function Home() {
                       <FontAwesomeIcon icon={faHome} />
                     </div>
                     <div>
-                      <h3 className="mb-0 text-info fw-bold">--</h3>
+                      <h3 className="mb-0 text-info fw-bold">{getWindowStats().open}</h3>
                       <p className="mb-0 text-muted small">OFFENE FENSTER</p>
-                      <p className="mb-0 text-muted small">Fensterstatus anzeigen</p>
+                      <p className="mb-0 text-muted small">von {getWindowStats().total} Gesamt</p>
                     </div>
                   </div>
                 </Card.Body>

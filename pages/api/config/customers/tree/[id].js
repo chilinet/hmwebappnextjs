@@ -1,6 +1,7 @@
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../../auth/[...nextauth]";
 import sql from 'mssql';
+import { logInfo, logWarn, logError, startStructureCreationLog, endStructureCreationLog } from '../../../../../lib/utils/structureLogger';
 
 const config = {
   user: process.env.MSSQL_USER,
@@ -13,51 +14,69 @@ const config = {
   }
 };
 
-// Funktion zum Abrufen der Asset-Attribute
+// Funktion zum Abrufen der Asset-Attribute mit Timeout
 async function fetchAssetAttributes(assetId, tbToken) {
   try {
-    const response = await fetch(
-      `${process.env.THINGSBOARD_URL}/api/plugins/telemetry/ASSET/${assetId}/values/attributes`,
-      {
-        headers: {
-          'X-Authorization': `Bearer ${tbToken}`
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 Sekunden Timeout
+    
+    try {
+      const response = await fetch(
+        `${process.env.THINGSBOARD_URL}/api/plugins/telemetry/ASSET/${assetId}/values/attributes`,
+        {
+          headers: {
+            'X-Authorization': `Bearer ${tbToken}`
+          },
+          signal: controller.signal
         }
-      }
-    );
+      );
 
-    if (!response.ok) {
-      console.log(`Failed to fetch attributes for asset ${assetId}: ${response.status}`);
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        console.log(`Failed to fetch attributes for asset ${assetId}: ${response.status}`);
+        return {};
+      }
+
+      const attributes = await response.json();
+      console.log(`Asset ${assetId} attributes:`, attributes);
+      console.log(`Asset ${assetId} attributes count:`, attributes.length);
+
+      // Extrahiere die gewünschten Attribute
+      const extractedAttributes = {};
+      const attributeKeys = [
+        'operationalMode',
+        'childLock', 
+        'fixValue',
+        'maxTemp',
+        'minTemp',
+        'extTempDevice',
+        'overruleMinutes',
+        'runStatus',
+        'schedulerPlan'
+      ];
+
+      attributeKeys.forEach(key => {
+        const attribute = attributes.find(attr => attr.key === key);
+        if (attribute) {
+          extractedAttributes[key] = attribute.value;
+        }
+      });
+
+      return extractedAttributes;
+    } catch (fetchError) {
+      clearTimeout(timeoutId);
+      // Ignoriere Timeout-Fehler stillschweigend
+      if (fetchError.name !== 'AbortError' && !fetchError.message?.includes('timeout')) {
+        console.warn(`Error fetching attributes for asset ${assetId}:`, fetchError.message || fetchError);
+      }
       return {};
     }
-
-    const attributes = await response.json();
-    console.log(`Asset ${assetId} attributes:`, attributes);
-    console.log(`Asset ${assetId} attributes count:`, attributes.length);
-
-    // Extrahiere die gewünschten Attribute
-    const extractedAttributes = {};
-    const attributeKeys = [
-      'operationalMode',
-      'childLock', 
-      'fixValue',
-      'maxTemp',
-      'minTemp',
-      'extTempDevice',
-      'overruleMinutes',
-      'runStatus',
-      'schedulerPlan'
-    ];
-
-    attributeKeys.forEach(key => {
-      const attribute = attributes.find(attr => attr.key === key);
-      if (attribute) {
-        extractedAttributes[key] = attribute.value;
-      }
-    });
-
-    return extractedAttributes;
   } catch (error) {
-    console.error(`Error fetching attributes for asset ${assetId}:`, error);
+    // Ignoriere Timeout-Fehler
+    if (!error.message?.includes('timeout') && !error.message?.includes('aborted')) {
+      console.warn(`Error fetching attributes for asset ${assetId}:`, error.message || error);
+    }
     return {};
   }
 }
@@ -168,24 +187,46 @@ async function processMockAssets(assets, customerId, tbToken) {
 }
 
 async function fetchAssetTree(customerId, tbToken) {
+  const sessionId = startStructureCreationLog(customerId);
+  
   try {
+    logInfo(`Starting asset tree fetch for customer ${customerId}`, { sessionId });
 
-    // Hole zunächst alle Assets des Kunden
-    const response = await fetch(
-      `${process.env.THINGSBOARD_URL}/api/customer/${customerId}/assets?pageSize=10000&page=0`,
-      {
-        headers: {
-          'X-Authorization': `Bearer ${tbToken}`
+    // Hole zunächst alle Assets des Kunden mit Timeout
+    logInfo('Fetching assets list from ThingsBoard', { sessionId });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 Sekunden für Assets-Liste
+    
+    let response;
+    try {
+      response = await fetch(
+        `${process.env.THINGSBOARD_URL}/api/customer/${customerId}/assets?pageSize=10000&page=0`,
+        {
+          headers: {
+            'X-Authorization': `Bearer ${tbToken}`
+          },
+          signal: controller.signal
         }
+      );
+      clearTimeout(timeoutId);
+    } catch (fetchError) {
+      clearTimeout(timeoutId);
+      if (fetchError.name === 'AbortError' || fetchError.message?.includes('timeout')) {
+        logError('Timeout beim Abrufen der Assets', fetchError);
+        throw new Error('Timeout beim Abrufen der Assets');
       }
-    );
+      logError('Error fetching assets', fetchError);
+      throw fetchError;
+    }
 
     if (!response.ok) {
+      logError(`Failed to fetch assets: HTTP ${response.status}`);
       throw new Error('Failed to fetch assets');
     }
 
     const data = await response.json();
     const assets = data.data;
+    logInfo(`Fetched ${assets.length} assets`, { sessionId, assetCount: assets.length });
 
     // Erstelle eine Map für schnellen Zugriff auf Assets
     const assetMap = new Map();
@@ -212,34 +253,93 @@ async function fetchAssetTree(customerId, tbToken) {
       });
     });
 
-    // Hole die Asset-Beziehungen und Device-Beziehungen
+    // Hole die Asset-Beziehungen und Device-Beziehungen mit Timeouts
     const relationPromises = assets.map(asset => {
-      return Promise.all([
-        // Asset-Beziehungen
-        fetch(`${process.env.THINGSBOARD_URL}/api/relations/info?fromId=${asset.id.id}&fromType=ASSET`, {
-          headers: {
-            'X-Authorization': `Bearer ${tbToken}`
+      return Promise.allSettled([
+        // Asset-Beziehungen mit Timeout
+        (async () => {
+          try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 Sekunden
+            try {
+              const res = await fetch(`${process.env.THINGSBOARD_URL}/api/relations/info?fromId=${asset.id.id}&fromType=ASSET`, {
+                headers: {
+                  'X-Authorization': `Bearer ${tbToken}`
+                },
+                signal: controller.signal
+              });
+              clearTimeout(timeoutId);
+              return res.ok ? await res.json() : [];
+            } catch (fetchError) {
+              clearTimeout(timeoutId);
+              if (fetchError.name !== 'AbortError' && !fetchError.message?.includes('timeout')) {
+                console.warn(`Error fetching asset relations for ${asset.id.id}:`, fetchError.message || fetchError);
+              }
+              return [];
+            }
+          } catch (error) {
+            return [];
           }
-        }).then(res => res.json()),
-        // Device-Beziehungen - verwende relations/info für Entity-Informationen, aber filtere nach DEVICE
-        fetch(`${process.env.THINGSBOARD_URL}/api/relations/info?fromId=${asset.id.id}&fromType=ASSET&relationType=Contains&toType=DEVICE`, {
-          headers: {
-            'X-Authorization': `Bearer ${tbToken}`
+        })(),
+        // Device-Beziehungen mit Timeout
+        (async () => {
+          try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 Sekunden
+            try {
+              const res = await fetch(`${process.env.THINGSBOARD_URL}/api/relations/info?fromId=${asset.id.id}&fromType=ASSET&relationType=Contains&toType=DEVICE`, {
+                headers: {
+                  'X-Authorization': `Bearer ${tbToken}`
+                },
+                signal: controller.signal
+              });
+              clearTimeout(timeoutId);
+              if (res.ok) {
+                const relations = await res.json();
+                // Filtere nur Device-Entities heraus
+                return relations.filter(relation => relation.to && relation.to.entityType === 'DEVICE');
+              }
+              return [];
+            } catch (fetchError) {
+              clearTimeout(timeoutId);
+              if (fetchError.name !== 'AbortError' && !fetchError.message?.includes('timeout')) {
+                console.warn(`Error fetching device relations for ${asset.id.id}:`, fetchError.message || fetchError);
+              }
+              return [];
+            }
+          } catch (error) {
+            return [];
           }
-        }).then(res => res.json()).then(relations => {
-          // Filtere nur Device-Entities heraus
-          return relations.filter(relation => relation.to && relation.to.entityType === 'DEVICE');
-        })
+        })()
       ]);
     });
 
-    const relationsResults = await Promise.all(relationPromises);
+    const relationsResults = await Promise.allSettled(relationPromises);
+    
+    // Extrahiere erfolgreiche Ergebnisse und behalte die Asset-Index-Zuordnung
+    const validRelationsResults = relationsResults.map((result, index) => {
+      if (result.status === 'fulfilled') {
+        const [assetResult, deviceResult] = result.value;
+        return {
+          index,
+          assetRelations: assetResult.status === 'fulfilled' ? assetResult.value : [],
+          deviceRelations: deviceResult.status === 'fulfilled' ? deviceResult.value : []
+        };
+      } else {
+        // Bei Fehler gebe leere Relations zurück
+        return {
+          index,
+          assetRelations: [],
+          deviceRelations: []
+        };
+      }
+    });
 
     // Sammle alle Device-IDs für Batch-Abruf
     const allDeviceIds = new Set();
-    relationsResults.forEach(([assetRelations, deviceRelations]) => {
-      if (deviceRelations && deviceRelations.length > 0) {
-        deviceRelations.forEach(relation => {
+    validRelationsResults.forEach(result => {
+      if (result.deviceRelations && result.deviceRelations.length > 0) {
+        result.deviceRelations.forEach(relation => {
           if (relation.to && relation.to.id) {
             allDeviceIds.add(relation.to.id);
           }
@@ -247,155 +347,115 @@ async function fetchAssetTree(customerId, tbToken) {
       }
     });
 
-    console.log('All device IDs found:', Array.from(allDeviceIds));
+    logInfo(`Found ${allDeviceIds.size} unique device IDs`, { sessionId, deviceIds: Array.from(allDeviceIds) });
 
-    // Hole alle Device-Details in einem Batch
+    // Hole alle Device-Details in einem Batch mit Timeouts
     const deviceDetailsMap = new Map();
     if (allDeviceIds.size > 0) {
-      console.log(`Fetching details for ${allDeviceIds.size} devices...`);
+      logInfo(`Fetching details for ${allDeviceIds.size} devices`, { sessionId, deviceCount: allDeviceIds.size });
       const deviceDetailsPromises = Array.from(allDeviceIds).map(deviceId =>
-        fetch(`${process.env.THINGSBOARD_URL}/api/device/${deviceId}`, {
-          headers: {
-            'X-Authorization': `Bearer ${tbToken}`
+        (async () => {
+          try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 Sekunden
+            try {
+              const res = await fetch(`${process.env.THINGSBOARD_URL}/api/device/${deviceId}`, {
+                headers: {
+                  'X-Authorization': `Bearer ${tbToken}`
+                },
+                signal: controller.signal
+              });
+              clearTimeout(timeoutId);
+              return res.ok ? await res.json() : null;
+            } catch (fetchError) {
+              clearTimeout(timeoutId);
+              if (fetchError.name !== 'AbortError' && !fetchError.message?.includes('timeout')) {
+                console.warn(`Error fetching device ${deviceId}:`, fetchError.message || fetchError);
+              }
+              return null;
+            }
+          } catch (error) {
+            return null;
           }
-        }).then(res => res.json()).catch(err => {
-          console.error(`Error fetching device ${deviceId}:`, err);
-          return null;
-        })
+        })()
       );
 
-      const deviceDetails = await Promise.all(deviceDetailsPromises);
-      console.log('Device details received:', deviceDetails.length);
+      const deviceDetailsResults = await Promise.allSettled(deviceDetailsPromises);
+      const deviceDetails = deviceDetailsResults
+        .filter(result => result.status === 'fulfilled' && result.value !== null)
+        .map(result => result.value);
+      
+      const failedDevices = deviceDetailsResults.filter(result => result.status === 'rejected' || result.value === null).length;
+      logInfo(`Device details received: ${deviceDetails.length} successful, ${failedDevices} failed`, { 
+        sessionId, 
+        successful: deviceDetails.length, 
+        failed: failedDevices 
+      });
+      
       deviceDetails.forEach(device => {
         if (device && device.id) {
           deviceDetailsMap.set(device.id.id, device);
-          console.log(`Device ${device.id.id}: ${device.name} (${device.label})`);
         }
       });
     }
 
-    console.log('Device details map size:', deviceDetailsMap.size);
+    logInfo(`Device details map size: ${deviceDetailsMap.size}`, { sessionId, mapSize: deviceDetailsMap.size });
 
-    // Hole Asset-Attribute für alle Assets
-    console.log('Fetching asset attributes...');
-    const assetAttributesPromises = assets.map(asset => 
-      fetchAssetAttributes(asset.id.id, tbToken).then(attributes => {
-        // If no attributes found, use mock attributes based on asset type
-        if (!attributes || Object.keys(attributes).length === 0) {
-          console.log(`No attributes found for ${asset.id.id}, using mock attributes`);
-          let mockAttributes = {};
-          if (asset.type === 'Property') {
-            mockAttributes = {
-              operationalMode: "10",
-              childLock: false,
-              fixValue: null,
-              maxTemp: 25.0,
-              minTemp: 18.0,
-              extTempDevice: null,
-              overruleMinutes: 30,
-              runStatus: "active",
-              schedulerPlan: "weekday_schedule"
-            };
-          } else if (asset.type === 'Building') {
-            mockAttributes = {
-              operationalMode: "2",
-              childLock: true,
-              fixValue: 22.0,
-              maxTemp: 24.0,
-              minTemp: 20.0,
-              extTempDevice: "3edc08d0-647a-11ef-8cd8-8b580d9aa086",
-              overruleMinutes: 60,
-              runStatus: "standby",
-              schedulerPlan: "custom_schedule"
-            };
-          } else if (asset.type === 'Room') {
-            mockAttributes = {
-              operationalMode: "1",
-              childLock: false,
-              fixValue: null,
-              maxTemp: 23.0,
-              minTemp: 19.0,
-              extTempDevice: "3edc08d0-647a-11ef-8cd8-8b580d9aa086",
-              overruleMinutes: 15,
-              runStatus: "heating",
-              schedulerPlan: "office_hours"
-            };
-          }
-          return {
-            assetId: asset.id.id,
-            attributes: mockAttributes
-          };
-        }
-        return {
-          assetId: asset.id.id,
-          attributes
-        };
-      }).catch(error => {
-        console.log(`Error fetching attributes for ${asset.id.id}:`, error.message);
-        // Return mock attributes based on asset type
-        let mockAttributes = {};
-        if (asset.type === 'Property') {
-          mockAttributes = {
-            operationalMode: "10",
-            childLock: false,
-            fixValue: null,
-            maxTemp: 25.0,
-            minTemp: 18.0,
-            extTempDevice: null,
-            overruleMinutes: 30,
-            runStatus: "active",
-            schedulerPlan: "weekday_schedule"
-          };
-        } else if (asset.type === 'Building') {
-          mockAttributes = {
-            operationalMode: "2",
-            childLock: true,
-            fixValue: 22.0,
-            maxTemp: 24.0,
-            minTemp: 20.0,
-            extTempDevice: "3edc08d0-647a-11ef-8cd8-8b580d9aa086",
-            overruleMinutes: 60,
-            runStatus: "standby",
-            schedulerPlan: "custom_schedule"
-          };
-        } else if (asset.type === 'Room') {
-          mockAttributes = {
-            operationalMode: "1",
-            childLock: false,
-            fixValue: null,
-            maxTemp: 23.0,
-            minTemp: 19.0,
-            extTempDevice: "3edc08d0-647a-11ef-8cd8-8b580d9aa086",
-            overruleMinutes: 15,
-            runStatus: "heating",
-            schedulerPlan: "office_hours"
-          };
-        }
-        return {
-          assetId: asset.id.id,
-          attributes: mockAttributes
-        };
-      })
+    // Hole Asset-Attribute für alle Assets mit Promise.allSettled
+    logInfo(`Fetching attributes for ${assets.length} assets`, { sessionId, assetCount: assets.length });
+    const assetAttributesResults = await Promise.allSettled(
+      assets.map(asset => fetchAssetAttributes(asset.id.id, tbToken))
     );
-
-    const assetAttributesResults = await Promise.all(assetAttributesPromises);
-    console.log('Asset attributes fetched:', assetAttributesResults.length);
-
-    // Füge die Attribute zu den Assets hinzu
-    assetAttributesResults.forEach(({ assetId, attributes }) => {
-      const asset = assetMap.get(assetId);
-      if (asset) {
-        Object.assign(asset, attributes);
-        console.log(`Asset ${asset.name} attributes:`, attributes);
+    
+    // Verarbeite Asset-Attribute
+    let attributesSuccessCount = 0;
+    let attributesFailedCount = 0;
+    assetAttributesResults.forEach((result, index) => {
+      const asset = assets[index];
+      const assetInMap = assetMap.get(asset.id.id);
+      
+      if (result.status === 'fulfilled') {
+        const attributes = result.value;
+        // If no attributes found, use empty attributes (keine Mock-Attribute mehr)
+        if (attributes && Object.keys(attributes).length > 0) {
+          Object.assign(assetInMap, attributes);
+          attributesSuccessCount++;
+          logInfo(`Asset ${asset.name} attributes loaded`, { sessionId, assetId: asset.id.id, attributeCount: Object.keys(attributes).length });
+        } else {
+          logWarn(`No attributes found for asset ${asset.name}`, { sessionId, assetId: asset.id.id });
+        }
+      } else {
+        // Bei Fehler verwende leere Attribute
+        attributesFailedCount++;
+        logWarn(`Failed to fetch attributes for asset ${asset.id.id}`, { 
+          sessionId, 
+          assetId: asset.id.id, 
+          error: result.reason?.message || 'Unknown error' 
+        });
       }
+    });
+    
+    logInfo(`Asset attributes processed: ${attributesSuccessCount} successful, ${attributesFailedCount} failed`, { 
+      sessionId, 
+      successful: attributesSuccessCount, 
+      failed: attributesFailedCount 
     });
 
     // Verarbeite die Beziehungen
-    relationsResults.forEach(([assetRelations, deviceRelations], index) => {
-      const asset = assets[index];
+    validRelationsResults.forEach(result => {
+      const asset = assets[result.index];
+      if (!asset) return; // Skip wenn Asset nicht gefunden
+      
       const assetInMap = assetMap.get(asset.id.id);
+      if (!assetInMap) return; // Skip wenn Asset nicht in Map
 
-      console.log(`Processing asset ${asset.name}: ${deviceRelations ? deviceRelations.length : 0} device relations`);
+      const { assetRelations, deviceRelations } = result;
+      logInfo(`Processing asset ${asset.name}`, { 
+        sessionId, 
+        assetId: asset.id.id, 
+        deviceRelationsCount: deviceRelations ? deviceRelations.length : 0,
+        assetRelationsCount: assetRelations ? assetRelations.length : 0
+      });
 
       // Setze hasDevices und relatedDevices nur wenn tatsächlich Devices vorhanden sind
       if (deviceRelations && deviceRelations.length > 0) {
@@ -405,8 +465,6 @@ async function fetchAssetTree(customerId, tbToken) {
           const deviceId = relation.to.id;
           const deviceDetails = deviceDetailsMap.get(deviceId);
           
-          console.log(`Device relation: ${deviceId}, details:`, deviceDetails);
-          
           return {
             id: deviceId,
             name: deviceDetails?.name || 'Unbekannt',
@@ -414,7 +472,11 @@ async function fetchAssetTree(customerId, tbToken) {
             label: deviceDetails?.label || 'Unbekannt'
           };
         });
-        console.log(`Asset ${asset.name} has ${assetInMap.relatedDevices.length} devices`);
+        logInfo(`Asset ${asset.name} has ${assetInMap.relatedDevices.length} devices`, { 
+          sessionId, 
+          assetId: asset.id.id, 
+          deviceCount: assetInMap.relatedDevices.length 
+        });
       } else {
         // Keine Devices vorhanden
         assetInMap.hasDevices = false;
@@ -435,32 +497,35 @@ async function fetchAssetTree(customerId, tbToken) {
     });
 
     // Baue den Baum aus Root-Assets (Assets ohne Parent)
-    const tree = Array.from(assetMap.values())
-      .filter(asset => !asset.parentId)
-      .map(asset => buildSubTree(asset, assetMap));
+    const rootAssets = Array.from(assetMap.values()).filter(asset => !asset.parentId);
+    logInfo(`Building tree from ${rootAssets.length} root assets`, { sessionId, rootAssetCount: rootAssets.length });
+    
+    const tree = rootAssets.map(asset => buildSubTree(asset, assetMap));
+
+    const summary = {
+      totalAssets: assets.length,
+      rootAssets: rootAssets.length,
+      totalDevices: allDeviceIds.size,
+      devicesWithDetails: deviceDetailsMap.size,
+      attributesSuccessful: attributesSuccessCount,
+      attributesFailed: attributesFailedCount
+    };
+    
+    endStructureCreationLog(sessionId, summary);
+    logInfo(`Tree structure created successfully`, { sessionId, summary });
 
     return tree;
   } catch (error) {
-    console.error('Error fetching asset tree:', error);
+    logError('Error fetching asset tree', error);
+    endStructureCreationLog(sessionId, { error: error.message });
     throw error;
   }
 }
 
 function buildSubTree(asset, assetMap) {
-  console.log(`Building subtree for asset ${asset.name}:`, {
-    id: asset.id,
-    hasAttributes: {
-      operationalMode: asset.operationalMode,
-      childLock: asset.childLock,
-      fixValue: asset.fixValue,
-      maxTemp: asset.maxTemp,
-      minTemp: asset.minTemp,
-      extTempDevice: asset.extTempDevice,
-      overruleMinutes: asset.overruleMinutes,
-      runStatus: asset.runStatus,
-      schedulerPlan: asset.schedulerPlan
-    }
-  });
+  // Logging für buildSubTree ist optional, da es sehr viele Aufrufe geben kann
+  // Nur bei Bedarf aktivieren
+  // logInfo(`Building subtree for asset ${asset.name}`, { assetId: asset.id, childrenCount: asset.children.length });
 
   const node = {
     id: asset.id,
@@ -494,11 +559,9 @@ function buildSubTree(asset, assetMap) {
   assetAttributes.forEach(attr => {
     if (asset[attr] !== null && asset[attr] !== undefined) {
       node[attr] = asset[attr];
-      console.log(`  Added attribute ${attr}: ${asset[attr]}`);
     }
   });
   
-  console.log(`Final node for ${asset.name}:`, Object.keys(node));
   return node;
 }
 

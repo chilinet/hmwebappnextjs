@@ -158,6 +158,15 @@ export default function WindowStatus() {
           
           const windowData = await windowResponse.json();
           console.log('Window status data received:', windowData);
+          
+          // Filtere nur Geräte mit device_type 'dnt-LW-WSCI'
+          if (windowData.data && Array.isArray(windowData.data)) {
+            windowData.data = windowData.data.filter(device => 
+              device.device_type === 'dnt-LW-WSCI'
+            );
+            console.log(`Filtered to ${windowData.data.length} devices with type dnt-LW-WSCI`);
+          }
+          
           setWindowData(windowData);
 
           // Fetch customer tree data
