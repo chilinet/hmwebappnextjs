@@ -1,0 +1,5 @@
+# Python dependencies for sync_structure.py
+aiohttp>=3.9.0
+pyodbc>=5.0.0
+python-dotenv>=1.0.0
+

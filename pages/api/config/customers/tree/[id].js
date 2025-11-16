@@ -253,63 +253,172 @@ async function fetchAssetTree(customerId, tbToken) {
       });
     });
 
-    // Hole die Asset-Beziehungen und Device-Beziehungen mit Timeouts
+    // Hole die Asset-Beziehungen und Device-Beziehungen mit Timeouts und Retry-Logik
     const relationPromises = assets.map(asset => {
       return Promise.allSettled([
-        // Asset-Beziehungen mit Timeout
+        // Asset-Beziehungen mit Timeout und Retry
         (async () => {
-          try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 Sekunden
+          const maxRetries = 2;
+          let lastError = null;
+          
+          for (let attempt = 0; attempt <= maxRetries; attempt++) {
             try {
-              const res = await fetch(`${process.env.THINGSBOARD_URL}/api/relations/info?fromId=${asset.id.id}&fromType=ASSET`, {
-                headers: {
-                  'X-Authorization': `Bearer ${tbToken}`
-                },
-                signal: controller.signal
-              });
-              clearTimeout(timeoutId);
-              return res.ok ? await res.json() : [];
-            } catch (fetchError) {
-              clearTimeout(timeoutId);
-              if (fetchError.name !== 'AbortError' && !fetchError.message?.includes('timeout')) {
-                console.warn(`Error fetching asset relations for ${asset.id.id}:`, fetchError.message || fetchError);
+              const controller = new AbortController();
+              // Erhöhe Timeout bei Retries: 15s, 20s, 25s
+              const timeout = 15000 + (attempt * 5000);
+              const timeoutId = setTimeout(() => controller.abort(), timeout);
+              
+              try {
+                const res = await fetch(`${process.env.THINGSBOARD_URL}/api/relations/info?fromId=${asset.id.id}&fromType=ASSET`, {
+                  headers: {
+                    'X-Authorization': `Bearer ${tbToken}`
+                  },
+                  signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+                
+                if (res.ok) {
+                  const relations = await res.json();
+                  if (attempt > 0) {
+                    logInfo(`Asset relations erfolgreich nach ${attempt} Retry(s) für ${asset.name}`, { 
+                      sessionId, 
+                      assetId: asset.id.id, 
+                      assetName: asset.name,
+                      attempt,
+                      relationsCount: relations.length
+                    });
+                  }
+                  return relations;
+                }
+                return [];
+              } catch (fetchError) {
+                clearTimeout(timeoutId);
+                lastError = fetchError;
+                
+                if (fetchError.name === 'AbortError' || fetchError.message?.includes('timeout')) {
+                  if (attempt < maxRetries) {
+                    logWarn(`Timeout beim Abrufen der Asset-Relations für ${asset.name} (Versuch ${attempt + 1}/${maxRetries + 1}), retry...`, { 
+                      sessionId, 
+                      assetId: asset.id.id, 
+                      assetName: asset.name,
+                      attempt: attempt + 1,
+                      timeout
+                    });
+                    // Warte kurz vor dem Retry
+                    await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+                    continue;
+                  } else {
+                    logWarn(`Timeout beim Abrufen der Asset-Relations für ${asset.name} nach ${maxRetries + 1} Versuchen`, { 
+                      sessionId, 
+                      assetId: asset.id.id, 
+                      assetName: asset.name,
+                      maxRetries: maxRetries + 1
+                    });
+                    return [];
+                  }
+                } else {
+                  // Anderer Fehler, nicht retry
+                  logWarn(`Error fetching asset relations for ${asset.name}:`, { 
+                    sessionId,
+                    assetId: asset.id.id,
+                    assetName: asset.name,
+                    error: fetchError.message || fetchError
+                  });
+                  return [];
+                }
+              }
+            } catch (error) {
+              lastError = error;
+              if (attempt < maxRetries) {
+                continue;
               }
               return [];
             }
-          } catch (error) {
-            return [];
           }
+          return [];
         })(),
-        // Device-Beziehungen mit Timeout
+        // Device-Beziehungen mit Timeout und Retry
         (async () => {
-          try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 Sekunden
+          const maxRetries = 2;
+          let lastError = null;
+          
+          for (let attempt = 0; attempt <= maxRetries; attempt++) {
             try {
-              const res = await fetch(`${process.env.THINGSBOARD_URL}/api/relations/info?fromId=${asset.id.id}&fromType=ASSET&relationType=Contains&toType=DEVICE`, {
-                headers: {
-                  'X-Authorization': `Bearer ${tbToken}`
-                },
-                signal: controller.signal
-              });
-              clearTimeout(timeoutId);
-              if (res.ok) {
-                const relations = await res.json();
-                // Filtere nur Device-Entities heraus
-                return relations.filter(relation => relation.to && relation.to.entityType === 'DEVICE');
+              const controller = new AbortController();
+              // Erhöhe Timeout bei Retries: 15s, 20s, 25s
+              const timeout = 15000 + (attempt * 5000);
+              const timeoutId = setTimeout(() => controller.abort(), timeout);
+              
+              try {
+                const res = await fetch(`${process.env.THINGSBOARD_URL}/api/relations/info?fromId=${asset.id.id}&fromType=ASSET&relationType=Contains&toType=DEVICE`, {
+                  headers: {
+                    'X-Authorization': `Bearer ${tbToken}`
+                  },
+                  signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+                
+                if (res.ok) {
+                  const relations = await res.json();
+                  // Filtere nur Device-Entities heraus
+                  const deviceRelations = relations.filter(relation => relation.to && relation.to.entityType === 'DEVICE');
+                  if (attempt > 0) {
+                    logInfo(`Device relations erfolgreich nach ${attempt} Retry(s) für ${asset.name}`, { 
+                      sessionId, 
+                      assetId: asset.id.id, 
+                      assetName: asset.name,
+                      attempt,
+                      relationsCount: deviceRelations.length
+                    });
+                  }
+                  return deviceRelations;
+                }
+                return [];
+              } catch (fetchError) {
+                clearTimeout(timeoutId);
+                lastError = fetchError;
+                
+                if (fetchError.name === 'AbortError' || fetchError.message?.includes('timeout')) {
+                  if (attempt < maxRetries) {
+                    logWarn(`Timeout beim Abrufen der Device-Relations für ${asset.name} (Versuch ${attempt + 1}/${maxRetries + 1}), retry...`, { 
+                      sessionId, 
+                      assetId: asset.id.id, 
+                      assetName: asset.name,
+                      attempt: attempt + 1,
+                      timeout
+                    });
+                    // Warte kurz vor dem Retry
+                    await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+                    continue;
+                  } else {
+                    logWarn(`Timeout beim Abrufen der Device-Relations für ${asset.name} nach ${maxRetries + 1} Versuchen`, { 
+                      sessionId, 
+                      assetId: asset.id.id, 
+                      assetName: asset.name,
+                      maxRetries: maxRetries + 1
+                    });
+                    return [];
+                  }
+                } else {
+                  // Anderer Fehler, nicht retry
+                  logWarn(`Error fetching device relations for ${asset.name}:`, { 
+                    sessionId,
+                    assetId: asset.id.id,
+                    assetName: asset.name,
+                    error: fetchError.message || fetchError
+                  });
+                  return [];
+                }
               }
-              return [];
-            } catch (fetchError) {
-              clearTimeout(timeoutId);
-              if (fetchError.name !== 'AbortError' && !fetchError.message?.includes('timeout')) {
-                console.warn(`Error fetching device relations for ${asset.id.id}:`, fetchError.message || fetchError);
+            } catch (error) {
+              lastError = error;
+              if (attempt < maxRetries) {
+                continue;
               }
               return [];
             }
-          } catch (error) {
-            return [];
           }
+          return [];
         })()
       ]);
     });
@@ -485,12 +594,55 @@ async function fetchAssetTree(customerId, tbToken) {
 
       // Verarbeite Asset-Beziehungen
       assetRelations.forEach(relation => {
-        if (relation.to.entityType === 'ASSET' && relation.type === 'Contains') {
+        if (relation.to && relation.to.entityType === 'ASSET' && relation.type === 'Contains') {
           const parentAsset = assetMap.get(relation.from.id);
           const childAsset = assetMap.get(relation.to.id);
+          
           if (parentAsset && childAsset) {
+            // Prüfe, ob das Child bereits einen Parent hat
+            if (childAsset.parentId && childAsset.parentId !== parentAsset.id) {
+              logWarn(`Asset ${childAsset.name} (${childAsset.id}) hat bereits einen Parent (${childAsset.parentId}), überspringe Zuordnung zu ${parentAsset.name} (${parentAsset.id})`, { 
+                sessionId, 
+                childAssetId: childAsset.id, 
+                childAssetName: childAsset.name,
+                existingParentId: childAsset.parentId,
+                newParentId: parentAsset.id,
+                newParentName: parentAsset.name
+              });
+              return; // Überspringe diese Relation
+            }
+            
+            // Prüfe, ob das Child bereits in den Children des Parents ist
+            const alreadyChild = parentAsset.children.some(child => child.id === childAsset.id);
+            if (alreadyChild) {
+              logWarn(`Asset ${childAsset.name} (${childAsset.id}) ist bereits ein Child von ${parentAsset.name} (${parentAsset.id})`, { 
+                sessionId, 
+                childAssetId: childAsset.id, 
+                childAssetName: childAsset.name,
+                parentId: parentAsset.id,
+                parentName: parentAsset.name
+              });
+              return; // Überspringe diese Relation
+            }
+            
+            // Setze Parent-Child-Beziehung
             childAsset.parentId = parentAsset.id;
             parentAsset.children.push(childAsset);
+            
+            logInfo(`Asset-Beziehung erstellt: ${parentAsset.name} (${parentAsset.id}) enthält ${childAsset.name} (${childAsset.id})`, { 
+              sessionId, 
+              parentId: parentAsset.id, 
+              parentName: parentAsset.name,
+              childId: childAsset.id,
+              childName: childAsset.name
+            });
+          } else {
+            if (!parentAsset) {
+              logWarn(`Parent Asset nicht gefunden für Relation: ${relation.from.id}`, { sessionId, parentId: relation.from.id });
+            }
+            if (!childAsset) {
+              logWarn(`Child Asset nicht gefunden für Relation: ${relation.to.id}`, { sessionId, childId: relation.to.id });
+            }
           }
         }
       });
@@ -500,19 +652,54 @@ async function fetchAssetTree(customerId, tbToken) {
     const rootAssets = Array.from(assetMap.values()).filter(asset => !asset.parentId);
     logInfo(`Building tree from ${rootAssets.length} root assets`, { sessionId, rootAssetCount: rootAssets.length });
     
+    // Zähle Assets mit Children für Debugging
+    const assetsWithChildren = Array.from(assetMap.values()).filter(asset => asset.children.length > 0);
+    logInfo(`Assets mit Children: ${assetsWithChildren.length}`, { 
+      sessionId, 
+      assetsWithChildrenCount: assetsWithChildren.length,
+      assetsWithChildren: assetsWithChildren.map(a => ({ name: a.name, id: a.id, childrenCount: a.children.length }))
+    });
+    
+    // Zähle Assets ohne Parent (Roots) und Assets mit Parent
+    const assetsWithParent = Array.from(assetMap.values()).filter(asset => asset.parentId);
+    logInfo(`Assets mit Parent: ${assetsWithParent.length}`, { 
+      sessionId, 
+      assetsWithParentCount: assetsWithParent.length
+    });
+    
     const tree = rootAssets.map(asset => buildSubTree(asset, assetMap));
 
+    // Berechne verwaiste Assets (Assets die weder Root noch Parent haben)
+    // Ein Asset sollte entweder Root sein (kein Parent) oder ein Parent haben
+    const orphanedAssets = Array.from(assetMap.values()).filter(asset => 
+      !asset.parentId && !rootAssets.some(root => root.id === asset.id)
+    );
+    
     const summary = {
       totalAssets: assets.length,
       rootAssets: rootAssets.length,
       totalDevices: allDeviceIds.size,
       devicesWithDetails: deviceDetailsMap.size,
       attributesSuccessful: attributesSuccessCount,
-      attributesFailed: attributesFailedCount
+      attributesFailed: attributesFailedCount,
+      assetsWithChildren: assetsWithChildren.length,
+      assetsWithParent: assetsWithParent.length,
+      orphanedAssets: orphanedAssets.length
     };
     
     endStructureCreationLog(sessionId, summary);
     logInfo(`Tree structure created successfully`, { sessionId, summary });
+    
+    // Warnung wenn es viele verwaiste Assets gibt
+    if (summary.orphanedAssets > 0) {
+      logWarn(`Warnung: ${summary.orphanedAssets} verwaiste Assets gefunden (Assets ohne Parent und nicht Root)`, { 
+        sessionId, 
+        orphanedCount: summary.orphanedAssets,
+        totalAssets: summary.totalAssets,
+        rootAssets: summary.rootAssets,
+        assetsWithParent: summary.assetsWithParent
+      });
+    }
 
     return tree;
   } catch (error) {
