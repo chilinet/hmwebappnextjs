@@ -2,7 +2,7 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import Layout from '@/components/Layout';
-import { Card, Badge, Spinner, Alert, Button } from 'react-bootstrap';
+import { Card, Badge, Spinner, Alert, Button, Modal } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { 
   faHome, 
@@ -12,7 +12,8 @@ import {
   faSearch,
   faTimes,
   faClock,
-  faDownload
+  faDownload,
+  faHistory
 } from '@fortawesome/free-solid-svg-icons';
 import Head from 'next/head';
 import * as XLSX from 'xlsx';
@@ -26,6 +27,10 @@ export default function WindowStatus() {
   const [treeData, setTreeData] = useState(null);
   const [statusFilter, setStatusFilter] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedDevice, setSelectedDevice] = useState(null);
+  const [historyData, setHistoryData] = useState(null);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
 
   // Helper function to get window status text
   const getWindowStatus = (hallSensorState) => {
@@ -278,6 +283,229 @@ export default function WindowStatus() {
     }
     
     return filteredDevices;
+  };
+
+  // Fetch history for a device
+  const fetchDeviceHistory = async (device) => {
+    if (!device?.device_id) {
+      console.error('No device_id provided');
+      return;
+    }
+    
+    console.log('Fetching history for device:', device.device_id, device.device_name);
+    
+    setLoadingHistory(true);
+    setSelectedDevice(device);
+    setShowHistoryModal(true);
+    
+    try {
+      // Calculate date range (last 3 days)
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - 3);
+      
+      if (!session?.tbToken) {
+        throw new Error('Keine Session gefunden');
+      }
+      
+      const startTs = startDate.getTime();
+      const endTs = endDate.getTime();
+      
+      console.log('Date range:', { startTs, endTs, startDate: startDate.toISOString(), endDate: endDate.toISOString() });
+      
+      // Try different possible attribute names for hall sensor state
+      // Start with the correct attribute name first
+      const possibleAttributes = ['hall_sensor_state', 'hallSensorState'];
+      let historyDataResult = null;
+      
+      // Use ThingsBoard API to get history (works better than local PostgreSQL)
+      for (const attrName of possibleAttributes) {
+        try {
+          console.log(`Trying ThingsBoard API with attribute: ${attrName}`);
+          const response = await fetch(
+            `/api/thingsboard/devices/${device.device_id}/timeseries?attribute=${attrName}&startTs=${startTs}&endTs=${endTs}&limit=1000`
+          );
+          
+          console.log(`ThingsBoard API response status for ${attrName}:`, response.status);
+          
+          if (response.ok) {
+            const data = await response.json();
+            console.log(`ThingsBoard API response for ${attrName}:`, JSON.stringify(data, null, 2));
+            
+            if (data.success && data.data) {
+              // API returns data in data.data.telemetry[attribute].values format
+              // Structure: { success: true, data: { telemetry: { [attrName]: { values: [...] } } } }
+              console.log('Full data structure:', JSON.stringify(data.data, null, 2));
+              
+              // Check if data is in data.data.telemetry[attrName].values
+              if (data.data.telemetry && data.data.telemetry[attrName]) {
+                const telemetryObj = data.data.telemetry[attrName];
+                if (telemetryObj.values && Array.isArray(telemetryObj.values) && telemetryObj.values.length > 0) {
+                  // Keep original format: { timestamp, timestampISO, value }
+                  historyDataResult = telemetryObj.values;
+                  console.log(`Found data in data.telemetry[${attrName}].values:`, historyDataResult.length, 'items');
+                  console.log('First few items:', historyDataResult.slice(0, 3));
+                  break;
+                }
+              }
+              
+              // Fallback: Check if data is directly in data.data[attribute] (array format)
+              if (data.data[attrName] && Array.isArray(data.data[attrName]) && data.data[attrName].length > 0) {
+                historyDataResult = data.data[attrName];
+                console.log(`Found data in data.data[${attrName}]:`, historyDataResult.length, 'items');
+                console.log('First few items:', historyDataResult.slice(0, 3));
+                break;
+              }
+              
+              // Try to find any key that has data
+              const keys = Object.keys(data.data);
+              console.log('Available keys in response:', keys);
+              for (const key of keys) {
+                const value = data.data[key];
+                console.log(`Checking key ${key}:`, {
+                  isArray: Array.isArray(value),
+                  length: Array.isArray(value) ? value.length : 'N/A',
+                  type: typeof value
+                });
+                
+                if (Array.isArray(value) && value.length > 0) {
+                  console.log(`Found data in key ${key}:`, value.length, 'items');
+                  console.log('First few items:', value.slice(0, 3));
+                  historyDataResult = value;
+                  break;
+                } else if (value && typeof value === 'object' && !Array.isArray(value)) {
+                  // Maybe nested structure like telemetry[attrName].values
+                  const nestedKeys = Object.keys(value);
+                  console.log(`Key ${key} is an object with keys:`, nestedKeys);
+                  for (const nestedKey of nestedKeys) {
+                    if (Array.isArray(value[nestedKey]) && value[nestedKey].length > 0) {
+                      console.log(`Found data in ${key}.${nestedKey}:`, value[nestedKey].length, 'items');
+                      historyDataResult = value[nestedKey];
+                      break;
+                    } else if (value[nestedKey] && typeof value[nestedKey] === 'object' && value[nestedKey].values) {
+                      // Check for .values property
+                      if (Array.isArray(value[nestedKey].values) && value[nestedKey].values.length > 0) {
+                        historyDataResult = value[nestedKey].values.map(item => ({
+                          ts: item.timestamp || new Date(item.timestampISO).getTime(),
+                          value: item.value
+                        }));
+                        console.log(`Found data in ${key}.${nestedKey}.values:`, historyDataResult.length, 'items');
+                        break;
+                      }
+                    }
+                  }
+                  if (historyDataResult) break;
+                }
+              }
+              if (historyDataResult) break;
+            } else {
+              console.log('Response structure:', {
+                success: data.success,
+                hasData: !!data.data,
+                dataKeys: data.data ? Object.keys(data.data) : null,
+                fullResponse: JSON.stringify(data, null, 2)
+              });
+            }
+          } else {
+            const errorText = await response.text();
+            console.log(`Error response for ${attrName}:`, response.status, errorText);
+          }
+        } catch (err) {
+          console.error(`Failed to fetch with attribute ${attrName}:`, err);
+        }
+      }
+      
+      if (!historyDataResult || historyDataResult.length === 0) {
+        console.warn('No history data found from ThingsBoard API');
+        setHistoryData([]);
+        return;
+      }
+      
+      console.log(`Processing ${historyDataResult.length} history items`);
+      console.log('Sample items:', historyDataResult.slice(0, 3));
+      
+      // Process history data to show state changes
+      // ThingsBoard API returns data in format: { timestamp, timestampISO, value } or { ts, value }
+      const history = historyDataResult.map((item, index) => {
+        // Handle different timestamp formats
+        let timestampMs = null;
+        let timestamp = null;
+        
+        // Priority 1: timestampISO (ISO string)
+        if (item.timestampISO) {
+          timestamp = new Date(item.timestampISO);
+          timestampMs = timestamp.getTime();
+        }
+        // Priority 2: timestamp (milliseconds)
+        else if (item.timestamp) {
+          timestampMs = typeof item.timestamp === 'number' ? item.timestamp : parseInt(item.timestamp);
+          timestamp = new Date(timestampMs);
+        }
+        // Priority 3: ts (milliseconds)
+        else if (item.ts) {
+          timestampMs = typeof item.ts === 'number' ? item.ts : parseInt(item.ts);
+          timestamp = new Date(timestampMs);
+        }
+        
+        if (!timestampMs || isNaN(timestampMs) || !timestamp || isNaN(timestamp.getTime())) {
+          console.warn(`Invalid timestamp at index ${index}:`, item);
+          return null;
+        }
+        
+        const value = item.value;
+        const state = String(value).toUpperCase() === 'LOW' ? 'Offen' : String(value).toUpperCase() === 'HIGH' ? 'Geschlossen' : 'Unbekannt';
+        
+        return {
+          timestamp,
+          timestampMs,
+          value: String(value || ''),
+          state
+        };
+      }).filter(item => item !== null); // Remove invalid entries
+      
+      if (history.length === 0) {
+        console.warn('No valid history items after processing');
+        setHistoryData([]);
+        return;
+      }
+      
+      // Sort by timestamp (oldest first)
+      history.sort((a, b) => a.timestampMs - b.timestampMs);
+      
+      console.log('Processed history (first 3):', history.slice(0, 3).map(item => ({
+        timestamp: item.timestamp.toISOString(),
+        value: item.value,
+        state: item.state
+      })));
+      
+      // Group consecutive states and calculate durations
+      const processedHistory = [];
+      for (let i = 0; i < history.length; i++) {
+        const current = history[i];
+        const next = history[i + 1];
+        
+        let duration = null;
+        if (next) {
+          const diffMs = next.timestampMs - current.timestampMs;
+          duration = diffMs / (1000 * 60 * 60); // Duration in hours
+        }
+        
+        processedHistory.push({
+          timestamp: current.timestamp,
+          value: current.value,
+          state: current.state,
+          duration: duration !== null ? Math.round(duration * 100) / 100 : null // Round to 2 decimal places
+        });
+      }
+      
+      console.log(`Processed ${processedHistory.length} history items`);
+      setHistoryData(processedHistory);
+    } catch (error) {
+      console.error('Error fetching device history:', error);
+      setHistoryData([]);
+    } finally {
+      setLoadingHistory(false);
+    }
   };
 
   // Helper function to calculate duration in hours as decimal
@@ -635,7 +863,11 @@ export default function WindowStatus() {
                             const timestamp = device.last_update_utc ? new Date(device.last_update_utc) : null;
                             
                             return (
-                              <tr key={`${device.device_id}-${index}`}>
+                              <tr 
+                                key={`${device.device_id}-${index}`}
+                                style={{ cursor: 'pointer' }}
+                                onClick={() => fetchDeviceHistory(device)}
+                              >
                                 <td>
                                   <div>
                                     <strong>{device.asset_name || 'Unbekannt'}</strong>
@@ -721,6 +953,101 @@ export default function WindowStatus() {
           </div>
         </div>
       </div>
+
+      {/* History Modal */}
+      <Modal
+        show={showHistoryModal}
+        onHide={() => {
+          setShowHistoryModal(false);
+          setSelectedDevice(null);
+          setHistoryData(null);
+        }}
+        size="lg"
+        centered
+      >
+        <Modal.Header closeButton>
+          <Modal.Title>
+            <FontAwesomeIcon icon={faHistory} className="me-2" />
+            Historie - {selectedDevice?.device_name || 'Unbekannt'}
+          </Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          {selectedDevice && (
+            <div className="mb-3">
+              <p className="mb-1"><strong>Gerät:</strong> {selectedDevice.device_name}</p>
+              <p className="mb-1"><strong>Asset:</strong> {selectedDevice.asset_name}</p>
+              <p className="mb-0"><strong>Typ:</strong> {selectedDevice.device_type}</p>
+            </div>
+          )}
+          
+          {loadingHistory ? (
+            <div className="text-center py-4">
+              <Spinner animation="border" />
+              <p className="mt-2 text-muted">Lade Historie...</p>
+            </div>
+          ) : historyData && historyData.length > 0 ? (
+            <div className="table-responsive" style={{ maxHeight: '400px', overflowY: 'auto' }}>
+              <table className="table table-sm table-hover">
+                <thead className="table-light sticky-top">
+                  <tr>
+                    <th>Zeitpunkt</th>
+                    <th>Status</th>
+                    <th>Dauer (Stunden)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {historyData.map((item, idx) => {
+                    // Ensure timestamp is a valid Date object
+                    const timestamp = item.timestamp instanceof Date 
+                      ? item.timestamp 
+                      : (item.timestamp ? new Date(item.timestamp) : null);
+                    
+                    return (
+                      <tr key={idx}>
+                        <td>
+                          <small>
+                            {timestamp && !isNaN(timestamp.getTime())
+                              ? formatTimestamp(timestamp)
+                              : 'Ungültiges Datum'
+                            }
+                          </small>
+                        </td>
+                        <td>
+                          <Badge bg={item.state === 'Offen' ? 'warning' : item.state === 'Geschlossen' ? 'success' : 'secondary'}>
+                            {item.state}
+                          </Badge>
+                        </td>
+                        <td>
+                          <small>
+                            {item.duration !== null && !isNaN(item.duration)
+                              ? `${Math.round(item.duration * 100) / 100} h`
+                              : '-'
+                            }
+                          </small>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="text-center py-4">
+              <FontAwesomeIcon icon={faClock} size="2x" className="text-muted mb-2" />
+              <p className="text-muted">Keine Historie-Daten für die letzten 3 Tage verfügbar</p>
+            </div>
+          )}
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => {
+            setShowHistoryModal(false);
+            setSelectedDevice(null);
+            setHistoryData(null);
+          }}>
+            Schließen
+          </Button>
+        </Modal.Footer>
+      </Modal>
 
       <style jsx>{`
         .status-card {
