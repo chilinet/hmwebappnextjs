@@ -57,6 +57,52 @@ export default async function handler(req, res) {
   }
 }
 
+// Hilfsfunktion zum Abrufen aller Geräte mit Pagination
+async function fetchAllDevices(customerId, tbToken) {
+  const allDevices = [];
+  let page = 0;
+  const pageSize = 1000;
+  let hasNext = true;
+
+  while (hasNext) {
+    try {
+      const devicesResponse = await fetch(
+        `${process.env.THINGSBOARD_URL}/api/customer/${customerId}/deviceInfos?pageSize=${pageSize}&page=${page}`,
+        {
+          headers: {
+            'accept': 'application/json',
+            'X-Authorization': `Bearer ${tbToken}`
+          }
+        }
+      );
+
+      if (!devicesResponse.ok) {
+        console.error(`Failed to fetch devices page ${page}:`, devicesResponse.status);
+        break;
+      }
+
+      const devicesData = await devicesResponse.json();
+      const devices = devicesData.data || [];
+      allDevices.push(...devices);
+
+      // Prüfe, ob weitere Seiten vorhanden sind
+      // ThingsBoard gibt normalerweise hasNext oder totalElements zurück
+      const totalElements = devicesData.totalElements || 0;
+      const totalPages = devicesData.totalPages || Math.ceil(totalElements / pageSize);
+      hasNext = devices.length === pageSize && (page + 1) < totalPages;
+
+      console.log(`Fetched page ${page}: ${devices.length} devices (total so far: ${allDevices.length})`);
+      
+      page++;
+    } catch (error) {
+      console.error(`Error fetching devices page ${page}:`, error);
+      break;
+    }
+  }
+
+  return allDevices;
+}
+
 async function getDashboardStats(pool, customerId, session) {
   try {
     let devicesCount = 0;
@@ -70,30 +116,18 @@ async function getDashboardStats(pool, customerId, session) {
       try {
         console.log('Attempting to fetch devices from ThingsBoard...');
         
-        // Alle Devices des Kunden von ThingsBoard abrufen
-        const devicesResponse = await fetch(
-          `${process.env.THINGSBOARD_URL}/api/customer/${customerId}/deviceInfos?pageSize=1000&page=0`,
-          {
-            headers: {
-              'accept': 'application/json',
-              'X-Authorization': `Bearer ${session.tbToken}`
-            }
-          }
-        );
-
-        if (devicesResponse.ok) {
-          const devicesData = await devicesResponse.json();
-          const devices = devicesData.data || [];
-          devicesCount = devices.length;
-          
-          // Zähle aktive und inaktive Geräte
-          activeDevices = devices.filter(device => device.active === true).length;
-          inactiveDevices = devices.filter(device => device.active === false).length;
-          
-          console.log(`Successfully fetched ${devicesCount} devices from ThingsBoard (${activeDevices} active, ${inactiveDevices} inactive)`);
-        } else {
-          console.log('ThingsBoard devices API failed, trying fallback...');
-        }
+        // Alle Devices des Kunden von ThingsBoard abrufen (mit Pagination)
+        const devices = await fetchAllDevices(customerId, session.tbToken);
+        devicesCount = devices.length;
+        
+        // Zähle aktive und inaktive Geräte
+        activeDevices = devices.filter(device => device.active === true).length;
+        inactiveDevices = devices.filter(device => device.active === false).length;
+        
+        console.log(`Successfully fetched ${devicesCount} devices from ThingsBoard (${activeDevices} active, ${inactiveDevices} inactive)`);
+      } catch (apiError) {
+        console.error('Internal API error:', apiError);
+      }
 
         // Versuche Alarme abzurufen (direkt von ThingsBoard)
         try {
@@ -118,10 +152,6 @@ async function getDashboardStats(pool, customerId, session) {
         } catch (alarmError) {
           console.log('Failed to fetch alarms:', alarmError.message);
         }
-
-      } catch (apiError) {
-        console.error('Internal API error:', apiError);
-      }
     }
 
     // Fallback auf lokale Datenbank falls API nicht verfügbar oder keine Geräte gefunden

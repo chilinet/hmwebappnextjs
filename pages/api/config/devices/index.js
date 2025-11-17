@@ -262,23 +262,54 @@ export default async function handler(req, res) {
   }
 
   try {
-    const tbResponse = await fetchWithRetry(
-      `${process.env.THINGSBOARD_URL}/api/customer/${session.user.customerid}/deviceInfos?pageSize=1000&page=0`,
-      {
-        headers: {
-          'accept': 'application/json',
-          'X-Authorization': `Bearer ${session.tbToken}`
+    // Hilfsfunktion zum Abrufen aller Geräte mit Pagination
+    const fetchAllDevices = async (customerId, tbToken) => {
+      const allDevices = [];
+      let page = 0;
+      const pageSize = 1000;
+      let hasNext = true;
+
+      while (hasNext) {
+        try {
+          const devicesResponse = await fetchWithRetry(
+            `${process.env.THINGSBOARD_URL}/api/customer/${customerId}/deviceInfos?pageSize=${pageSize}&page=${page}`,
+            {
+              headers: {
+                'accept': 'application/json',
+                'X-Authorization': `Bearer ${tbToken}`
+              }
+            }
+          );
+
+          const devicesData = await devicesResponse.json();
+          const devices = devicesData.data || [];
+          allDevices.push(...devices);
+
+          // Prüfe, ob weitere Seiten vorhanden sind
+          const totalElements = devicesData.totalElements || 0;
+          const totalPages = devicesData.totalPages || Math.ceil(totalElements / pageSize);
+          hasNext = devices.length === pageSize && (page + 1) < totalPages;
+
+          console.log(`Fetched page ${page}: ${devices.length} devices (total so far: ${allDevices.length})`);
+          
+          page++;
+        } catch (error) {
+          console.error(`Error fetching devices page ${page}:`, error);
+          break;
         }
       }
-    );
 
-    const tbData = await tbResponse.json();
+      return allDevices;
+    };
+
+    // Alle Geräte mit Pagination abrufen
+    const allDevices = await fetchAllDevices(session.user.customerid, session.tbToken);
     
-    //console.log('tbData: ' + JSON.stringify(tbData, null, 2));
+    console.log(`Total devices fetched: ${allDevices.length}`);
 
     // Hole Asset-, Telemetrie- und Seriennummer-Informationen für jedes Gerät
     const devicesWithData = await Promise.all(
-      tbData.data.map(async device => {
+      allDevices.map(async device => {
         const [asset, telemetry, serialNumber] = await Promise.all([
           getAssetHierarchy(device.id.id, session.tbToken, session),
           getLatestTelemetry(device.id.id, session.tbToken),

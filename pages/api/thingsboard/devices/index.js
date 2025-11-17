@@ -86,31 +86,56 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Alle Devices des Kunden von ThingsBoard abrufen
-    const devicesResponse = await fetch(
-      `${THINGSBOARD_URL}/api/customer/${customerId}/deviceInfos?pageSize=1000&page=0`,
-      {
-        headers: {
-          'accept': 'application/json',
-          'X-Authorization': `Bearer ${tbToken}`
+    // Hilfsfunktion zum Abrufen aller Geräte mit Pagination
+    const fetchAllDevices = async (customerId, tbToken) => {
+      const allDevices = [];
+      let page = 0;
+      const pageSize = 1000;
+      let hasNext = true;
+
+      while (hasNext) {
+        try {
+          const devicesResponse = await fetch(
+            `${THINGSBOARD_URL}/api/customer/${customerId}/deviceInfos?pageSize=${pageSize}&page=${page}`,
+            {
+              headers: {
+                'accept': 'application/json',
+                'X-Authorization': `Bearer ${tbToken}`
+              }
+            }
+          );
+
+          if (!devicesResponse.ok) {
+            const errorText = await devicesResponse.text();
+            console.error(`ThingsBoard API error on page ${page}:`, devicesResponse.status, errorText);
+            break;
+          }
+
+          const devicesData = await devicesResponse.json();
+          const devices = devicesData.data || [];
+          allDevices.push(...devices);
+
+          // Prüfe, ob weitere Seiten vorhanden sind
+          const totalElements = devicesData.totalElements || 0;
+          const totalPages = devicesData.totalPages || Math.ceil(totalElements / pageSize);
+          hasNext = devices.length === pageSize && (page + 1) < totalPages;
+
+          console.log(`Fetched page ${page}: ${devices.length} devices (total so far: ${allDevices.length})`);
+          
+          page++;
+        } catch (error) {
+          console.error(`Error fetching devices page ${page}:`, error);
+          break;
         }
       }
-    );
 
-    if (!devicesResponse.ok) {
-      const errorText = await devicesResponse.text();
-      console.error('ThingsBoard API error:', devicesResponse.status, errorText);
-      
-      return res.status(devicesResponse.status).json({
-        success: false,
-        error: 'ThingsBoard API error',
-        message: `Fehler beim Abrufen der Devices: ${devicesResponse.status}`,
-        details: errorText
-      });
-    }
+      return allDevices;
+    };
 
-    const devicesData = await devicesResponse.json();
-    const devices = devicesData.data || [];
+    // Alle Devices des Kunden von ThingsBoard abrufen (mit Pagination)
+    const devices = await fetchAllDevices(customerId, tbToken);
+    
+    console.log(`Total devices fetched: ${devices.length}`);
 
     // Für jedes Device die neuesten Telemetriedaten abrufen
     const devicesWithTelemetry = await Promise.all(

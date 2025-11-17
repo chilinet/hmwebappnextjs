@@ -5,6 +5,7 @@ import { faEdit, faTrash, faPlus, faSearch, faSync, faDownload, faUpload, faArro
 import Layout from "@/components/Layout";
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useThingsboard } from '@/contexts/ThingsboardContext';
+import * as XLSX from 'xlsx';
 
 // Local storage keys
 const DEVICES_CACHE_KEY = 'hm_devices_cache';
@@ -293,18 +294,113 @@ function Devices() {
     }
   }, []);
 
+  // Hilfsfunktion zum Finden des SerialNbr-Attributs (muss vor exportDevices definiert werden)
+  const getSerialNumber = (device) => {
+    // Priorität: 1. Lokale Seriennummer aus inventory-Tabelle über API
+    if (device.serialNumber) {
+      return device.serialNumber;
+    }
+    
+    // Fallback: ThingsBoard-Attribute (falls keine lokale Seriennummer verfügbar ist)
+    const attributes = device.serverAttributes || device.telemetry || {};
+    return attributes.serialNbr || 
+           attributes.serialNumber || 
+           attributes.SerialNbr || 
+           attributes.SerialNumber || 
+           attributes.serial || 
+           attributes.Serial || 
+           '-';
+  };
+
   const exportDevices = useCallback(() => {
     try {
-      const dataStr = JSON.stringify(cachedDevices, null, 2);
-      const dataBlob = new Blob([dataStr], { type: 'application/json' });
-      const url = URL.createObjectURL(dataBlob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `devices_${new Date().toISOString().split('T')[0]}.json`;
-      link.click();
-      URL.revokeObjectURL(url);
+      // Bereite Daten für Excel vor
+      const excelData = cachedDevices.map(device => {
+        const serialNumber = getSerialNumber(device);
+        const assetPath = device.asset && typeof device.asset === 'object' ? (
+          device.asset.fullPath?.labels && device.asset.fullPath.labels.length > 0 ? (
+            device.asset.fullPath.labels.join(' / ')
+          ) : device.asset.pathString && !device.asset.pathString.startsWith('Asset ') ? (
+            device.asset.pathString
+          ) : '-'
+        ) : '-';
+        
+        const lastActivity = device.telemetry?.lastActivityTime ? 
+          new Date(parseInt(device.telemetry.lastActivityTime)).toLocaleString('de-DE', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+          }) : 
+          device.lastActivityTime ? 
+            new Date(parseInt(device.lastActivityTime)).toLocaleString('de-DE', {
+              day: '2-digit',
+              month: '2-digit',
+              year: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit'
+            }) : 
+            'Nie';
+
+        return {
+          'Name': device.name || '-',
+          'Label': device.label || '-',
+          'Typ': device.type || '-',
+          'SerialNbr': serialNumber,
+          'Gateway': device.telemetry?.gatewayId || '-',
+          'Pfad': assetPath,
+          'Batterie (V)': device.telemetry?.batteryVoltage || '-',
+          'FCnt': device.telemetry?.fCnt || '-',
+          'Ventil (%)': device.telemetry?.PercentValveOpen !== undefined ? Math.round(device.telemetry.PercentValveOpen) : '-',
+          'Motor Position': device.telemetry?.motorPosition !== undefined ? Math.round(device.telemetry.motorPosition) : '-',
+          'Motor Range': device.telemetry?.motorRange !== undefined ? Math.round(device.telemetry.motorRange) : '-',
+          'RSSI (dBm)': device.telemetry?.rssi || '-',
+          'SF': device.telemetry?.sf || '-',
+          'SNR (dB)': device.telemetry?.snr ? `${device.telemetry.snr}dB` : '-',
+          'Signal Quality': device.telemetry?.signalQuality || '-',
+          'Status': device.active ? 'Aktiv' : 'Inaktiv',
+          'Letzte Aktivität': lastActivity,
+          'Device ID': typeof device.id === 'string' ? device.id : (device.id?.id || '-')
+        };
+      });
+
+      // Erstelle Workbook und Worksheet
+      const worksheet = XLSX.utils.json_to_sheet(excelData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Geräte');
+
+      // Setze Spaltenbreiten
+      const columnWidths = [
+        { wch: 20 }, // Name
+        { wch: 20 }, // Label
+        { wch: 15 }, // Typ
+        { wch: 15 }, // SerialNbr
+        { wch: 20 }, // Gateway
+        { wch: 40 }, // Pfad
+        { wch: 12 }, // Batterie
+        { wch: 10 }, // FCnt
+        { wch: 12 }, // Ventil
+        { wch: 15 }, // Motor Position
+        { wch: 15 }, // Motor Range
+        { wch: 12 }, // RSSI
+        { wch: 8 },  // SF
+        { wch: 12 }, // SNR
+        { wch: 15 }, // Signal Quality
+        { wch: 10 }, // Status
+        { wch: 20 }, // Letzte Aktivität
+        { wch: 40 }  // Device ID
+      ];
+      worksheet['!cols'] = columnWidths;
+
+      // Exportiere als Excel-Datei
+      const fileName = `devices_${new Date().toISOString().split('T')[0]}.xlsx`;
+      XLSX.writeFile(workbook, fileName);
     } catch (error) {
       console.error('Error exporting devices:', error);
+      alert('Fehler beim Exportieren der Geräte: ' + error.message);
     }
   }, [cachedDevices]);
 
@@ -326,24 +422,6 @@ function Devices() {
 
   // Use cached devices if available, otherwise use live data
   const displayDevices = cachedDevices.length > 0 ? cachedDevices : (devices || []);
-
-  // Hilfsfunktion zum Finden des SerialNbr-Attributs
-  const getSerialNumber = (device) => {
-    // Priorität: 1. Lokale Seriennummer aus inventory-Tabelle über API
-    if (device.serialNumber) {
-      return device.serialNumber;
-    }
-    
-    // Fallback: ThingsBoard-Attribute (falls keine lokale Seriennummer verfügbar ist)
-    const attributes = device.serverAttributes || device.telemetry || {};
-    return attributes.serialNbr || 
-           attributes.serialNumber || 
-           attributes.SerialNbr || 
-           attributes.SerialNumber || 
-           attributes.serial || 
-           attributes.Serial || 
-           '-';
-  };
 
   // Neue Funktion: Hole Seriennummer direkt aus der Inventory-API
   const fetchSerialNumberFromInventory = async (deviceId) => {
