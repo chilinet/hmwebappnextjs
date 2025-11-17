@@ -2,7 +2,7 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import Layout from '@/components/Layout';
-import { Card, Badge, Spinner, Alert } from 'react-bootstrap';
+import { Card, Badge, Spinner, Alert, Button } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { 
   faHome, 
@@ -11,9 +11,11 @@ import {
   faDoorClosed,
   faSearch,
   faTimes,
-  faClock
+  faClock,
+  faDownload
 } from '@fortawesome/free-solid-svg-icons';
 import Head from 'next/head';
+import * as XLSX from 'xlsx';
 
 export default function WindowStatus() {
   const { data: session, status } = useSession();
@@ -278,6 +280,96 @@ export default function WindowStatus() {
     return filteredDevices;
   };
 
+  // Helper function to calculate duration in hours as decimal
+  const getDurationInHours = (timestamp) => {
+    if (!timestamp) return null;
+    
+    try {
+      const date = timestamp instanceof Date 
+        ? timestamp 
+        : new Date(timestamp);
+      
+      if (isNaN(date.getTime())) {
+        return null;
+      }
+      
+      const now = new Date();
+      const diffMs = now - date;
+      
+      if (diffMs < 0) return null;
+      
+      // Convert to hours (decimal)
+      const diffHours = diffMs / (1000 * 60 * 60);
+      return Math.round(diffHours * 100) / 100; // Round to 2 decimal places
+    } catch (error) {
+      return null;
+    }
+  };
+
+  // Export function to Excel
+  const exportToExcel = () => {
+    try {
+      const filteredDevices = getFilteredDevices();
+      
+      if (filteredDevices.length === 0) {
+        alert('Keine Daten zum Exportieren verfügbar');
+        return;
+      }
+
+      // Prepare data for Excel
+      const excelData = filteredDevices.map(device => {
+        const windowStatus = getWindowStatus(device.hall_sensor_state);
+        const timestamp = device.last_update_utc ? formatTimestamp(device.last_update_utc) : 'Keine Daten';
+        const durationHours = device.last_update_utc ? getDurationInHours(device.last_update_utc) : null;
+        const assetPath = getAssetPathString(device.asset_id);
+
+        return {
+          'Asset Name': device.asset_name || '-',
+          'Asset Typ': device.asset_type || '-',
+          'Asset Pfad': assetPath,
+          'Gerät Name': device.device_name || '-',
+          'Gerät Label': device.device_label || '-',
+          'Gerät Typ': device.device_type || '-',
+          'Status': windowStatus,
+          'Hall Sensor State': device.hall_sensor_state || '-',
+          'Timestamp': timestamp,
+          'Dauer (Stunden)': durationHours !== null ? durationHours : '-',
+          'Device ID': device.device_id || '-',
+          'Asset ID': device.asset_id || '-'
+        };
+      });
+
+      // Create workbook and worksheet
+      const worksheet = XLSX.utils.json_to_sheet(excelData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Fensterstatus');
+
+      // Set column widths
+      const columnWidths = [
+        { wch: 25 }, // Asset Name
+        { wch: 15 }, // Asset Typ
+        { wch: 40 }, // Asset Pfad
+        { wch: 25 }, // Gerät Name
+        { wch: 20 }, // Gerät Label
+        { wch: 15 }, // Gerät Typ
+        { wch: 12 }, // Status
+        { wch: 15 }, // Hall Sensor State
+        { wch: 20 }, // Timestamp
+        { wch: 18 }, // Dauer (Stunden)
+        { wch: 40 }, // Device ID
+        { wch: 40 }  // Asset ID
+      ];
+      worksheet['!cols'] = columnWidths;
+
+      // Export as Excel file
+      const fileName = `fensterstatus_${new Date().toISOString().split('T')[0]}.xlsx`;
+      XLSX.writeFile(workbook, fileName);
+    } catch (error) {
+      console.error('Error exporting to Excel:', error);
+      alert('Fehler beim Exportieren nach Excel: ' + error.message);
+    }
+  };
+
   if (status === "loading") {
     return (
       <div className="light-theme min-vh-100 d-flex align-items-center justify-content-center">
@@ -430,6 +522,20 @@ export default function WindowStatus() {
             <div className="col-12">
               <Card className="shadow-sm">
                 <Card.Body className="p-4">
+                  {/* Export Button */}
+                  <div className="d-flex justify-content-between align-items-center mb-3">
+                    <h5 className="mb-0 fw-bold">Filter & Suche</h5>
+                    <Button
+                      variant="outline-success"
+                      size="sm"
+                      onClick={exportToExcel}
+                      disabled={!windowData?.data || windowData.data.length === 0 || getFilteredDevices().length === 0}
+                    >
+                      <FontAwesomeIcon icon={faDownload} className="me-2" />
+                      Export nach Excel
+                    </Button>
+                  </div>
+
                   {/* Search Bar */}
                   <div className="mb-3">
                     <div className="input-group">
