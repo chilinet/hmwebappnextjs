@@ -3,6 +3,7 @@ import { authOptions } from '../../auth/[...nextauth]';
 import { getConnection } from '../../../../lib/db';
 import sql from 'mssql';
 import { invalidateCache, invalidateUnassignedCache } from '../../../../lib/utils/deviceCache';
+import { removeUnassignedDeviceFromDb, invalidateUnassignedDevicesCache } from '../../../../lib/utils/unassignedDevicesDb';
 
 export default async function handler(req, res) {
   const session = await getServerSession(req, res, authOptions);
@@ -66,9 +67,12 @@ export default async function handler(req, res) {
           
           if (userResult.recordset.length > 0) {
             const customerId = userResult.recordset[0].customerid;
+            // Invalidiere In-Memory-Cache
             invalidateCache(customerId);
             invalidateUnassignedCache(customerId);
-            console.log(`Cache invalidated for customer ${customerId} after device relation creation`);
+            // Entferne Device aus Datenbank-Cache (wurde zugeordnet)
+            await removeUnassignedDeviceFromDb(toId, customerId);
+            console.log(`Cache invalidated for customer ${customerId} after device ${toId} assignment`);
           }
         } catch (error) {
           console.warn('Failed to invalidate cache after relation creation:', error);
@@ -114,7 +118,7 @@ export default async function handler(req, res) {
         throw new Error('Failed to delete relation in ThingsBoard');
       }
 
-      // Invalidiere den Cache wenn eine Device-Relation gelöscht wurde
+      // Invalidiere den Cache wenn eine Device-Relation gelöscht wurde (Device wurde wieder nicht zugeordnet)
       if (toType === 'DEVICE') {
         try {
           const pool = await getConnection();
@@ -128,9 +132,12 @@ export default async function handler(req, res) {
           
           if (userResult.recordset.length > 0) {
             const customerId = userResult.recordset[0].customerid;
+            // Invalidiere In-Memory-Cache
             invalidateCache(customerId);
             invalidateUnassignedCache(customerId);
-            console.log(`Cache invalidated for customer ${customerId} after device relation deletion`);
+            // Invalidiere Datenbank-Cache (Device könnte wieder nicht zugeordnet sein)
+            await invalidateUnassignedDevicesCache(customerId);
+            console.log(`Cache invalidated for customer ${customerId} after device ${toId} unassignment`);
           }
         } catch (error) {
           console.warn('Failed to invalidate cache after relation deletion:', error);

@@ -22,21 +22,32 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Hole die Thingsboard-Credentials des Benutzers aus der Datenbank
+    // Hole die Thingsboard-Credentials über customerid aus customer_settings
     await sql.connect(config);
     const result = await sql.query`
-      SELECT tb_username, tb_password
-      FROM hm_users
-      WHERE userid = ${session.user.id}
+      SELECT 
+        u.customerid,
+        cs.tb_username,
+        cs.tb_password
+      FROM hm_users u
+      LEFT JOIN customer_settings cs ON u.customerid = cs.customer_id
+      WHERE u.userid = ${session.user.id}
     `;
 
     if (result.recordset.length === 0) {
-      return res.status(401).json({ message: 'Keine Thingsboard-Zugangsdaten gefunden' });
+      return res.status(401).json({ message: 'Benutzer nicht gefunden' });
     }
 
-    const { tb_username, tb_password } = result.recordset[0];
+    const { customerid, tb_username, tb_password } = result.recordset[0];
 
-    // Token von Thingsboard mit den Benutzer-Credentials holen
+    // Prüfe ob ThingsBoard Credentials vorhanden sind
+    if (!tb_username || !tb_password) {
+      return res.status(401).json({ 
+        message: 'Keine Thingsboard-Zugangsdaten für diesen Customer konfiguriert' 
+      });
+    }
+
+    // Token von Thingsboard mit den Customer-Credentials holen
     const token = await thingsboardAuth(tb_username, tb_password);
     const headers = { 'X-Authorization': `Bearer ${token}` };
     const baseUrl = `${process.env.THINGSBOARD_URL}/api`;

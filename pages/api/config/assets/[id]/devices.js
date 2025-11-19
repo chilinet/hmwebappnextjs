@@ -2,7 +2,18 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../../auth/[...nextauth]";
 import { getConnection } from '../../../../../lib/db';
 import sql from 'mssql';
-import { getCachedDevices, setCachedDevices } from '../../../../../lib/utils/deviceCache';
+import { 
+  getCachedDevices, 
+  setCachedDevices,
+  getCachedDevicesEvenExpired,
+  getCachedUnassignedDevices,
+  setCachedUnassignedDevices
+} from '../../../../../lib/utils/deviceCache';
+import {
+  getUnassignedDevicesFromDb,
+  saveUnassignedDevicesToDb,
+  removeUnassignedDeviceFromDb
+} from '../../../../../lib/utils/unassignedDevicesDb';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -91,23 +102,28 @@ export default async function handler(req, res) {
           console.log(`Loaded page ${page - 1}: ${pageDevices.length} devices (total so far: ${allDevices.length})`);
         } catch (fetchError) {
           if (timeoutId) clearTimeout(timeoutId);
-          // Prüfe auf verschiedene Timeout-Fehler
+          // Prüfe auf verschiedene Timeout-Fehler und Connect-Fehler
           const isTimeoutError = 
             fetchError.name === 'AbortError' || 
             fetchError.message?.includes('timeout') ||
             fetchError.message?.includes('Timeout') ||
+            fetchError.message?.includes('fetch failed') ||
             fetchError.cause?.code === 'UND_ERR_CONNECT_TIMEOUT' ||
-            fetchError.cause?.code === 'UND_ERR_SOCKET';
+            fetchError.cause?.code === 'UND_ERR_SOCKET' ||
+            (fetchError.cause && fetchError.cause.code === 'UND_ERR_CONNECT_TIMEOUT');
           
           if (isTimeoutError) {
-            console.warn(`Timeout while fetching devices (page ${page}), using ${allDevices.length} already loaded devices`);
+            const errorMsg = fetchError.cause?.code || fetchError.message || 'Unknown timeout';
+            console.warn(`Connection timeout/error while fetching devices (page ${page}): ${errorMsg}`);
+            console.warn(`Using ${allDevices.length} already loaded devices as fallback`);
             // Bei Timeout: verwende bereits geladene Devices oder setze Fehler
             if (allDevices.length === 0) {
-              paginationError = new Error(`Timeout while fetching devices: No devices loaded`);
+              paginationError = new Error(`Connection timeout while fetching devices: ${errorMsg}`);
             }
             break;
           }
           // Andere Fehler: setze Fehler und breche ab
+          console.error(`Unexpected error while fetching devices (page ${page}):`, fetchError);
           paginationError = fetchError;
           break;
         }
@@ -117,16 +133,34 @@ export default async function handler(req, res) {
         console.warn(`Reached max pages limit (${maxPages}), loaded ${allDevices.length} devices`);
       }
       
-      // Speichere im Cache nur wenn Devices geladen wurden
-      if (allDevices.length > 0) {
-        setCachedDevices(customerId, allDevices, 5 * 60 * 1000);
-        console.log(`Cached ${allDevices.length} devices for customer ${customerId}`);
-      } else if (paginationError) {
-        // Wenn keine Devices geladen wurden, logge Warnung aber wirf keinen Fehler
-        // Die API kann trotzdem die zugeordneten Devices für das Asset zurückgeben
-        console.warn(`Could not load all devices due to error, but continuing with asset-specific device loading:`, paginationError.message);
-        allDevices = []; // Leeres Array, damit die API weiterläuft
+      // Wenn Fehler beim Laden auftraten und keine Devices geladen wurden, versuche Fallback
+      if (paginationError && allDevices.length === 0) {
+        console.warn(`Could not load devices from ThingsBoard:`, paginationError.message);
+        
+        // Versuche alten Cache zu verwenden (auch wenn abgelaufen)
+        // Versuche alten Cache zu verwenden (auch wenn abgelaufen)
+        const oldCached = getCachedDevicesEvenExpired(customerId);
+        if (oldCached && oldCached.length > 0) {
+          console.log(`Using expired cache as fallback: ${oldCached.length} devices`);
+          allDevices = oldCached;
+        } else {
+          // Versuche Datenbank-Cache für unassigned devices
+          const dbCached = await getUnassignedDevicesFromDb(customerId, 48); // 48 Stunden Fallback
+          if (dbCached && dbCached.length > 0) {
+            console.log(`Using database cache as fallback: ${dbCached.length} devices`);
+            // Konvertiere unassigned devices zu allDevices Format
+            allDevices = dbCached;
+          } else {
+            console.warn(`No fallback cache available, continuing with empty device list`);
+            allDevices = []; // Leeres Array, damit die API weiterläuft
+          }
+        }
       }
+      
+      // Speichere im Cache (auch wenn leer, um wiederholte fetches zu vermeiden)
+      // Wichtig: Nach dem Fallback, damit der Fallback-Wert gecacht wird
+      setCachedDevices(customerId, allDevices, 5 * 60 * 1000);
+      console.log(`Cached ${allDevices.length} devices for customer ${customerId}`);
     } else {
       console.log(`Cache hit for customer ${customerId}, using ${allDevices.length} cached devices`);
     }
@@ -265,86 +299,126 @@ export default async function handler(req, res) {
       .filter(result => result.status === 'fulfilled' && result.value !== null)
       .map(result => result.value);
 
-    // Finde die nicht zugeordneten Devices
-    const assignedDeviceIds = validDevices.map(device => device.id.id);
-    const unassignedDevices = allDevices.filter(
-      device => !assignedDeviceIds.includes(device.id.id)
-    );
+    // Prüfe zuerst die Datenbank für nicht zugeordnete Devices
+    let cachedUnassigned = await getUnassignedDevicesFromDb(customerId, 24); // 24 Stunden Cache
+    let filteredUnassignedDevices;
+    
+    // Fallback auf In-Memory-Cache wenn Datenbank leer ist
+    if (!cachedUnassigned || cachedUnassigned.length === 0) {
+      cachedUnassigned = getCachedUnassignedDevices(customerId);
+    }
+    
+    if (cachedUnassigned && cachedUnassigned.length > 0) {
+      console.log(`Cache hit for unassigned devices (customer ${customerId}), using ${cachedUnassigned.length} cached devices`);
+      // Verwende gecachte nicht zugeordnete Devices
+      // Filtere die Devices heraus, die bereits diesem Asset zugeordnet sind
+      const assignedDeviceIds = validDevices.map(device => device.id.id);
+      filteredUnassignedDevices = cachedUnassigned.filter(
+        device => {
+          const deviceId = device.id?.id || device.id;
+          return !assignedDeviceIds.includes(deviceId);
+        }
+      );
+    } else {
+      // Cache miss - berechne nicht zugeordnete Devices neu
+      console.log(`Cache miss for unassigned devices (customer ${customerId}), calculating...`);
+      
+      // Finde die nicht zugeordneten Devices
+      const assignedDeviceIds = validDevices.map(device => device.id.id);
+      const unassignedDevices = allDevices.filter(
+        device => !assignedDeviceIds.includes(device.id.id)
+      );
 
-    // Prüfe für jedes nicht zugeordnete Device, ob es bereits irgendwo zugeordnet ist
-    // Verwende Promise.allSettled mit Timeouts, damit einzelne Fehler nicht alles blockieren
-    const trulyUnassignedDevicesResults = await Promise.allSettled(
-      unassignedDevices.map(async device => {
-        try {
-          // Prüfe ob das Device bereits eine "To"-Relation hat mit Timeout
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 Sekunden Timeout
-          
+      // Prüfe für jedes nicht zugeordnete Device, ob es bereits irgendwo zugeordnet ist
+      // Verwende Promise.allSettled mit Timeouts, damit einzelne Fehler nicht alles blockieren
+      const trulyUnassignedDevicesResults = await Promise.allSettled(
+        unassignedDevices.map(async device => {
           try {
-            const relationResponse = await fetch(
-              `${process.env.THINGSBOARD_URL}/api/relations/info?toId=${device.id.id}&toType=DEVICE`,
-              {
-                headers: {
-                  'X-Authorization': `Bearer ${session.tbToken}`
-                },
-                signal: controller.signal
+            // Prüfe ob das Device bereits eine "To"-Relation hat mit Timeout
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 Sekunden Timeout
+            
+            try {
+              const relationResponse = await fetch(
+                `${process.env.THINGSBOARD_URL}/api/relations/info?toId=${device.id.id}&toType=DEVICE`,
+                {
+                  headers: {
+                    'X-Authorization': `Bearer ${session.tbToken}`
+                  },
+                  signal: controller.signal
+                }
+              );
+
+              clearTimeout(timeoutId);
+
+              if (!relationResponse.ok) {
+                // Bei Fehler behandle Device als nicht zugeordnet (konservativ)
+                return device;
               }
-            );
 
-            clearTimeout(timeoutId);
+              const relations = await relationResponse.json();
+              
+              // Wenn keine Relations gefunden wurden, ist das Device wirklich nicht zugeordnet
+              if (!Array.isArray(relations) || relations.length === 0) {
+                return device;
+              }
+              
+              // Wenn es Relations gibt, prüfen ob eine davon vom Typ "Contains" ist
+              const hasContainsRelation = relations.some(rel => rel.type === 'Contains');
+              return hasContainsRelation ? null : device;
 
-            if (!relationResponse.ok) {
-              // Bei Fehler behandle Device als nicht zugeordnet (konservativ)
+            } catch (fetchError) {
+              clearTimeout(timeoutId);
+              // Bei Timeout oder AbortError behandle Device als nicht zugeordnet (konservativ)
+              if (fetchError.name === 'AbortError' || fetchError.message?.includes('timeout')) {
+                // Timeout: behandle als nicht zugeordnet (konservativ)
+                return device;
+              }
+              // Andere Fehler: logge Warnung, aber behandle als nicht zugeordnet
+              console.warn(`Error checking relations for device ${device.id.id}:`, fetchError.message || fetchError);
               return device;
             }
-
-            const relations = await relationResponse.json();
-            
-            // Wenn keine Relations gefunden wurden, ist das Device wirklich nicht zugeordnet
-            if (!Array.isArray(relations) || relations.length === 0) {
-              return device;
+          } catch (error) {
+            // Bei Fehler behandle Device als nicht zugeordnet (konservativ)
+            if (!error.message?.includes('timeout') && !error.message?.includes('aborted')) {
+              console.warn(`Error checking relations for device ${device.id.id}:`, error.message || error);
             }
-            
-            // Wenn es Relations gibt, prüfen ob eine davon vom Typ "Contains" ist
-            const hasContainsRelation = relations.some(rel => rel.type === 'Contains');
-            return hasContainsRelation ? null : device;
-
-          } catch (fetchError) {
-            clearTimeout(timeoutId);
-            // Bei Timeout oder AbortError behandle Device als nicht zugeordnet (konservativ)
-            if (fetchError.name === 'AbortError' || fetchError.message?.includes('timeout')) {
-              // Timeout: behandle als nicht zugeordnet (konservativ)
-              return device;
-            }
-            // Andere Fehler: logge Warnung, aber behandle als nicht zugeordnet
-            console.warn(`Error checking relations for device ${device.id.id}:`, fetchError.message || fetchError);
             return device;
           }
-        } catch (error) {
-          // Bei Fehler behandle Device als nicht zugeordnet (konservativ)
-          if (!error.message?.includes('timeout') && !error.message?.includes('aborted')) {
-            console.warn(`Error checking relations for device ${device.id.id}:`, error.message || error);
-          }
-          return device;
-        }
-      })
-    );
-    
-    // Extrahiere erfolgreiche Ergebnisse
-    const trulyUnassignedDevices = trulyUnassignedDevicesResults
-      .filter(result => result.status === 'fulfilled' && result.value !== null)
-      .map(result => result.value);
+        })
+      );
+      
+      // Extrahiere erfolgreiche Ergebnisse
+      const trulyUnassignedDevices = trulyUnassignedDevicesResults
+        .filter(result => result.status === 'fulfilled' && result.value !== null)
+        .map(result => result.value);
 
-    // Filtere null-Werte heraus
-    const filteredUnassignedDevices = trulyUnassignedDevices.filter(device => device !== null);
+      // Filtere null-Werte heraus
+      filteredUnassignedDevices = trulyUnassignedDevices.filter(device => device !== null);
+      
+      // Speichere in Datenbank UND In-Memory-Cache für zukünftige Anfragen
+      if (filteredUnassignedDevices.length > 0) {
+        // Speichere in Datenbank (persistent, 24 Stunden)
+        await saveUnassignedDevicesToDb(customerId, filteredUnassignedDevices);
+        // Speichere auch im In-Memory-Cache (5 Minuten, für schnellen Zugriff)
+        setCachedUnassignedDevices(customerId, filteredUnassignedDevices, 5 * 60 * 1000);
+        console.log(`Cached ${filteredUnassignedDevices.length} unassigned devices for customer ${customerId} (DB + Memory)`);
+      }
+    }
 
     // Hole Attribute für die gefilterten nicht zugeordneten Devices
+    // Wenn Devices aus dem Cache kommen und bereits Attribute haben, verwende diese
     // Verwende Promise.allSettled, damit einzelne Fehler nicht alles blockieren
     const unassignedResults = await Promise.allSettled(
       filteredUnassignedDevices.map(async device => {
         try {
+          // Wenn das Device bereits serverAttributes hat (aus dem Cache), verwende diese
+          if (device.serverAttributes && Object.keys(device.serverAttributes).length > 0) {
+            return device; // Device hat bereits Attribute, keine erneute Abfrage nötig
+          }
+          
           // Hole alle Attribute für das Device (mit eigener Fehlerbehandlung)
-          const allAttributes = await fetchAllDeviceAttributes(device.id.id);
+          //const allAttributes = await fetchAllDeviceAttributes(device.id.id);
 
           return {
             ...device,
@@ -357,7 +431,7 @@ export default async function handler(req, res) {
           }
           return {
             ...device,
-            serverAttributes: {}
+            serverAttributes: device.serverAttributes || {}
           };
         }
       })
