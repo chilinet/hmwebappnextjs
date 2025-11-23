@@ -100,7 +100,8 @@ export default async function handler(req, res) {
         'sensorTemperature',
         'targetTemperature',
         'manualTargetTemperatureUpdate',
-        'powerSourceStatus'
+        'powerSourceStatus',
+        'hall_sensor_state'
       ].join(',')}`,
       {
         headers: {

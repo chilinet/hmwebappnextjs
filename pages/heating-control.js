@@ -92,6 +92,12 @@ export default function HeatingControl() {
   const [loadingAlarms, setLoadingAlarms] = useState(false);
   const [showTelemetryModal, setShowTelemetryModal] = useState(false);
   const [selectedDevice, setSelectedDevice] = useState(null);
+  const [showTelemetryChartModal, setShowTelemetryChartModal] = useState(false);
+  const [selectedTelemetryAttribute, setSelectedTelemetryAttribute] = useState(null);
+  const [selectedTelemetryDevice, setSelectedTelemetryDevice] = useState(null);
+  const [telemetryChartData, setTelemetryChartData] = useState([]);
+  const [loadingTelemetryChart, setLoadingTelemetryChart] = useState(false);
+  const [selectedChartTimeRange, setSelectedChartTimeRange] = useState('7d'); // Default: 7 days
   const [images, setImages] = useState([]);
   const [loadingImages, setLoadingImages] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
@@ -1486,7 +1492,7 @@ export default function HeatingControl() {
       console.log('Fetching telemetry for device IDs:', deviceIds);
 
       // Define the attributes we want to fetch
-      const attributes = ['sensorTemperature', 'targetTemperature', 'PercentValveOpen', 'batteryVoltage', 'signalQuality'];
+      const attributes = ['sensorTemperature', 'targetTemperature', 'PercentValveOpen', 'batteryVoltage', 'signalQuality', 'hall_sensor_state'];
       
       // Fetch telemetry data for each device individually
       const devicesWithTelemetry = await Promise.all(
@@ -1500,7 +1506,40 @@ export default function HeatingControl() {
             // Fetch each attribute using the aggregated API
             const telemetry = {};
             
+            // For hall_sensor_state, use the details endpoint which provides current values
+            if (attributes.includes('hall_sensor_state')) {
+              try {
+                const detailsResponse = await fetch(
+                  `/api/thingsboard/devices/${deviceId}/details`,
+                  {
+                    headers: {
+                      'Authorization': `Bearer ${session.token}`
+                    }
+                  }
+                );
+
+                if (detailsResponse.ok) {
+                  const detailsData = await detailsResponse.json();
+                  if (detailsData.success && detailsData.data?.telemetry?.current?.hall_sensor_state !== undefined) {
+                    telemetry.hall_sensor_state = detailsData.data.telemetry.current.hall_sensor_state;
+                    console.log(`hall_sensor_state from details API for device ${deviceId}:`, {
+                      rawValue: telemetry.hall_sensor_state,
+                      type: typeof telemetry.hall_sensor_state
+                    });
+                  }
+                }
+              } catch (error) {
+                console.warn(`Error fetching hall_sensor_state from details API for device ${deviceId}:`, error);
+              }
+            }
+            
+            // Fetch other attributes using the aggregated API
             for (const attribute of attributes) {
+              // Skip hall_sensor_state as we already fetched it from details API
+              if (attribute === 'hall_sensor_state') {
+                continue;
+              }
+              
               try {
                 const response = await fetch(
                   `/api/thingsboard/devices/telemetry/aggregated?deviceIds=${deviceId}&attribute=${attribute}&limit=1`,
@@ -1567,6 +1606,100 @@ export default function HeatingControl() {
       return devices;
     }
   }, [session?.token]);
+
+  const fetchTelemetryHistory = useCallback(async (deviceId, attribute, timeRange = '7d') => {
+    if (!deviceId || !attribute || !session?.token) {
+      return [];
+    }
+
+    try {
+      setLoadingTelemetryChart(true);
+      const endTime = Date.now();
+      const startTime = getTimeRangeInMs(timeRange);
+
+      const response = await fetch(
+        `/api/thingsboard/devices/telemetry/aggregated?deviceIds=${deviceId}&attribute=${attribute}&startTs=${startTime}&endTs=${endTime}&limit=1000`,
+        {
+          headers: {
+            'Authorization': `Bearer ${session.token}`
+          }
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.data && data.data.length > 0) {
+          const deviceData = data.data[0];
+          if (deviceData.data && deviceData.data.length > 0) {
+            const chartData = deviceData.data.map(point => {
+              let value = point.value;
+              
+              // Convert hall_sensor_state text values to numeric: HIGH -> 1, LOW -> 0
+              if (attribute === 'hall_sensor_state') {
+                const valueStr = String(value).toUpperCase();
+                if (valueStr === 'HIGH' || valueStr === '1' || valueStr === 'TRUE') {
+                  value = 1;
+                } else {
+                  value = 0;
+                }
+              }
+              
+              return {
+                timestamp: point.ts,
+                value: value,
+                time: new Date(point.ts).toLocaleString('de-DE')
+              };
+            });
+            setTelemetryChartData(chartData);
+            return chartData;
+          }
+        }
+      }
+      setTelemetryChartData([]);
+      return [];
+    } catch (error) {
+      console.error('Error fetching telemetry history:', error);
+      setTelemetryChartData([]);
+      return [];
+    } finally {
+      setLoadingTelemetryChart(false);
+    }
+  }, [session?.token]);
+
+  const getAttributeDisplayName = (attribute) => {
+    const displayNames = {
+      'sensorTemperature': 'Aktuelle Temperatur',
+      'targetTemperature': 'Zieltemperatur',
+      'batteryVoltage': 'Batteriespannung',
+      'PercentValveOpen': 'Ventilöffnung',
+      'signalQuality': 'Signalqualität',
+      'hall_sensor_state': 'Hall Sensor'
+    };
+    return displayNames[attribute] || attribute;
+  };
+
+  const handleTelemetryValueClick = useCallback(async (device, attribute) => {
+    const deviceId = typeof device.id === 'object' && device.id?.id ? device.id.id : device.id;
+    if (!deviceId) return;
+
+    setSelectedTelemetryDevice(device);
+    setSelectedTelemetryAttribute(attribute);
+    setSelectedChartTimeRange('7d'); // Reset to default
+    setShowTelemetryChartModal(true);
+    await fetchTelemetryHistory(deviceId, attribute, '7d');
+  }, [fetchTelemetryHistory]);
+
+  const handleChartTimeRangeChange = useCallback(async (timeRange) => {
+    setSelectedChartTimeRange(timeRange);
+    if (selectedTelemetryDevice && selectedTelemetryAttribute) {
+      const deviceId = typeof selectedTelemetryDevice.id === 'object' && selectedTelemetryDevice.id?.id 
+        ? selectedTelemetryDevice.id.id 
+        : selectedTelemetryDevice.id;
+      if (deviceId) {
+        await fetchTelemetryHistory(deviceId, selectedTelemetryAttribute, timeRange);
+      }
+    }
+  }, [selectedTelemetryDevice, selectedTelemetryAttribute, fetchTelemetryHistory]);
 
   const fetchDevices = useCallback(async (nodeId) => {
     if (!nodeId) {
@@ -3237,17 +3370,67 @@ export default function HeatingControl() {
                             </div>
                           </div>
                           
-                          <div className="responsive-card disabled-card">
-                            <div className="card">
-                              <div className="card-body text-center">
-                                <FontAwesomeIcon icon={faWindowMaximize} className="text-warning mb-3" size="2x" />
-                                <h4 className="card-title">Fenster</h4>
-                                <div className="text-muted">
-                                  <p>Kein Fensterkontakt gefunden</p>
+                          {(() => {
+                            // Parse windowStates from nodeDetails or selectedNode
+                            const windowStatesValue = nodeDetails?.attributes?.windowStates || selectedNode?.data?.windowStates;
+                            let windowStates = null;
+                            let windowCount = 0;
+                            let closedCount = 0;
+                            let openCount = 0;
+                            
+                            if (windowStatesValue) {
+                              try {
+                                windowStates = typeof windowStatesValue === 'string' 
+                                  ? JSON.parse(windowStatesValue) 
+                                  : windowStatesValue;
+                                
+                                if (windowStates && typeof windowStates === 'object') {
+                                  windowCount = Object.keys(windowStates).length;
+                                  closedCount = Object.values(windowStates).filter(status => status === true).length;
+                                  openCount = windowCount - closedCount;
+                                }
+                              } catch (error) {
+                                console.error('Error parsing windowStates:', error);
+                              }
+                            }
+                            
+                            return (
+                              <div className={`responsive-card ${!windowStates ? 'disabled-card' : ''}`}>
+                                <div className="card">
+                                  <div className="card-body text-center">
+                                    <FontAwesomeIcon 
+                                      icon={faWindowMaximize} 
+                                      className={`mb-3 ${openCount > 0 ? 'text-danger' : windowStates ? 'text-success' : 'text-warning'}`} 
+                                      size="2x" 
+                                    />
+                                    <h4 className="card-title">Fenster</h4>
+                                    {windowStates ? (
+                                      <div>
+                                        <div className="display-4 mb-2" style={{ 
+                                          color: openCount > 0 ? '#dc3545' : '#28a745',
+                                          fontSize: '1.5rem'
+                                        }}>
+                                          {windowCount}
+                                        </div>
+                                        <div className="text-muted" style={{ fontSize: '0.75rem' }}>
+                                          {closedCount} geschlossen
+                                          {openCount > 0 && (
+                                            <span className="text-danger ms-1">
+                                              • {openCount} offen
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="text-muted">
+                                        <p>Kein Fensterkontakt gefunden</p>
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
-                            </div>
-                          </div>
+                            );
+                          })()}
                           
                           <div className="responsive-card disabled-card">
                             <div className="card">
@@ -3369,7 +3552,12 @@ export default function HeatingControl() {
                                   <div className="mt-2">
                                     <div className="d-flex flex-wrap gap-2">
                                       {(deviceTemperatures[device.id]?.temperature || device.telemetry?.sensorTemperature) && (
-                                        <div className="bg-light border rounded p-2 text-center" style={{ minWidth: '80px', flex: '0 0 auto' }}>
+                                        <div 
+                                          className="bg-light border rounded p-2 text-center" 
+                                          style={{ minWidth: '80px', flex: '0 0 auto', cursor: 'pointer' }}
+                                          onClick={() => handleTelemetryValueClick(device, 'sensorTemperature')}
+                                          title="Klicken für Verlauf"
+                                        >
                                           <small className="text-muted d-block">
                                             Temperatur
                                             {deviceTemperatures[device.id]?.temperature && (
@@ -3384,7 +3572,12 @@ export default function HeatingControl() {
                                         </div>
                                       )}
                                       {device.telemetry?.targetTemperature !== undefined && device.telemetry?.targetTemperature !== null && (
-                                        <div className="bg-light border rounded p-2 text-center" style={{ minWidth: '80px', flex: '0 0 auto' }}>
+                                        <div 
+                                          className="bg-light border rounded p-2 text-center" 
+                                          style={{ minWidth: '80px', flex: '0 0 auto', cursor: 'pointer' }}
+                                          onClick={() => handleTelemetryValueClick(device, 'targetTemperature')}
+                                          title="Klicken für Verlauf"
+                                        >
                                           <small className="text-muted d-block">Ziel</small>
                                           <div className="fw-bold text-success" style={{ fontSize: '0.9rem' }}>
                                             {Number(device.telemetry.targetTemperature).toFixed(1)}°C
@@ -3392,7 +3585,12 @@ export default function HeatingControl() {
                                         </div>
                                       )}
                                       {device.telemetry?.batteryVoltage !== undefined && device.telemetry?.batteryVoltage !== null && (
-                                        <div className="bg-light border rounded p-2 text-center" style={{ minWidth: '80px', flex: '0 0 auto' }}>
+                                        <div 
+                                          className="bg-light border rounded p-2 text-center" 
+                                          style={{ minWidth: '80px', flex: '0 0 auto', cursor: 'pointer' }}
+                                          onClick={() => handleTelemetryValueClick(device, 'batteryVoltage')}
+                                          title="Klicken für Verlauf"
+                                        >
                                           <small className="text-muted d-block">Batterie</small>
                                           <div className="fw-bold text-warning" style={{ fontSize: '0.9rem' }}>
                                             {Number(device.telemetry.batteryVoltage).toFixed(2)}V
@@ -3400,7 +3598,12 @@ export default function HeatingControl() {
                                         </div>
                                       )}
                                       {device.telemetry?.PercentValveOpen !== undefined && device.telemetry?.PercentValveOpen !== null && (
-                                        <div className="bg-light border rounded p-2 text-center" style={{ minWidth: '80px', flex: '0 0 auto' }}>
+                                        <div 
+                                          className="bg-light border rounded p-2 text-center" 
+                                          style={{ minWidth: '80px', flex: '0 0 auto', cursor: 'pointer' }}
+                                          onClick={() => handleTelemetryValueClick(device, 'PercentValveOpen')}
+                                          title="Klicken für Verlauf"
+                                        >
                                           <small className="text-muted d-block">Ventil</small>
                                           <div className="fw-bold text-info" style={{ fontSize: '0.9rem' }}>
                                             {Number(device.telemetry.PercentValveOpen).toFixed(0)}%
@@ -3408,21 +3611,44 @@ export default function HeatingControl() {
                                         </div>
                                       )}
                                       {device.telemetry?.signalQuality !== undefined && device.telemetry?.signalQuality !== null && device.telemetry?.signalQuality !== 0 && (
-                                        <div className="bg-light border rounded p-2 text-center" style={{ minWidth: '80px', flex: '0 0 auto' }}>
+                                        <div 
+                                          className="bg-light border rounded p-2 text-center" 
+                                          style={{ minWidth: '80px', flex: '0 0 auto', cursor: 'pointer' }}
+                                          onClick={() => handleTelemetryValueClick(device, 'signalQuality')}
+                                          title="Klicken für Verlauf"
+                                        >
                                           <small className="text-muted d-block">Signal</small>
                                           <div className="fw-bold text-secondary" style={{ fontSize: '0.8rem' }}>
                                             {String(device.telemetry.signalQuality)}
                                           </div>
                                         </div>
                                       )}
-                                      {!deviceTemperatures[device.id]?.temperature && !device.telemetry?.sensorTemperature && (
-                                        <div className="bg-warning border rounded p-2 text-center" style={{ minWidth: '120px', flex: '0 0 auto' }}>
-                                          <small className="text-muted">
-                                            <span className="badge bg-warning me-1" style={{ fontSize: '0.5em' }}>
-                                              Warten...
-                                            </span>
-                                            Keine Daten
-                                          </small>
+                                      {device.telemetry?.hall_sensor_state !== undefined && device.telemetry?.hall_sensor_state !== null && (
+                                        <div 
+                                          className="bg-light border rounded p-2 text-center" 
+                                          style={{ minWidth: '80px', flex: '0 0 auto', cursor: 'pointer' }}
+                                          onClick={() => handleTelemetryValueClick(device, 'hall_sensor_state')}
+                                          title="Klicken für Verlauf"
+                                        >
+                                          <small className="text-muted d-block">Hall Sensor</small>
+                                          <div className="fw-bold" style={{ 
+                                            fontSize: '0.9rem',
+                                            color: (() => {
+                                              const value = device.telemetry.hall_sensor_state;
+                                              // HIGH/1 = geschlossen (grün), LOW/0 = offen (rot)
+                                              const isHigh = String(value).toUpperCase() === 'HIGH' || value === 1 || value === '1' || value === true;
+                                              return isHigh ? '#28a745' : '#dc3545';
+                                            })()
+                                          }}>
+                                            {(() => {
+                                              const value = String(device.telemetry.hall_sensor_state).toUpperCase();
+                                              // HIGH = geschlossen, LOW = offen
+                                              if (value === 'HIGH' || value === '1' || value === 'TRUE') {
+                                                return 'geschlossen';
+                                              }
+                                              return 'offen';
+                                            })()}
+                                          </div>
                                         </div>
                                       )}
                                     </div>
@@ -4092,6 +4318,216 @@ export default function HeatingControl() {
                   type="button" 
                   className="btn btn-secondary" 
                   onClick={() => setShowTimeRangeModal(false)}
+                >
+                  Schließen
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Telemetry Chart Modal */}
+      {showTelemetryChartModal && selectedTelemetryDevice && selectedTelemetryAttribute && (
+        <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1055 }}>
+          <div className="modal-dialog modal-dialog-centered modal-xl">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">
+                  <FontAwesomeIcon icon={faChartLine} className="me-2" />
+                  Verlauf - {getAttributeDisplayName(selectedTelemetryAttribute)} ({selectedTelemetryDevice.label || selectedTelemetryDevice.name})
+                </h5>
+                <button 
+                  type="button" 
+                  className="btn-close" 
+                  onClick={() => {
+                    setShowTelemetryChartModal(false);
+                    setSelectedTelemetryAttribute(null);
+                    setSelectedTelemetryDevice(null);
+                    setTelemetryChartData([]);
+                  }}
+                ></button>
+              </div>
+              <div className="modal-body">
+                {/* Time Range Selection */}
+                <div className="mb-3 d-flex justify-content-center align-items-center gap-2">
+                  <label className="mb-0">Zeitbereich:</label>
+                  {['1d', '3d', '7d', '30d', '90d'].map((range) => (
+                    <button
+                      key={range}
+                      className={`btn btn-sm ${selectedChartTimeRange === range ? 'btn-primary' : 'btn-outline-primary'}`}
+                      onClick={() => handleChartTimeRangeChange(range)}
+                      disabled={loadingTelemetryChart}
+                    >
+                      {range === '1d' ? '1 Tag' : 
+                       range === '3d' ? '3 Tage' : 
+                       range === '7d' ? '7 Tage' : 
+                       range === '30d' ? '30 Tage' : 
+                       '90 Tage'}
+                    </button>
+                  ))}
+                </div>
+
+                {loadingTelemetryChart ? (
+                  <div className="d-flex align-items-center justify-content-center" style={{ height: '400px' }}>
+                    <div className="spinner-border me-2" role="status">
+                      <span className="visually-hidden">Laden...</span>
+                    </div>
+                    <span>Lade Verlaufsdaten...</span>
+                  </div>
+                ) : telemetryChartData && telemetryChartData.length > 0 ? (
+                  <div>
+                    <ReactECharts
+                      option={{
+                        title: {
+                          text: `Verlauf - ${getTimeRangeLabel(selectedChartTimeRange)}`,
+                          left: 'center',
+                          textStyle: {
+                            fontSize: 16,
+                            fontWeight: 'bold'
+                          }
+                        },
+                        tooltip: {
+                          trigger: 'axis',
+                          formatter: function(params) {
+                            if (params && params.length > 0) {
+                              const timestamp = params[0].axisValue;
+                              const date = new Date(timestamp).toLocaleString('de-DE', {
+                                day: '2-digit',
+                                month: '2-digit',
+                                year: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              });
+                              let tooltipText = `<div style="font-weight: bold; margin-bottom: 5px;">${date}</div>`;
+                              params.forEach((param) => {
+                                const value = Array.isArray(param.value) ? param.value[1] : param.value;
+                                let displayValue;
+                                let unit = '';
+                                
+                                if (selectedTelemetryAttribute === 'hall_sensor_state') {
+                                  // For hall_sensor_state, show "geschlossen" (1) or "offen" (0)
+                                  displayValue = Number(value) === 1 ? 'geschlossen' : 'offen';
+                                } else {
+                                  displayValue = !isNaN(Number(value)) ? Number(value).toFixed(2) : String(value);
+                                  unit = selectedTelemetryAttribute === 'batteryVoltage' ? 'V' : 
+                                         selectedTelemetryAttribute === 'sensorTemperature' || selectedTelemetryAttribute === 'targetTemperature' ? '°C' :
+                                         selectedTelemetryAttribute === 'PercentValveOpen' ? '%' : '';
+                                }
+                                
+                                tooltipText += `<div style="display: flex; align-items: center; margin: 2px 0;">
+                                  <span style="color:${param.color}; margin-right: 8px;">●</span> 
+                                  <span style="font-weight: 500;">${param.seriesName}:</span> 
+                                  <span style="margin-left: 8px; font-weight: bold;">${displayValue}${unit}</span>
+                                </div>`;
+                              });
+                              return tooltipText;
+                            }
+                            return '';
+                          }
+                        },
+                        xAxis: {
+                          type: 'time',
+                          name: 'Zeit',
+                          nameLocation: 'middle',
+                          nameGap: 30,
+                          axisLabel: {
+                            color: '#666',
+                            formatter: function(value) {
+                              return new Date(value).toLocaleDateString('de-DE', {
+                                day: '2-digit',
+                                month: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              });
+                            }
+                          }
+                        },
+                        yAxis: {
+                          type: 'value',
+                          name: selectedTelemetryAttribute === 'batteryVoltage' ? 'Spannung (V)' : 
+                                selectedTelemetryAttribute === 'sensorTemperature' || selectedTelemetryAttribute === 'targetTemperature' ? 'Temperatur (°C)' :
+                                selectedTelemetryAttribute === 'PercentValveOpen' ? 'Ventilöffnung (%)' :
+                                selectedTelemetryAttribute === 'hall_sensor_state' ? 'Status' : 'Wert',
+                          nameLocation: 'middle',
+                          nameGap: 50,
+                          min: selectedTelemetryAttribute === 'hall_sensor_state' ? 0 : undefined,
+                          max: selectedTelemetryAttribute === 'hall_sensor_state' ? 1 : undefined,
+                          interval: selectedTelemetryAttribute === 'hall_sensor_state' ? 1 : undefined,
+                          axisLabel: selectedTelemetryAttribute === 'hall_sensor_state' ? {
+                            formatter: function(value) {
+                              return value === 1 ? 'geschlossen' : value === 0 ? 'offen' : value;
+                            }
+                          } : undefined
+                        },
+                        series: [{
+                          name: getAttributeDisplayName(selectedTelemetryAttribute),
+                          type: 'line',
+                          data: telemetryChartData.map(point => [point.timestamp, point.value]),
+                          smooth: true,
+                          symbol: 'none',
+                          symbolSize: 0,
+                          connectNulls: true,
+                          lineStyle: {
+                            color: '#1890ff',
+                            width: 2
+                          },
+                          areaStyle: {
+                            color: {
+                              type: 'linear',
+                              x: 0,
+                              y: 0,
+                              x2: 0,
+                              y2: 1,
+                              colorStops: [{
+                                offset: 0, color: 'rgba(24, 144, 255, 0.3)'
+                              }, {
+                                offset: 1, color: 'rgba(24, 144, 255, 0.05)'
+                              }]
+                            }
+                          }
+                        }],
+                        grid: {
+                          left: '10%',
+                          right: '10%',
+                          bottom: '15%',
+                          top: '15%'
+                        },
+                        dataZoom: [{
+                          type: 'inside',
+                          start: 0,
+                          end: 100
+                        }, {
+                          type: 'slider',
+                          start: 0,
+                          end: 100,
+                          height: 20,
+                          bottom: 15
+                        }]
+                      }}
+                      style={{ height: '500px', width: '100%' }}
+                      opts={{ renderer: 'canvas' }}
+                    />
+                  </div>
+                ) : (
+                  <div className="text-center text-muted" style={{ height: '400px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <div>
+                      <FontAwesomeIcon icon={faChartLine} size="2x" className="mb-3" />
+                      <p>Keine Verlaufsdaten verfügbar</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button 
+                  type="button" 
+                  className="btn btn-secondary" 
+                  onClick={() => {
+                    setShowTelemetryChartModal(false);
+                    setSelectedTelemetryAttribute(null);
+                    setSelectedTelemetryDevice(null);
+                    setTelemetryChartData([]);
+                  }}
                 >
                   Schließen
                 </button>

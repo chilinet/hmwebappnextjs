@@ -69,7 +69,7 @@ export default async function handler(req, res) {
         
         // Method 1: Try with aggregation and limit (only for numeric attributes)
         // Skip aggregation for text attributes like signalQuality
-        const isTextAttribute = attribute === 'signalQuality' || attribute === 'raw';
+        const isTextAttribute = attribute === 'signalQuality' || attribute === 'raw' || attribute === 'hall_sensor_state';
         if (!isTextAttribute) {
           try {
             response = await fetch(`${process.env.THINGSBOARD_URL}/api/plugins/telemetry/DEVICE/${deviceId}/values/timeseries?keys=${attributeKeys.join(',')}&startTs=${startTime}&endTs=${endTime}&interval=${aggregationInterval}&agg=AVG&limit=${maxDataPoints}`, {
@@ -139,6 +139,7 @@ export default async function handler(req, res) {
             
             if (response.ok) {
               const latestData = await response.json();
+              console.log(`[hall_sensor_state] Latest data for device ${deviceId}:`, latestData);
               // Convert latest values format to timeseries format
               if (latestData && latestData[attribute]) {
                 historicalData = {
@@ -147,10 +148,15 @@ export default async function handler(req, res) {
                     value: latestData[attribute].value
                   }]
                 };
+                console.log(`[hall_sensor_state] Converted historicalData:`, historicalData);
+              } else {
+                console.log(`[hall_sensor_state] No data found in latestData for attribute ${attribute}:`, latestData);
               }
+            } else {
+              console.log(`[hall_sensor_state] Latest values API failed for device ${deviceId}:`, response.status, response.statusText);
             }
           } catch (error) {
-            // Latest values API failed
+            console.error(`[hall_sensor_state] Latest values API error for device ${deviceId}:`, error);
           }
         }
 
@@ -196,11 +202,13 @@ export default async function handler(req, res) {
         const temperatureData = deviceTelemetry[attribute];
         
         if (temperatureData && temperatureData.length > 0) {
-          // Filter data within the time range
-          const filteredData = temperatureData.filter(point => {
-            const timestamp = point.ts;
-            return timestamp >= startTime && timestamp <= endTime;
-          });
+          // Filter data within the time range (skip filtering for text attributes)
+          const filteredData = isTextAttribute 
+            ? temperatureData 
+            : temperatureData.filter(point => {
+                const timestamp = point.ts;
+                return timestamp >= startTime && timestamp <= endTime;
+              });
 
           if (filteredData.length > 0) {
             // Limit the number of data points to improve performance
