@@ -54,13 +54,45 @@ export default async function handler(req, res) {
         tenantid
       });
 
+      // Prüfe die Rolle des angemeldeten Benutzers
+      pool = await sql.connect(config);
+      const currentUserResult = await pool.request()
+        .input('userid', sql.Int, session.user.userid)
+        .query(`
+          SELECT role
+          FROM hm_users
+          WHERE userid = @userid
+        `);
+
+      if (currentUserResult.recordset.length === 0) {
+        await pool.close();
+        return res.status(404).json({
+          message: 'Current user not found'
+        });
+      }
+
+      const currentUserRole = currentUserResult.recordset[0].role;
+
+      // Prüfe ob die E-Mail-Domain heatmanager.de ist
+      if (email && email.includes('@')) {
+        const emailDomain = email.toLowerCase().split('@')[1];
+        if (emailDomain === 'heatmanager.de' && currentUserRole !== 1) {
+          await pool.close();
+          return res.status(403).json({
+            message: 'Nur Superadmins dürfen Benutzer mit der Domain @heatmanager.de anlegen'
+          });
+        }
+      }
+
       if (!tenantid) {
+        await pool.close();
         return res.status(400).json({
           message: 'tenantid is required'
         });
       }
 
       if (!customerid && role !== 1) {
+        await pool.close();
         return res.status(400).json({
           message: 'customerid is required for non-superadmin users'
         });
@@ -68,8 +100,6 @@ export default async function handler(req, res) {
 
       // Hash das Passwort
       const hashedPassword = await bcrypt.hash(password, 10);
-
-      pool = await sql.connect(config);
 
       // Prüfe ob der Benutzername bereits existiert
       const checkUser = await pool.request()
@@ -203,6 +233,17 @@ export default async function handler(req, res) {
 
       const result = await request.query(query);
       users = result.recordset;
+
+      // Filtere Benutzer mit @heatmanager.de Domain heraus, wenn der aktuelle Benutzer kein Superadmin ist
+      if (currentUser.role !== 1) {
+        users = users.filter(user => {
+          if (user.email && user.email.includes('@')) {
+            const emailDomain = user.email.toLowerCase().split('@')[1];
+            return emailDomain !== 'heatmanager.de';
+          }
+          return true;
+        });
+      }
 
     } catch (error) {
       console.error('Database Error:', error);

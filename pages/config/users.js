@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useSession, signIn } from 'next-auth/react'
 import { useRouter } from 'next/router'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faEdit, faTrash, faPlus, faLink, faCopy } from '@fortawesome/free-solid-svg-icons'
+import { faEdit, faTrash, faPlus, faLink, faCopy, faEnvelope, faLock, faUnlock } from '@fortawesome/free-solid-svg-icons'
 import { v4 as uuidv4 } from 'uuid'
 
 const getStatusBadge = (status) => {
@@ -37,8 +37,11 @@ export default function Users() {
   const [error, setError] = useState(null)
   const [showModal, setShowModal] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState(null);
+  const [selectedUserEmail, setSelectedUserEmail] = useState(null);
   const [activationLink, setActivationLink] = useState('');
   const [userRole, setUserRole] = useState(null);
+  const [sendingEmail, setSendingEmail] = useState(false);
+  const [emailSent, setEmailSent] = useState(false);
 
   // Hole die User-ID aus der Session
   const currentUserId = session?.user?.userid;
@@ -159,6 +162,9 @@ export default function Users() {
       const token = uuidv4();
       const link = `${window.location.origin}/auth/activationlink/${token}`;
       
+      // Finde den Benutzer, um die E-Mail-Adresse zu erhalten
+      const user = users.find(u => u.id === id);
+      
       // Token in der Datenbank speichern
       const response = await fetch(`/api/config/users/${id}/activation-link`, {
         method: 'POST',
@@ -175,10 +181,49 @@ export default function Users() {
 
       setActivationLink(link);
       setSelectedUserId(id);
+      setSelectedUserEmail(user?.email || null);
+      setEmailSent(false);
       setShowModal(true);
     } catch (error) {
       console.error('Fehler:', error);
       alert('Fehler beim Generieren des Aktivierungslinks');
+    }
+  };
+
+  const handleSendEmail = async () => {
+    if (!selectedUserId || !activationLink) {
+      alert('Kein Aktivierungslink vorhanden');
+      return;
+    }
+
+    setSendingEmail(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/config/users/${selectedUserId}/send-activation-email`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.token}`
+        },
+        body: JSON.stringify({ activationLink })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || 'Fehler beim Versenden der E-Mail');
+      }
+
+      setEmailSent(true);
+      setTimeout(() => {
+        setEmailSent(false);
+      }, 5000);
+    } catch (err) {
+      setError(err.message);
+      console.error('Fehler beim Versenden der E-Mail:', err);
+    } finally {
+      setSendingEmail(false);
     }
   };
 
@@ -194,6 +239,45 @@ export default function Users() {
   const handleCloseModal = () => {
     setShowModal(false);
     setSelectedUserId(null);
+    setSelectedUserEmail(null);
+    setActivationLink('');
+    setEmailSent(false);
+    setError(null);
+  };
+
+  const handleToggleLock = async (id, currentStatus) => {
+    const user = users.find(u => u.id === id);
+    const isLocked = parseInt(currentStatus) === 99;
+    const action = isLocked ? 'entsperren' : 'sperren';
+    
+    if (!confirm(`Möchten Sie diesen Benutzer wirklich ${action}?`)) {
+      return;
+    }
+
+    try {
+      const newStatus = isLocked ? 1 : 99; // Entsperren = 1 (Aktiv), Sperren = 99 (Gesperrt)
+      
+      const response = await fetch(`/api/config/users/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.token}`
+        },
+        body: JSON.stringify({
+          status: newStatus
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Fehler beim ${action} des Benutzers`);
+      }
+
+      // Tabelle neu laden
+      fetchUsers();
+    } catch (error) {
+      setError(`Fehler beim ${action} des Benutzers: ${error.message}`);
+      console.error(error);
+    }
   };
 
   const isSuperAdmin = userRole === 1;
@@ -259,13 +343,36 @@ export default function Users() {
                       </button>
                       
                       {user.id !== currentUserId && (
-                        <button
-                          className="btn btn-sm btn-outline-danger me-2"
-                          onClick={() => handleDelete(user.id)}
-                          title="Löschen"
-                        >
-                          <FontAwesomeIcon icon={faTrash} />
-                        </button>
+                        <>
+                          <button
+                            className="btn btn-sm btn-outline-danger me-2"
+                            onClick={() => handleDelete(user.id)}
+                            title="Löschen"
+                          >
+                            <FontAwesomeIcon icon={faTrash} />
+                          </button>
+                          
+                          {/* Sperren/Entsperren Button - nur für aktive oder gesperrte Benutzer */}
+                          {parseInt(user.status) === 1 && (
+                            <button
+                              className="btn btn-sm btn-outline-warning me-2"
+                              onClick={() => handleToggleLock(user.id, user.status)}
+                              title="Benutzer sperren"
+                            >
+                              <FontAwesomeIcon icon={faLock} />
+                            </button>
+                          )}
+                          
+                          {parseInt(user.status) === 99 && (
+                            <button
+                              className="btn btn-sm btn-outline-success me-2"
+                              onClick={() => handleToggleLock(user.id, user.status)}
+                              title="Benutzer entsperren"
+                            >
+                              <FontAwesomeIcon icon={faUnlock} />
+                            </button>
+                          )}
+                        </>
                       )}
 
                       {parseInt(user.status) === 0 && (
@@ -302,7 +409,25 @@ export default function Users() {
                   ></button>
                 </div>
                 <div className="modal-body">
-                  <div className="input-group">
+                  {emailSent && (
+                    <div className="alert alert-success mb-3">
+                      <strong>E-Mail gesendet!</strong> Der Aktivierungslink wurde an {selectedUserEmail} versendet.
+                    </div>
+                  )}
+                  
+                  {error && (
+                    <div className="alert alert-danger mb-3">
+                      <strong>Fehler:</strong> {error}
+                    </div>
+                  )}
+
+                  {selectedUserEmail && (
+                    <div className="mb-3">
+                      <p className="text-white">E-Mail-Adresse: <strong>{selectedUserEmail}</strong></p>
+                    </div>
+                  )}
+
+                  <div className="input-group mb-3">
                     <input
                       type="text"
                       className="form-control bg-dark text-white"
@@ -318,6 +443,29 @@ export default function Users() {
                       <FontAwesomeIcon icon={faCopy} />
                     </button>
                   </div>
+
+                  {selectedUserEmail && (
+                    <div className="d-grid">
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={handleSendEmail}
+                        disabled={sendingEmail || emailSent}
+                      >
+                        {sendingEmail ? (
+                          <>
+                            <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                            Wird gesendet...
+                          </>
+                        ) : (
+                          <>
+                            <FontAwesomeIcon icon={faEnvelope} className="me-2" />
+                            Per E-Mail versenden
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
                 </div>
                 <div className="modal-footer border-secondary">
                   <button 

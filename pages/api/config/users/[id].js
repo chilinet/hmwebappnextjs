@@ -36,28 +36,34 @@ export default async function handler(req, res) {
   console.log(req.method);
   console.log('************************************************');
   
+  let pool;
   try {
-    await sql.connect(config)
+    pool = await sql.connect(config)
     console.log('sql.connect');
 
     switch (req.method) {
       case 'GET':
         // Einzelnen Benutzer laden
         console.log('GET');
-        const user = await sql.query`
-          SELECT 
-            userid as id,
-            username,
-            email,
-            firstname as firstName,
-            lastname as lastName,
-            role,
-            customerid,
-            createdttm as createdAt,
-            updatedttm as updatedAt
-          FROM hm_users
-          WHERE userid = ${id}
-        `
+        const userResult = await pool.request()
+          .input('id', sql.Int, id)
+          .query(`
+            SELECT 
+              userid as id,
+              username,
+              email,
+              firstname as firstName,
+              lastname as lastName,
+              role,
+              customerid,
+              status,
+              createdttm as createdAt,
+              updatedttm as updatedAt
+            FROM hm_users
+            WHERE userid = @id
+          `)
+        
+        const user = userResult
 
         if (user.recordset.length === 0) {
           return res.status(404).json({ 
@@ -107,20 +113,71 @@ export default async function handler(req, res) {
         })
 
       case 'PUT':
-        const { email, firstName, lastName, role, customerid } = req.body
-        console.log('Updating user:', { id, email, firstName, lastName, role, customerid })
+        const { email, firstName, lastName, role, customerid, status } = req.body
+        console.log('Updating user:', { id, email, firstName, lastName, role, customerid, status })
 
-        await sql.query`
+        // Baue die UPDATE-Query dynamisch auf, je nachdem welche Felder übergeben wurden
+        let updateFields = []
+        let updateValues = {}
+
+        if (email !== undefined) {
+          updateFields.push('email = @email')
+          updateValues.email = email
+        }
+        if (firstName !== undefined) {
+          updateFields.push('firstname = @firstName')
+          updateValues.firstName = firstName
+        }
+        if (lastName !== undefined) {
+          updateFields.push('lastname = @lastName')
+          updateValues.lastName = lastName
+        }
+        if (role !== undefined) {
+          updateFields.push('role = @role')
+          updateValues.role = role
+        }
+        if (customerid !== undefined) {
+          updateFields.push('customerid = @customerid')
+          updateValues.customerid = customerid
+        }
+        if (status !== undefined) {
+          updateFields.push('status = @status')
+          updateValues.status = status
+        }
+
+        // Füge updatedttm immer hinzu
+        updateFields.push('updatedttm = GETDATE()')
+
+        if (updateFields.length === 1) {
+          // Nur updatedttm wurde aktualisiert, keine anderen Felder
+          return res.status(400).json({
+            success: false,
+            message: 'Keine Felder zum Aktualisieren angegeben'
+          })
+        }
+
+        // Erstelle die SQL-Query mit parametrisierten Werten
+        const updateQuery = `
           UPDATE hm_users
-          SET 
-            email = ${email},
-            firstname = ${firstName},
-            lastname = ${lastName},
-            role = ${role},
-            customerid = ${customerid},
-            updatedttm = GETDATE()
-          WHERE userid = ${id}
+          SET ${updateFields.join(', ')}
+          WHERE userid = @id
         `
+
+        const request = pool.request()
+        request.input('id', sql.Int, id)
+        
+        // Füge alle Werte hinzu
+        Object.keys(updateValues).forEach(key => {
+          if (key === 'customerid' && updateValues[key]) {
+            request.input(key, sql.UniqueIdentifier, updateValues[key])
+          } else if (key === 'role' || key === 'status') {
+            request.input(key, sql.Int, updateValues[key])
+          } else {
+            request.input(key, sql.NVarChar, updateValues[key])
+          }
+        })
+
+        await request.query(updateQuery)
 
         return res.status(200).json({
           success: true,
@@ -130,10 +187,12 @@ export default async function handler(req, res) {
       case 'DELETE':
         // Benutzer löschen
         console.log('DELETE');
-        await sql.query`
-          DELETE FROM hm_users
-          WHERE userid = ${id}
-        `
+        await pool.request()
+          .input('id', sql.Int, id)
+          .query(`
+            DELETE FROM hm_users
+            WHERE userid = @id
+          `)
 
         return res.status(200).json({
           success: true,
@@ -157,6 +216,8 @@ export default async function handler(req, res) {
       }
     })
   } finally {
-    await sql.close()
+    if (pool) {
+      await pool.close()
+    }
   }
 } 

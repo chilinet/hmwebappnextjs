@@ -4,6 +4,21 @@ const { parse } = require("url");
 const next = require("next");
 const { startScheduler } = require('./lib/scheduler');
 
+// Validate environment variables in production
+if (process.env.NODE_ENV === 'production') {
+  const requiredVars = ['NEXTAUTH_SECRET', 'NEXTAUTH_URL', 'THINGSBOARD_URL', 'MSSQL_SERVER', 'MSSQL_USER', 'MSSQL_PASSWORD', 'MSSQL_DATABASE'];
+  const missing = requiredVars.filter(varName => !process.env[varName]);
+  
+  if (missing.length > 0) {
+    console.error('❌ ERROR: Missing required environment variables:');
+    missing.forEach(varName => console.error(`   - ${varName}`));
+    console.error('\nPlease set these variables before starting the container.');
+    process.exit(1);
+  }
+  
+  console.log('✅ Environment variables validated');
+}
+
 const PORT = process.env.PORT || 3000;
 const dev = process.env.NODE_ENV !== 'production';
 const app = next({ dev });

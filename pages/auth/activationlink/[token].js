@@ -72,11 +72,11 @@ export default function ActivateAccount() {
   };
 
   return (
-    <div className="min-vh-100 d-flex align-items-center justify-content-center bg-dark">
+    <div className="min-vh-100 d-flex align-items-center justify-content-center bg-light">
       <div className="container">
         <div className="row justify-content-center">
           <div className="col-md-6 col-lg-4">
-            <div className="card bg-dark text-white border-secondary">
+            <div className="card bg-white text-dark border">
               <div className="card-body">
                 <div className="text-center mb-4">
                   <Image
@@ -86,7 +86,7 @@ export default function ActivateAccount() {
                     height={40}
                   />
                 </div>
-                <h4 className="text-center mb-4">Account aktivieren</h4>
+                <h4 className="text-center mb-4 text-dark">Account aktivieren</h4>
                 {error && (
                   <div className="alert alert-danger" role="alert">
                     {error}
@@ -94,11 +94,11 @@ export default function ActivateAccount() {
                 )}
                 <form onSubmit={handleSubmit}>
                   <div className="mb-3">
-                    <label className="form-label">Neues Passwort</label>
+                    <label className="form-label text-dark">Neues Passwort</label>
                     <div className="input-group">
                       <input
                         type={showPassword ? "text" : "password"}
-                        className="form-control bg-dark text-white"
+                        className="form-control bg-white text-dark"
                         name="password"
                         value={formData.password}
                         onChange={handleChange}
@@ -114,11 +114,11 @@ export default function ActivateAccount() {
                     </div>
                   </div>
                   <div className="mb-4">
-                    <label className="form-label">Passwort bestätigen</label>
+                    <label className="form-label text-dark">Passwort bestätigen</label>
                     <div className="input-group">
                       <input
                         type={showConfirmPassword ? "text" : "password"}
-                        className="form-control bg-dark text-white"
+                        className="form-control bg-white text-dark"
                         name="confirmPassword"
                         value={formData.confirmPassword}
                         onChange={handleChange}
@@ -149,13 +149,13 @@ export default function ActivateAccount() {
 
       <style jsx>{`
         .form-control {
-          border-color: #6c757d;
+          border-color: #ced4da;
         }
         .form-control:focus {
-          background-color: #343a40;
-          border-color: #6c757d;
-          color: white;
-          box-shadow: none;
+          background-color: #fff;
+          border-color: #80bdff;
+          color: #000;
+          box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
         }
         .btn-outline-secondary {
           color: #6c757d;
@@ -163,7 +163,10 @@ export default function ActivateAccount() {
         }
         .btn-outline-secondary:hover {
           background-color: #6c757d;
-          color: white;
+          color: #fff;
+        }
+        .card {
+          box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
         }
       `}</style>
     </div>

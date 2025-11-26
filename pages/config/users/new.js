@@ -134,6 +134,14 @@ export default function NewUser() {
     setSaving(true);
 
     try {
+      // Prüfe ob die E-Mail-Domain heatmanager.de ist
+      if (user.email && user.email.includes('@')) {
+        const emailDomain = user.email.toLowerCase().split('@')[1];
+        if (emailDomain === 'heatmanager.de' && userRole !== 1) {
+          throw new Error('Nur Superadmins dürfen Benutzer mit der Domain @heatmanager.de anlegen');
+        }
+      }
+
       // Konvertiere beide Werte zu Nummern für den Vergleich
       const currentUserRole = parseInt(userRole, 10);
       const selectedRole = parseInt(user.role, 10);
@@ -200,7 +208,7 @@ export default function NewUser() {
               >
                 <FontAwesomeIcon icon={faArrowLeft} />
               </button>
-              <h2 className="mb-0">Neuer Benutzer</h2>
+              <h2 className="mb-0 text-white">Neuer Benutzer</h2>
             </div>
           </div>
 
@@ -213,7 +221,7 @@ export default function NewUser() {
           <form onSubmit={handleSubmit}>
             <div className="row">
               <div className="col-md-6 mb-3">
-                <label htmlFor="username" className="form-label">Benutzername</label>
+                <label htmlFor="username" className="form-label text-white">Benutzername</label>
                 <input
                   type="text"
                   className="form-control bg-white text-dark"
@@ -226,7 +234,7 @@ export default function NewUser() {
               </div>
 
               <div className="col-md-6 mb-3">
-                <label htmlFor="email" className="form-label">Email</label>
+                <label htmlFor="email" className="form-label text-white">Email</label>
                 <input
                   type="email"
                   className="form-control bg-white text-dark"
@@ -239,7 +247,7 @@ export default function NewUser() {
               </div>
 
               <div className="col-md-6 mb-3">
-                <label htmlFor="firstName" className="form-label">Vorname</label>
+                <label htmlFor="firstName" className="form-label text-white">Vorname</label>
                 <input
                   type="text"
                   className="form-control bg-white text-dark"
@@ -251,7 +259,7 @@ export default function NewUser() {
               </div>
 
               <div className="col-md-6 mb-3">
-                <label htmlFor="lastName" className="form-label">Nachname</label>
+                <label htmlFor="lastName" className="form-label text-white">Nachname</label>
                 <input
                   type="text"
                   className="form-control bg-white text-dark"
@@ -263,7 +271,7 @@ export default function NewUser() {
               </div>
 
               <div className="col-md-6 mb-3">
-                <label htmlFor="role" className="form-label">Rolle</label>
+                <label htmlFor="role" className="form-label text-white">Rolle</label>
                 <select
                   className="form-select bg-white text-dark"
                   id="role"
@@ -285,7 +293,7 @@ export default function NewUser() {
               </div>
 
               <div className="col-md-6 mb-3">
-                <label htmlFor="password" className="form-label">Passwort</label>
+                <label htmlFor="password" className="form-label text-white">Passwort</label>
                 <input
                   type="password"
                   className="form-control bg-white text-dark"
@@ -299,7 +307,7 @@ export default function NewUser() {
 
               {isSuperAdmin && (
                 <div className="col-md-6 mb-3">
-                  <label htmlFor="customerid" className="form-label">Kunde</label>
+                  <label htmlFor="customerid" className="form-label text-white">Kunde</label>
                   <select
                     className="form-select bg-white text-dark"
                     id="customerid"

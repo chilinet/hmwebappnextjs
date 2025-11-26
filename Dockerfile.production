@@ -1,0 +1,67 @@
+# Production Dockerfile für HeatManager Webapp
+# Verwendet den Next.js standalone output für optimale Performance
+
+# Multi-stage build für optimale Image-Größe
+FROM node:20-alpine AS base
+
+# Stage 1: Dependencies installieren
+FROM base AS deps
+RUN apk add --no-cache libc6-compat curl python3 make g++
+WORKDIR /app
+
+# Package-Dateien kopieren und Dependencies installieren
+COPY package.json package-lock.json* ./
+RUN npm ci --no-audit --no-fund --prefer-offline
+
+# Stage 2: Build durchführen
+FROM base AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+
+# Telemetry deaktivieren
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Build ausführen (erstellt .next/standalone)
+RUN npm run build
+
+# Stage 3: Production Image
+FROM base AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Non-root User erstellen
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+
+# .next Verzeichnis erstellen und Berechtigungen setzen
+RUN mkdir -p .next
+RUN chown nextjs:nodejs .next
+
+# Standalone output kopieren (enthält server.js und alle benötigten Dependencies)
+# Der standalone output enthält bereits eine server.js, aber NICHT das public Verzeichnis
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+# Public Assets kopieren (muss im gleichen Verzeichnis wie server.js liegen)
+# WICHTIG: public muss NACH standalone kopiert werden und im Root-Verzeichnis liegen
+# da server.js auch im Root liegt (nicht in einem Unterverzeichnis)
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+
+# Stelle sicher, dass public Verzeichnis die richtigen Berechtigungen hat
+# Dies muss VOR dem USER-Wechsel passieren, da chmod root-Rechte benötigt
+RUN chmod -R 755 ./public || true
+
+# Als non-root User ausführen
+USER nextjs
+
+EXPOSE 3000
+
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+# Server starten (server.js wird vom standalone output bereitgestellt)
+CMD ["node", "server.js"]
+

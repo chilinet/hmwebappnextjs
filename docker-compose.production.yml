@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  webapp:
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+    image: heatmanager-webapp:latest
+    container_name: heatmanager-webapp
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+    env_file:
+      - .env.production
+    # Wichtig: Stellen Sie sicher, dass .env.production alle benötigten Variablen enthält:
+    # - NEXTAUTH_SECRET (ERFORDERLICH!)
+    # - NEXTAUTH_URL
+    # - THINGSBOARD_URL
+    # - MSSQL_SERVER
+    # - MSSQL_USER
+    # - MSSQL_PASSWORD
+    # - MSSQL_DATABASE
+    # - REPORTING_URL (optional)
+    # - REPORTING_PRESHARED_KEY (optional)
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - heatmanager-network
+
+networks:
+  heatmanager-network:
+    driver: bridge
+

@@ -13,6 +13,7 @@ export default function SignIn() {
     const [isLoading, setIsLoading] = useState(false)
     const [showForgotPassword, setShowForgotPassword] = useState(false)
     const [email, setEmail] = useState('')
+    const [forgotPasswordUsername, setForgotPasswordUsername] = useState('')
     const [forgotPasswordLoading, setForgotPasswordLoading] = useState(false)
     const [forgotPasswordSuccess, setForgotPasswordSuccess] = useState(false)
     const router = useRouter()
@@ -54,7 +55,7 @@ export default function SignIn() {
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ email }),
+                body: JSON.stringify({ email, username: forgotPasswordUsername }),
             })
 
             const data = await response.json()
@@ -68,6 +69,7 @@ export default function SignIn() {
                 setShowForgotPassword(false)
                 setForgotPasswordSuccess(false)
                 setEmail('')
+                setForgotPasswordUsername('')
             }, 5000)
 
         } catch (err) {
@@ -205,6 +207,7 @@ export default function SignIn() {
                                     onClick={() => {
                                         setShowForgotPassword(false)
                                         setEmail('')
+                                        setForgotPasswordUsername('')
                                         setError(null)
                                         setForgotPasswordSuccess(false)
                                     }}
@@ -214,11 +217,11 @@ export default function SignIn() {
                                 {forgotPasswordSuccess ? (
                                     <div className="alert alert-success">
                                         <strong>E-Mail gesendet!</strong><br />
-                                        Falls die E-Mail-Adresse in unserem System registriert ist, erhalten Sie eine E-Mail mit einem Link zum Zurücksetzen Ihres Passworts.
+                                        Falls die E-Mail-Adresse und der Benutzername in unserem System registriert sind, erhalten Sie eine E-Mail mit einem Link zum Zurücksetzen Ihres Passworts.
                                     </div>
                                 ) : (
                                     <>
-                                        <p>Geben Sie Ihre E-Mail-Adresse ein. Wir senden Ihnen einen Link zum Zurücksetzen Ihres Passworts.</p>
+                                        <p>Geben Sie Ihren Benutzernamen und Ihre E-Mail-Adresse ein. Wir senden Ihnen einen Link zum Zurücksetzen Ihres Passworts.</p>
                                         
                                         {error && (
                                             <div className="alert alert-danger">
@@ -227,6 +230,18 @@ export default function SignIn() {
                                         )}
                                         
                                         <form onSubmit={handleForgotPassword}>
+                                            <div className="mb-3">
+                                                <label className="form-label">Benutzername</label>
+                                                <input
+                                                    type="text"
+                                                    className="form-control"
+                                                    value={forgotPasswordUsername}
+                                                    onChange={(e) => setForgotPasswordUsername(e.target.value)}
+                                                    required
+                                                    disabled={forgotPasswordLoading}
+                                                    placeholder="Benutzername eingeben"
+                                                />
+                                            </div>
                                             <div className="mb-3">
                                                 <label className="form-label">E-Mail-Adresse</label>
                                                 <input
@@ -261,6 +276,7 @@ export default function SignIn() {
                                                     onClick={() => {
                                                         setShowForgotPassword(false)
                                                         setEmail('')
+                                                        setForgotPasswordUsername('')
                                                         setError(null)
                                                         setForgotPasswordSuccess(false)
                                                     }}

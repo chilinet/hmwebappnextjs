@@ -15,8 +15,14 @@ const sqlConfig = {
   }
 }
 
+// Validate required environment variables
+if (process.env.NODE_ENV === 'production' && !process.env.NEXTAUTH_SECRET) {
+  console.error('❌ ERROR: NEXTAUTH_SECRET is required in production!');
+  console.error('Please set NEXTAUTH_SECRET environment variable.');
+}
+
 export const authOptions = {
-  secret: process.env.NEXTAUTH_SECRET,
+  secret: process.env.NEXTAUTH_SECRET || (process.env.NODE_ENV === 'development' ? 'development-secret-change-in-production' : undefined),
   // Fix URL configuration for production
   url: process.env.NEXTAUTH_URL || (process.env.NODE_ENV === 'production' ? 'https://webapptest.heatmanager.cloud' : 'http://localhost:3000'),
   // Add trustHost for production
@@ -84,6 +90,7 @@ export const authOptions = {
                 u.password,
                 u.customerid,
                 u.role,
+                u.status,
                 cs.tb_username,
                 cs.tb_password,
                 cs.tb_url
@@ -99,6 +106,19 @@ export const authOptions = {
           }
 
           const user = result.recordset[0]
+
+          // Prüfe ob der Benutzer aktiv ist (Status 0 = inaktiv, Status 1 = aktiv, Status 99 = gesperrt)
+          if (user.status === 0) {
+            // Benutzer ist inaktiv - Anmeldung verweigern
+            console.log(`Login attempt blocked: User ${credentials.username} is inactive (status: 0)`);
+            return null
+          }
+
+          if (user.status === 99) {
+            // Benutzer ist gesperrt - Anmeldung verweigern
+            console.log(`Login attempt blocked: User ${credentials.username} is locked (status: 99)`);
+            return null
+          }
 
           // Passwort überprüfen
           const passwordMatch = await bcrypt.compare(credentials.password, user.password)

@@ -12,7 +12,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { email } = req.body;
+    const { email, username } = req.body;
 
     if (!email) {
       return res.status(400).json({
@@ -22,22 +22,31 @@ export default async function handler(req, res) {
       });
     }
 
+    if (!username) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing username',
+        message: 'Benutzername ist erforderlich'
+      });
+    }
+
     const pool = await getConnection();
 
-    // Prüfe, ob der Benutzer existiert
+    // Prüfe, ob der Benutzer existiert und sowohl E-Mail als auch Benutzername übereinstimmen
     const userResult = await pool.request()
       .input('email', sql.VarChar, email)
+      .input('username', sql.VarChar, username)
       .query(`
         SELECT userid, username, email, customerid
         FROM hm_users 
-        WHERE email = @email
+        WHERE email = @email AND username = @username
       `);
 
     if (userResult.recordset.length === 0) {
-      // Aus Sicherheitsgründen geben wir keine Information darüber, ob die E-Mail existiert
+      // Aus Sicherheitsgründen geben wir keine Information darüber, ob die E-Mail/Benutzername-Kombination existiert
       return res.status(200).json({
         success: true,
-        message: 'Falls die E-Mail-Adresse in unserem System registriert ist, erhalten Sie eine E-Mail mit einem Link zum Zurücksetzen Ihres Passworts.'
+        message: 'Falls die E-Mail-Adresse und der Benutzername in unserem System registriert sind, erhalten Sie eine E-Mail mit einem Link zum Zurücksetzen Ihres Passworts.'
       });
     }
 
@@ -117,7 +126,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json({
       success: true,
-      message: 'Falls die E-Mail-Adresse in unserem System registriert ist, erhalten Sie eine E-Mail mit einem Link zum Zurücksetzen Ihres Passworts.'
+      message: 'Falls die E-Mail-Adresse und der Benutzername in unserem System registriert sind, erhalten Sie eine E-Mail mit einem Link zum Zurücksetzen Ihres Passworts.'
     });
 
   } catch (error) {
