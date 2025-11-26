@@ -117,17 +117,52 @@ export default function BatteryStatus() {
         try {
           setLoading(true);
           
-          // Fetch battery status data
+          // Fetch all battery status data with pagination
           const reportingUrl = process.env.REPORTING_URL || 'https://webapptest.heatmanager.cloud';
-          const batteryResponse = await fetch(`${reportingUrl}/api/reporting/battery-status?key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD&customer_id=${session.user.customerid}`);
+          const allBatteryData = [];
+          let offset = 0;
+          const limit = 1000; // Max limit allowed by API
+          let hasMore = true;
           
-          if (!batteryResponse.ok) {
-            throw new Error(`HTTP error! status: ${batteryResponse.status}`);
+          while (hasMore) {
+            const batteryResponse = await fetch(
+              `${reportingUrl}/api/reporting/battery-status?key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD&customer_id=${session.user.customerid}&limit=${limit}&offset=${offset}`
+            );
+            
+            if (!batteryResponse.ok) {
+              throw new Error(`HTTP error! status: ${batteryResponse.status}`);
+            }
+            
+            const batteryData = await batteryResponse.json();
+            console.log(`Battery status data received (offset ${offset}):`, batteryData);
+            
+            if (batteryData.data && batteryData.data.length > 0) {
+              allBatteryData.push(...batteryData.data);
+              
+              // Check if there are more records
+              hasMore = batteryData.metadata?.has_more || batteryData.data.length === limit;
+              offset += batteryData.data.length;
+            } else {
+              hasMore = false;
+            }
           }
           
-          const batteryData = await batteryResponse.json();
-          console.log('Battery status data received:', batteryData);
-          setBatteryData(batteryData);
+          // Combine all data into single response format
+          const combinedBatteryData = {
+            success: true,
+            metadata: {
+              total_records: allBatteryData.length,
+              limit: limit,
+              offset: 0,
+              has_more: false,
+              query_time: new Date().toISOString(),
+              view_name: 'hmreporting.v_device_battery_latest'
+            },
+            data: allBatteryData
+          };
+          
+          console.log(`Total battery status records loaded: ${allBatteryData.length}`);
+          setBatteryData(combinedBatteryData);
 
           // Fetch customer tree data
           const treeResponse = await fetch(`/api/config/customers/${session.user.customerid}/tree`);

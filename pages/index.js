@@ -420,16 +420,54 @@ export default function Home() {
             console.error('Error fetching weather history:', error);
           }
 
-          // Load battery status data
+          // Load battery status data with pagination to get all devices
           const reportingUrl = process.env.REPORTING_URL || 'https://webapptest.heatmanager.cloud';
-          const batteryResponse = await fetch(`${reportingUrl}/api/reporting/battery-status?key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD&customer_id=${session.user.customerid}`);
+          const allBatteryData = [];
+          let offset = 0;
+          const limit = 1000; // Max limit allowed by API
+          let hasMore = true;
+          
+          while (hasMore) {
+            const batteryResponse = await fetch(
+              `${reportingUrl}/api/reporting/battery-status?key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD&customer_id=${session.user.customerid}&limit=${limit}&offset=${offset}`
+            );
 
-          if (batteryResponse.ok) {
-            const batteryData = await batteryResponse.json();
-            console.log('Battery status data received:', batteryData);
-            setBatteryData(batteryData);
-          } else {
-            console.warn('Failed to fetch battery status data, using fallback');
+            if (batteryResponse.ok) {
+              const batteryData = await batteryResponse.json();
+              console.log(`Battery status data received (offset ${offset}):`, batteryData);
+              
+              if (batteryData.data && batteryData.data.length > 0) {
+                allBatteryData.push(...batteryData.data);
+                
+                // Check if there are more records
+                hasMore = batteryData.metadata?.has_more || batteryData.data.length === limit;
+                offset += batteryData.data.length;
+              } else {
+                hasMore = false;
+              }
+            } else {
+              console.warn('Failed to fetch battery status data, using fallback');
+              hasMore = false;
+            }
+          }
+          
+          // Combine all data into single response format
+          if (allBatteryData.length > 0) {
+            const combinedBatteryData = {
+              success: true,
+              metadata: {
+                total_records: allBatteryData.length,
+                limit: limit,
+                offset: 0,
+                has_more: false,
+                query_time: new Date().toISOString(),
+                view_name: 'hmreporting.v_device_battery_latest'
+              },
+              data: allBatteryData
+            };
+            
+            console.log(`Total battery status records loaded: ${allBatteryData.length}`);
+            setBatteryData(combinedBatteryData);
           }
 
           // Fetch window status data

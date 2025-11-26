@@ -1,5 +1,6 @@
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../../auth/[...nextauth]';
+import { fetchWithTokenRefresh } from '../../../../../../lib/utils/fetchWithTokenRefresh';
 
 export default async function handler(req, res) {
   const session = await getServerSession(req, res, authOptions);
@@ -18,13 +19,18 @@ export default async function handler(req, res) {
     case 'GET':
       try {
         // Get customer attributes containing the plans
-        const response = await fetch(`${TB_API_URL}/api/plugins/telemetry/CUSTOMER/${customerId}/values/attributes`, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Authorization': `Bearer ${session.tbToken}`
-          }
-        });
+        const response = await fetchWithTokenRefresh(
+          `${TB_API_URL}/api/plugins/telemetry/CUSTOMER/${customerId}/values/attributes`,
+          {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json',
+            }
+          },
+          session,
+          req,
+          res
+        );
 
         if (!response.ok) {
           throw new Error(`Error fetching customer attributes: ${response.statusText}`);
@@ -74,13 +80,18 @@ export default async function handler(req, res) {
     case 'PUT':
       try {
         // Get current plans
-        const getResponse = await fetch(`${TB_API_URL}/api/plugins/telemetry/CUSTOMER/${customerId}/values/attributes`, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Authorization': `Bearer ${session.tbToken}`
-          }
-        });
+        const getResponse = await fetchWithTokenRefresh(
+          `${TB_API_URL}/api/plugins/telemetry/CUSTOMER/${customerId}/values/attributes`,
+          {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json',
+            }
+          },
+          session,
+          req,
+          res
+        );
 
         if (!getResponse.ok) {
           throw new Error(`Error fetching customer attributes: ${getResponse.statusText}`);
@@ -120,18 +131,20 @@ export default async function handler(req, res) {
         }
 
         // Save updated plans
-        const updateResponse = await fetch(
+        const updateResponse = await fetchWithTokenRefresh(
           `${TB_API_URL}/api/plugins/telemetry/CUSTOMER/${customerId}/attributes/SERVER_SCOPE`,
           {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'X-Authorization': `Bearer ${session.tbToken}`
             },
             body: JSON.stringify({
               plans: JSON.stringify(newPlans)
             })
-          }
+          },
+          session,
+          req,
+          res
         );
 
         if (!updateResponse.ok) {

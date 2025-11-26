@@ -132,6 +132,14 @@ export default async function handler(req, res) {
       const limit = parseInt(req.query.limit) || 100;
       const offset = parseInt(req.query.offset) || 0;
       
+      // Zuerst die Gesamtanzahl ermitteln (vor ORDER BY, LIMIT, OFFSET)
+      let countQuery = 'SELECT COUNT(*) as total FROM hmreporting.v_device_battery_latest';
+      if (conditions.length > 0) {
+        countQuery += ' WHERE ' + conditions.join(' AND ');
+      }
+      const countResult = await client.query(countQuery, queryParams.slice(0, conditions.length));
+      const totalCount = parseInt(countResult.rows[0].total) || 0;
+      
       query += ` LIMIT $${paramIndex}`;
       queryParams.push(limit);
       paramIndex++;
@@ -150,9 +158,10 @@ export default async function handler(req, res) {
       // Metadaten für die Antwort
       const metadata = {
         total_records: result.rows.length,
+        total_count: totalCount,
         limit: limit,
         offset: offset,
-        has_more: result.rows.length === limit,
+        has_more: (offset + result.rows.length) < totalCount,
         query_time: new Date().toISOString(),
         view_name: 'hmreporting.v_device_battery_latest'
       };

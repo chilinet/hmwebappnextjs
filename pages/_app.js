@@ -9,6 +9,7 @@ import '../lib/fontawesome'  // FontAwesome Konfiguration importieren
 import { useState } from 'react'
 import { ThingsboardProvider } from '@/contexts/ThingsboardContext'
 import { useRouter } from 'next/router'
+import AutoLogout from '../components/AutoLogout'
 
 // Initialize ThingsBoard token refresh service (server-side only)
 if (typeof window === 'undefined') {
@@ -25,6 +26,7 @@ export default function App({
   return (
     <SessionProvider session={session}>
       <ThingsboardProvider>
+        <AutoLogout />
         {showLayout ? (
           <Layout>
             <Component {...pageProps} />

@@ -1,5 +1,6 @@
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../../auth/[...nextauth]';
+import { fetchWithTokenRefresh } from '../../../../../../lib/utils/fetchWithTokenRefresh';
 
 export default async function handler(req, res) {
   const session = await getServerSession(req, res, authOptions);
@@ -25,14 +26,16 @@ export default async function handler(req, res) {
 
   try {
     // Get all assets for the customer
-    const assetsResponse = await fetch(
+    const assetsResponse = await fetchWithTokenRefresh(
       `${TB_API_URL}/api/customer/${customerId}/assets?pageSize=10000&page=0`,
       {
         headers: {
           'accept': 'application/json',
-          'X-Authorization': `Bearer ${session.tbToken}`
         }
-      }
+      },
+      session,
+      req,
+      res
     );
 
     if (!assetsResponse.ok) {
@@ -62,13 +65,14 @@ export default async function handler(req, res) {
       const updatePromises = batch.map(async (assetId) => {
         try {
           // Get current attributes
-          const attrResponse = await fetch(
+          const attrResponse = await fetchWithTokenRefresh(
             `${TB_API_URL}/api/plugins/telemetry/ASSET/${assetId}/values/attributes`,
             {
-              headers: {
-                'X-Authorization': `Bearer ${session.tbToken}`
-              }
-            }
+              headers: {},
+            },
+            session,
+            req,
+            res
           );
 
           if (!attrResponse.ok) {
@@ -100,18 +104,20 @@ export default async function handler(req, res) {
             );
 
             // Update the asset attribute
-            const updateResponse = await fetch(
+            const updateResponse = await fetchWithTokenRefresh(
               `${TB_API_URL}/api/plugins/telemetry/ASSET/${assetId}/attributes/SERVER_SCOPE`,
               {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
-                  'X-Authorization': `Bearer ${session.tbToken}`
                 },
                 body: JSON.stringify({
                   schedulerPlan: JSON.stringify(updatedPlanArray)
                 })
-              }
+              },
+              session,
+              req,
+              res
             );
 
             if (!updateResponse.ok) {
