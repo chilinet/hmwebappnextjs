@@ -137,6 +137,12 @@ export default function HeatingControl() {
   const [originalMinTemp, setOriginalMinTemp] = useState(null);
   const [originalMaxTemp, setOriginalMaxTemp] = useState(null);
   const [originalOverruleMinutes, setOriginalOverruleMinutes] = useState(null);
+  const [originalWindowSensor, setOriginalWindowSensor] = useState(null);
+  const [pendingMinTemp, setPendingMinTemp] = useState(null);
+  const [pendingMaxTemp, setPendingMaxTemp] = useState(null);
+  const [pendingOverruleMinutes, setPendingOverruleMinutes] = useState(null);
+  const [pendingWindowSensor, setPendingWindowSensor] = useState(null);
+  const [savingSettings, setSavingSettings] = useState(false);
   
   // Telemetry data for subordinate nodes
   const [subordinateTelemetry, setSubordinateTelemetry] = useState({});
@@ -301,6 +307,136 @@ export default function HeatingControl() {
     if (originalFixValue !== null) {
       setTempSliderValue(originalFixValue);
     }
+  };
+
+  // Function to collect all subordinate node IDs recursively
+  const getAllSubordinateNodeIds = useCallback((nodeId, nodes = treeData) => {
+    const findNode = (nodeList, targetId) => {
+      for (const node of nodeList) {
+        if (node.id === targetId) {
+          return node;
+        }
+        if (node.children && Array.isArray(node.children)) {
+          const found = findNode(node.children, targetId);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+
+    const collectAllChildrenIds = (node) => {
+      let childIds = [];
+      if (node.children && Array.isArray(node.children)) {
+        for (const child of node.children) {
+          childIds.push(child.id);
+          childIds = childIds.concat(collectAllChildrenIds(child));
+        }
+      }
+      return childIds;
+    };
+
+    const targetNode = findNode(nodes, nodeId);
+    if (!targetNode) return [];
+
+    return collectAllChildrenIds(targetNode);
+  }, [treeData]);
+
+  const saveSettings = async () => {
+    if (!selectedNode) return;
+    
+    setSavingSettings(true);
+    try {
+      const updateData = {};
+
+      if (pendingMinTemp !== null) {
+        updateData.minTemp = pendingMinTemp;
+      }
+      if (pendingMaxTemp !== null) {
+        updateData.maxTemp = pendingMaxTemp;
+      }
+      if (pendingOverruleMinutes !== null) {
+        updateData.overruleMinutes = pendingOverruleMinutes;
+      }
+      if (pendingWindowSensor !== null) {
+        updateData.windowSensor = pendingWindowSensor;
+      }
+
+      if (Object.keys(updateData).length === 0) {
+        return; // Nothing to save
+      }
+
+      console.log('Saving settings data:', updateData);
+
+      // Step 1: Save only the current asset in ThingsBoard (ThingsBoard will distribute to children automatically)
+      const response = await fetch(`/api/config/assets/${selectedNode.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.token}`
+        },
+        body: JSON.stringify(updateData)
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to save settings');
+      }
+
+      // Step 2: Update all subordinate nodes in the tree
+      const subordinateNodeIds = getAllSubordinateNodeIds(selectedNode.id);
+      console.log('Updating subordinate nodes in tree:', subordinateNodeIds);
+      
+      // Update each subordinate node in the tree (but not in ThingsBoard)
+      const treeUpdatePromises = subordinateNodeIds.map(async (nodeId) => {
+        try {
+          // Use a flag to indicate this is a tree-only update
+          const treeUpdateResponse = await fetch(`/api/config/assets/${nodeId}`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${session.token}`,
+              'X-Tree-Only-Update': 'true' // Flag to indicate tree-only update
+            },
+            body: JSON.stringify(updateData)
+          });
+          
+          if (!treeUpdateResponse.ok) {
+            console.warn(`Failed to update tree for node ${nodeId}`);
+          }
+        } catch (error) {
+          console.warn(`Error updating tree for node ${nodeId}:`, error);
+        }
+      });
+
+      await Promise.all(treeUpdatePromises);
+
+      // Update original values
+      if (pendingMinTemp !== null) setOriginalMinTemp(pendingMinTemp);
+      if (pendingMaxTemp !== null) setOriginalMaxTemp(pendingMaxTemp);
+      if (pendingOverruleMinutes !== null) setOriginalOverruleMinutes(pendingOverruleMinutes);
+      if (pendingWindowSensor !== null) setOriginalWindowSensor(pendingWindowSensor);
+      
+      // Clear pending values
+      setPendingMinTemp(null);
+      setPendingMaxTemp(null);
+      setPendingOverruleMinutes(null);
+      setPendingWindowSensor(null);
+      
+      // Refresh node details and tree data
+      fetchNodeDetails(selectedNode.id);
+      fetchTreeData();
+    } catch (error) {
+      console.error('Error saving settings:', error);
+      alert('Fehler beim Speichern der Einstellungen');
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  const cancelSettings = () => {
+    setPendingMinTemp(null);
+    setPendingMaxTemp(null);
+    setPendingOverruleMinutes(null);
+    setPendingWindowSensor(null);
   };
 
 
@@ -523,6 +659,29 @@ export default function HeatingControl() {
         }
       } else {
         setOriginalSchedulerPlan([]);
+      }
+      
+      // Update original settings values from node details (direkt aus ThingsBoard)
+      // Diese Werte werden immer direkt aus ThingsBoard geholt, nicht aus dem tree Feld
+      if (nodeData?.attributes?.minTemp !== undefined) {
+        setOriginalMinTemp(nodeData.attributes.minTemp);
+      } else {
+        setOriginalMinTemp(16); // Fallback-Wert
+      }
+      if (nodeData?.attributes?.maxTemp !== undefined) {
+        setOriginalMaxTemp(nodeData.attributes.maxTemp);
+      } else {
+        setOriginalMaxTemp(26); // Fallback-Wert
+      }
+      if (nodeData?.attributes?.overruleMinutes !== undefined) {
+        setOriginalOverruleMinutes(nodeData.attributes.overruleMinutes);
+      } else {
+        setOriginalOverruleMinutes(360); // Fallback-Wert
+      }
+      if (nodeData?.attributes?.windowSensor !== undefined) {
+        setOriginalWindowSensor(nodeData.attributes.windowSensor);
+      } else {
+        setOriginalWindowSensor(false); // Fallback-Wert
       }
     } catch (err) {
       console.error('Error fetching node details:', err);
@@ -1617,8 +1776,9 @@ export default function HeatingControl() {
       const endTime = Date.now();
       const startTime = getTimeRangeInMs(timeRange);
 
+      // Use timeseries endpoint to get real values (not aggregated)
       const response = await fetch(
-        `/api/thingsboard/devices/telemetry/aggregated?deviceIds=${deviceId}&attribute=${attribute}&startTs=${startTime}&endTs=${endTime}&limit=1000`,
+        `/api/thingsboard/devices/${deviceId}/timeseries?attribute=${attribute}&startTs=${startTime}&endTs=${endTime}&limit=1000`,
         {
           headers: {
             'Authorization': `Bearer ${session.token}`
@@ -1628,31 +1788,65 @@ export default function HeatingControl() {
 
       if (response.ok) {
         const data = await response.json();
-        if (data.success && data.data && data.data.length > 0) {
-          const deviceData = data.data[0];
-          if (deviceData.data && deviceData.data.length > 0) {
-            const chartData = deviceData.data.map(point => {
-              let value = point.value;
+        if (data.success && data.data?.telemetry?.values && data.data.telemetry.values.length > 0) {
+          let debugCount = 0;
+          const chartData = data.data.telemetry.values.map(point => {
+            let value = point.value;
+            
+            // Convert hall_sensor_state text values to numeric: HIGH -> 1, LOW -> 0
+            if (attribute === 'hall_sensor_state') {
+              const originalValue = value;
+              const valueStr = String(value).toUpperCase().trim();
               
-              // Convert hall_sensor_state text values to numeric: HIGH -> 1, LOW -> 0
-              if (attribute === 'hall_sensor_state') {
-                const valueStr = String(value).toUpperCase();
-                if (valueStr === 'HIGH' || valueStr === '1' || valueStr === 'TRUE') {
-                  value = 1;
+              // Debug logging for first few values
+              if (debugCount < 3) {
+                console.log('hall_sensor_state conversion:', {
+                  originalValue: originalValue,
+                  type: typeof originalValue,
+                  valueStr: valueStr,
+                  point: point
+                });
+                debugCount++;
+              }
+              
+              // Check for HIGH (various formats)
+              if (valueStr === 'HIGH' || valueStr === '1' || valueStr === 'TRUE' || value === 1 || value === true) {
+                value = 1;
+              } 
+              // Check for LOW (various formats)
+              else if (valueStr === 'LOW' || valueStr === '0' || valueStr === 'FALSE' || value === 0 || value === false) {
+                value = 0;
+              }
+              // Default: if it's already a number, use it; otherwise default to 0
+              else {
+                const numValue = Number(value);
+                if (!isNaN(numValue)) {
+                  value = numValue > 0 ? 1 : 0;
                 } else {
                   value = 0;
                 }
               }
-              
-              return {
-                timestamp: point.ts,
-                value: value,
-                time: new Date(point.ts).toLocaleString('de-DE')
-              };
+            }
+            
+            return {
+              timestamp: point.timestamp,
+              value: value,
+              time: new Date(point.timestamp).toLocaleString('de-DE')
+            };
+          });
+          
+          // Debug: Log first few converted values
+          if (attribute === 'hall_sensor_state' && chartData.length > 0) {
+            console.log('hall_sensor_state converted data sample:', chartData.slice(0, 5));
+            console.log('hall_sensor_state value range:', {
+              min: Math.min(...chartData.map(d => d.value)),
+              max: Math.max(...chartData.map(d => d.value)),
+              uniqueValues: [...new Set(chartData.map(d => d.value))]
             });
-            setTelemetryChartData(chartData);
-            return chartData;
           }
+          
+          setTelemetryChartData(chartData);
+          return chartData;
         }
       }
       setTelemetryChartData([]);
@@ -1801,6 +1995,9 @@ export default function HeatingControl() {
     } else {
       setOriginalSchedulerPlan([]);
     }
+    
+    // Settings values werden jetzt immer direkt aus ThingsBoard geladen (in fetchNodeDetails)
+    // Keine Initialisierung aus node.data mehr, da diese aus dem tree Feld kommen könnten
     
     // Clear loading state after a short delay to ensure data is loaded
     setTimeout(() => {
@@ -2679,6 +2876,26 @@ export default function HeatingControl() {
     }
   }, [activeTab, selectedNode, getAllSubordinateNodes, fetchSubordinateTelemetry]);
 
+  // Update settings values from nodeDetails when they are loaded (direkt aus ThingsBoard)
+  // Diese Werte werden immer direkt aus ThingsBoard geholt, nicht aus dem tree Feld
+  useEffect(() => {
+    if (activeTab === 'config' && nodeDetails?.attributes) {
+      // Aktualisiere nur wenn nodeDetails geladen ist (direkt aus ThingsBoard)
+      if (nodeDetails.attributes.minTemp !== undefined) {
+        setOriginalMinTemp(nodeDetails.attributes.minTemp);
+      }
+      if (nodeDetails.attributes.maxTemp !== undefined) {
+        setOriginalMaxTemp(nodeDetails.attributes.maxTemp);
+      }
+      if (nodeDetails.attributes.overruleMinutes !== undefined) {
+        setOriginalOverruleMinutes(nodeDetails.attributes.overruleMinutes);
+      }
+      if (nodeDetails.attributes.windowSensor !== undefined) {
+        setOriginalWindowSensor(nodeDetails.attributes.windowSensor);
+      }
+    }
+  }, [activeTab, nodeDetails]);
+
 
   // Function to find path to selected node
   const getPathToNode = useCallback((nodeId, nodes = treeData) => {
@@ -3207,7 +3424,7 @@ export default function HeatingControl() {
                           type="button"
                         >
                           <FontAwesomeIcon icon={faBullseye} className="me-2" />
-                          Einstellungen
+                          Temperatur
                         </button>
                       </li>
                     )}
@@ -3220,6 +3437,32 @@ export default function HeatingControl() {
                         >
                           <FontAwesomeIcon icon={faCog} className="me-2" />
                           Details
+                        </button>
+                      </li>
+                    )}
+                    {selectedNode && (
+                      <li className="nav-item" role="presentation">
+                        <button
+                          className={`nav-link ${activeTab === 'config' ? 'active' : ''}`}
+                          onClick={async () => {
+                            setActiveTab('config');
+                            // Lade immer die neuesten Werte direkt aus ThingsBoard
+                            if (selectedNode) {
+                              // Rufe fetchNodeDetails auf, um die neuesten Werte aus ThingsBoard zu holen
+                              // Die Werte werden dann automatisch über den useEffect aktualisiert
+                              await fetchNodeDetails(selectedNode.id);
+                              
+                              // Setze pending values zurück
+                              setPendingMinTemp(null);
+                              setPendingMaxTemp(null);
+                              setPendingOverruleMinutes(null);
+                              setPendingWindowSensor(null);
+                            }
+                          }}
+                          type="button"
+                        >
+                          <FontAwesomeIcon icon={faCog} className="me-2" />
+                          Einstellungen
                         </button>
                       </li>
                     )}
@@ -3673,7 +3916,7 @@ export default function HeatingControl() {
                       </div>
                     )}
 
-                    {/* Einstellungen Tab */}
+                    {/* Temperatur Tab */}
                     {activeTab === 'settings' && (
                       <div className="tab-pane fade show active">
                         <div className="row">
@@ -4259,6 +4502,134 @@ export default function HeatingControl() {
                             </div>
                           );
                         })()}
+                      </div>
+                    )}
+
+                    {/* Einstellungen Tab */}
+                    {activeTab === 'config' && (
+                      <div className="tab-pane fade show active">
+                        <div className="row">
+                          <div className="col-12">
+                            <h5 className="mb-4">
+                              <FontAwesomeIcon icon={faCog} className="me-2" />
+                              Einstellungen
+                            </h5>
+                            <div className="card">
+                              <div className="card-body">
+                                <form>
+                                  <div className="row mb-3">
+                                    <div className="col-md-4">
+                                      <label htmlFor="minTemp" className="form-label">
+                                        <FontAwesomeIcon icon={faThermometerHalf} className="me-2" />
+                                        Minimale Temperatur (°C)
+                                      </label>
+                                      <input
+                                        type="number"
+                                        className="form-control"
+                                        id="minTemp"
+                                        min="5"
+                                        max="30"
+                                        step="0.5"
+                                        value={pendingMinTemp !== null ? pendingMinTemp : (originalMinTemp !== null ? originalMinTemp : 16)}
+                                        onChange={(e) => {
+                                          const value = parseFloat(e.target.value);
+                                          setPendingMinTemp(value);
+                                        }}
+                                      />
+                                    </div>
+                                    <div className="col-md-4">
+                                      <label htmlFor="maxTemp" className="form-label">
+                                        <FontAwesomeIcon icon={faThermometerHalf} className="me-2" />
+                                        Maximale Temperatur (°C)
+                                      </label>
+                                      <input
+                                        type="number"
+                                        className="form-control"
+                                        id="maxTemp"
+                                        min="5"
+                                        max="30"
+                                        step="0.5"
+                                        value={pendingMaxTemp !== null ? pendingMaxTemp : (originalMaxTemp !== null ? originalMaxTemp : 26)}
+                                        onChange={(e) => {
+                                          const value = parseFloat(e.target.value);
+                                          setPendingMaxTemp(value);
+                                        }}
+                                      />
+                                    </div>
+                                    <div className="col-md-4">
+                                      <label htmlFor="overruleMinutes" className="form-label">
+                                        <FontAwesomeIcon icon={faClock} className="me-2" />
+                                        Overrule Minuten
+                                      </label>
+                                      <input
+                                        type="number"
+                                        className="form-control"
+                                        id="overruleMinutes"
+                                        min="0"
+                                        max="1440"
+                                        step="1"
+                                        value={pendingOverruleMinutes !== null ? pendingOverruleMinutes : (originalOverruleMinutes !== null ? originalOverruleMinutes : 360)}
+                                        onChange={(e) => {
+                                          const value = parseInt(e.target.value);
+                                          setPendingOverruleMinutes(value);
+                                        }}
+                                      />
+                                    </div>
+                                    <div className="col-md-12 mt-3">
+                                      <div className="form-check">
+                                        <input
+                                          className="form-check-input"
+                                          type="checkbox"
+                                          id="windowSensor"
+                                          checked={pendingWindowSensor !== null ? pendingWindowSensor : (originalWindowSensor !== null ? originalWindowSensor : false)}
+                                          onChange={(e) => {
+                                            setPendingWindowSensor(e.target.checked);
+                                          }}
+                                        />
+                                        <label className="form-check-label" htmlFor="windowSensor">
+                                          <FontAwesomeIcon icon={faWindowMaximize} className="me-2" />
+                                          Fenstersensor aktivieren
+                                        </label>
+                                      </div>
+                                    </div>
+                                  </div>
+                                  
+                                  {(pendingMinTemp !== null || pendingMaxTemp !== null || pendingOverruleMinutes !== null || pendingWindowSensor !== null) && (
+                                    <div className="d-flex gap-2 mb-3">
+                                      <button
+                                        type="button"
+                                        className="btn btn-primary"
+                                        onClick={saveSettings}
+                                        disabled={savingSettings}
+                                      >
+                                        {savingSettings ? (
+                                          <>
+                                            <span className="spinner-border spinner-border-sm me-1" role="status"></span>
+                                            Speichern...
+                                          </>
+                                        ) : (
+                                          <>
+                                            <FontAwesomeIcon icon={faCheckCircle} className="me-1" />
+                                            Speichern
+                                          </>
+                                        )}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="btn btn-secondary"
+                                        onClick={cancelSettings}
+                                        disabled={savingSettings}
+                                      >
+                                        <FontAwesomeIcon icon={faTimes} className="me-1" />
+                                        Abbrechen
+                                      </button>
+                                    </div>
+                                  )}
+                                </form>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     )}
                   </div>

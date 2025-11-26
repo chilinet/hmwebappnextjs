@@ -1,7 +1,7 @@
 import { useRouter } from 'next/router';
 import { useSession, getSession } from 'next-auth/react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faUsers, faUserCog, faSitemap, faUserShield, faGears, faBoxes } from '@fortawesome/free-solid-svg-icons';
+import { faUsers, faUserCog, faSitemap, faUserShield, faGears, faBoxes, faCalendarAlt } from '@fortawesome/free-solid-svg-icons';
 import { useEffect, useState } from 'react';
 
 export default function Config() {
@@ -208,6 +208,27 @@ export default function Config() {
             </div>
           </div>
         )}
+
+        {/* Heizpläne Kachel */}
+        <div className="col-md-4">
+          <div className="card h-100 text-center p-4" 
+               style={{ 
+                 cursor: 'pointer',
+                 backgroundColor: '#2C3E50',
+                 transition: 'background-color 0.3s'
+               }}
+               onMouseOver={e => e.currentTarget.style.backgroundColor = '#1a252f'}
+               onMouseOut={e => e.currentTarget.style.backgroundColor = '#2C3E50'}
+               onClick={() => router.push('/config/heating-schedules')}>
+            <div className="card-body">
+              <FontAwesomeIcon icon={faCalendarAlt} size="3x" className="mb-3 text-white" />
+              <h5 className="card-title text-white">Heizpläne</h5>
+              <p className="card-text text-white-50">
+                Heizpläne verwalten und konfigurieren
+              </p>
+            </div>
+          </div>
+        </div>
 
 
       </div>
