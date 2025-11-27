@@ -22,6 +22,8 @@ export default function EditUser() {
     role: '',
     customerid: ''
   })
+  const [newPassword, setNewPassword] = useState('')
+  const [passwordError, setPasswordError] = useState('')
   const [customers, setCustomers] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -159,6 +161,7 @@ export default function EditUser() {
   const handleSubmit = async (e) => {
     e.preventDefault()
     setSaving(true)
+    setPasswordError('')
     
     try {
       // Konvertiere beide Werte zu Nummern für den Vergleich
@@ -173,6 +176,33 @@ export default function EditUser() {
 
       if (!isRoleAllowed) {
         throw new Error('Sie haben keine Berechtigung, diese Rolle zuzuweisen');
+      }
+
+      // Wenn ein neues Passwort eingegeben wurde und der Benutzer ein Superadmin ist
+      if (newPassword && isSuperAdmin) {
+        if (newPassword.length < 8) {
+          setPasswordError('Passwort muss mindestens 8 Zeichen lang sein')
+          setSaving(false)
+          return
+        }
+
+        const passwordResponse = await fetch(`/api/config/users/${id}/password`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.token}`
+          },
+          body: JSON.stringify({
+            newPassword: newPassword
+          })
+        })
+
+        if (!passwordResponse.ok) {
+          const passwordErrorData = await passwordResponse.json()
+          setPasswordError(passwordErrorData.message || 'Fehler beim Ändern des Passworts')
+          setSaving(false)
+          return
+        }
       }
 
       console.log('************************************************');
@@ -216,9 +246,9 @@ export default function EditUser() {
 
   const isSuperAdmin = userRole === 1;
 
-  if (!session) return <div>Loading...</div>
-  if (loading) return <div>Loading user data...</div>
-  if (error) return <div>Error: {error}</div>
+  if (!session) return <div className="text-light">Loading...</div>
+  if (loading) return <div className="text-light">Loading user data...</div>
+  if (error) return <div className="text-light">Error: {error}</div>
 
   return (
     <div className="container mt-4">
@@ -232,14 +262,20 @@ export default function EditUser() {
               >
                 <FontAwesomeIcon icon={faArrowLeft} />
               </button>
-              <h2 className="mb-0">Benutzer bearbeiten</h2>
+              <h2 className="mb-0 text-white">Benutzer bearbeiten</h2>
             </div>
           </div>
+
+          {error && (
+            <div className="alert alert-danger" role="alert">
+              {error}
+            </div>
+          )}
 
           <form onSubmit={handleSubmit}>
             <div className="row">
               <div className="col-md-6 mb-3">
-                <label htmlFor="username" className="form-label">Benutzername</label>
+                <label htmlFor="username" className="form-label text-white">Benutzername</label>
                 <input
                   type="text"
                   className="form-control bg-white text-dark"
@@ -250,7 +286,7 @@ export default function EditUser() {
               </div>
 
               <div className="col-md-6 mb-3">
-                <label htmlFor="email" className="form-label">Email</label>
+                <label htmlFor="email" className="form-label text-white">Email</label>
                 <input
                   type="email"
                   className="form-control bg-white text-dark"
@@ -263,7 +299,7 @@ export default function EditUser() {
               </div>
 
               <div className="col-md-6 mb-3">
-                <label htmlFor="firstName" className="form-label">Vorname</label>
+                <label htmlFor="firstName" className="form-label text-white">Vorname</label>
                 <input
                   type="text"
                   className="form-control bg-white text-dark"
@@ -276,7 +312,7 @@ export default function EditUser() {
               </div>
 
               <div className="col-md-6 mb-3">
-                <label htmlFor="lastName" className="form-label">Nachname</label>
+                <label htmlFor="lastName" className="form-label text-white">Nachname</label>
                 <input
                   type="text"
                   className="form-control bg-white text-dark"
@@ -289,7 +325,7 @@ export default function EditUser() {
               </div>
 
               <div className="col-md-6 mb-3">
-                <label htmlFor="role" className="form-label">Rolle</label>
+                <label htmlFor="role" className="form-label text-white">Rolle</label>
                 <select
                   className="form-select bg-white text-dark"
                   id="role"
@@ -312,7 +348,7 @@ export default function EditUser() {
 
               {isSuperAdmin && (
                 <div className="col-md-6 mb-3">
-                  <label htmlFor="customerid" className="form-label">Kunde</label>
+                  <label htmlFor="customerid" className="form-label text-white">Kunde</label>
                   <select
                     className="form-select bg-white text-dark"
                     id="customerid"
@@ -331,6 +367,31 @@ export default function EditUser() {
                       </option>
                     ))}
                   </select>
+                </div>
+              )}
+
+              {isSuperAdmin && (
+                <div className="col-md-6 mb-3">
+                  <label htmlFor="newPassword" className="form-label text-white">Neues Passwort (optional)</label>
+                  <input
+                    type="password"
+                    className={`form-control bg-white text-dark ${passwordError ? 'is-invalid' : ''}`}
+                    id="newPassword"
+                    name="newPassword"
+                    value={newPassword}
+                    onChange={(e) => {
+                      setNewPassword(e.target.value)
+                      setPasswordError('')
+                    }}
+                    placeholder="Leer lassen, um nicht zu ändern"
+                    minLength={8}
+                  />
+                  {passwordError && (
+                    <div className="invalid-feedback d-block text-danger">{passwordError}</div>
+                  )}
+                  <small className="form-text text-muted">
+                    Mindestens 8 Zeichen. Leer lassen, um das Passwort nicht zu ändern.
+                  </small>
                 </div>
               )}
             </div>
@@ -357,6 +418,15 @@ export default function EditUser() {
       </div>
 
       <style jsx>{`
+        .card.bg-dark .form-label {
+          color: #fff !important;
+        }
+        .card.bg-dark .form-text.text-muted {
+          color: #adb5bd !important;
+        }
+        .card.bg-dark .invalid-feedback {
+          color: #f8d7da !important;
+        }
         .btn-warning {
           background-color: #fd7e14;
           border-color: #fd7e14;

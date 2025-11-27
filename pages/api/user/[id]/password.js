@@ -1,23 +1,15 @@
-import { getSession } from 'next-auth/react';
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "../../auth/[...nextauth]";
+import { getConnection } from "../../../../lib/db";
 import sql from 'mssql';
 import bcrypt from 'bcryptjs';
-
-const config = {
-  user: 'hmroot',
-  password: '9YJLpf6CfyteKzoN',
-  server: 'hmcdev01.database.windows.net',
-  database: 'hmcdev',
-  options: {
-    encrypt: true
-  }
-};
 
 export default async function handler(req, res) {
   if (req.method !== 'PUT') {
     return res.status(405).json({ message: 'Methode nicht erlaubt' });
   }
 
-  const session = await getSession({ req });
+  const session = await getServerSession(req, res, authOptions);
 
   if (!session) {
     return res.status(401).json({ message: 'Nicht authentifiziert' });
@@ -30,16 +22,21 @@ export default async function handler(req, res) {
   }
 
   try {
-    await sql.connect(config);
+    const pool = await getConnection();
+    if (!pool) {
+      return res.status(503).json({ message: 'Datenbankverbindung fehlgeschlagen' });
+    }
 
     const { currentPassword, newPassword } = req.body;
 
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ message: 'Aktuelles und neues Passwort sind erforderlich' });
+    }
+
     // Hole aktuelles Passwort aus der Datenbank
-    const result = await sql.query`
-      SELECT password
-      FROM hm_users
-      WHERE userid = ${id}
-    `;
+    const result = await pool.request()
+      .input('userid', sql.Int, id)
+      .query('SELECT password FROM hm_users WHERE userid = @userid');
 
     if (result.recordset.length === 0) {
       return res.status(404).json({ message: 'Benutzer nicht gefunden' });
@@ -56,17 +53,14 @@ export default async function handler(req, res) {
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
     // Update Passwort
-    await sql.query`
-      UPDATE hm_users
-      SET password = ${hashedPassword}
-      WHERE userid = ${id}
-    `;
+    await pool.request()
+      .input('userid', sql.Int, id)
+      .input('password', sql.VarChar, hashedPassword)
+      .query('UPDATE hm_users SET password = @password WHERE userid = @userid');
 
     return res.json({ message: 'Passwort erfolgreich geändert' });
   } catch (error) {
     console.error('Database Error:', error);
-    return res.status(500).json({ message: 'Serverfehler' });
-  } finally {
-    await sql.close();
+    return res.status(500).json({ message: 'Serverfehler', error: error.message });
   }
 } 
