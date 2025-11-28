@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useSession, signIn } from 'next-auth/react'
 import { useRouter } from 'next/router'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faEdit, faTrash, faPlus, faLink, faCopy, faEnvelope, faLock, faUnlock } from '@fortawesome/free-solid-svg-icons'
+import { faEdit, faTrash, faPlus, faLink, faCopy, faEnvelope, faLock, faUnlock, faUser, faSearch, faFilter, faArrowLeft } from '@fortawesome/free-solid-svg-icons'
 import { v4 as uuidv4 } from 'uuid'
 
 const getStatusBadge = (status) => {
@@ -33,6 +33,7 @@ export default function Users() {
 
   const [users, setUsers] = useState([])
   const [roles, setRoles] = useState([])
+  const [customers, setCustomers] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [showModal, setShowModal] = useState(false);
@@ -42,6 +43,9 @@ export default function Users() {
   const [userRole, setUserRole] = useState(null);
   const [sendingEmail, setSendingEmail] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
+  const [searchText, setSearchText] = useState('');
+  const [filterCustomer, setFilterCustomer] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
 
   // Hole die User-ID aus der Session
   const currentUserId = session?.user?.userid;
@@ -51,7 +55,8 @@ export default function Users() {
       fetchUserRole().then(() => {
         Promise.all([
           fetchUsers(),
-          fetchRoles()
+          fetchRoles(),
+          fetchCustomers()
         ]).finally(() => setLoading(false));
       });
     }
@@ -112,6 +117,28 @@ export default function Users() {
       setRoles(data); // Die API gibt direkt das Array zurück
     } catch (error) {
       console.error('Error loading roles:', error);
+    }
+  };
+
+  const fetchCustomers = async () => {
+    try {
+      const response = await fetch('/api/config/customers', {
+        headers: {
+          'Authorization': `Bearer ${session.token}`
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch customers');
+      }
+
+      const data = await response.json();
+      // ThingsBoard API gibt { data: [...] } zurück
+      const customersData = data.data || (Array.isArray(data) ? data : []);
+      setCustomers(Array.isArray(customersData) ? customersData : []);
+    } catch (error) {
+      console.error('Error loading customers:', error);
+      setCustomers([]);
     }
   };
 
@@ -282,115 +309,279 @@ export default function Users() {
 
   const isSuperAdmin = userRole === 1;
 
+  // Filter- und Suchfunktion
+  const filteredUsers = users.filter((user) => {
+    // Suche über alle Felder
+    const searchLower = searchText.toLowerCase();
+    const matchesSearch = !searchText || 
+      user.username?.toLowerCase().includes(searchLower) ||
+      user.email?.toLowerCase().includes(searchLower) ||
+      user.firstName?.toLowerCase().includes(searchLower) ||
+      user.lastName?.toLowerCase().includes(searchLower) ||
+      `${user.firstName} ${user.lastName}`.toLowerCase().includes(searchLower) ||
+      getRoleName(user.role).toLowerCase().includes(searchLower) ||
+      user.customerName?.toLowerCase().includes(searchLower);
+
+    // Filter nach Kunde
+    const matchesCustomer = !filterCustomer || (() => {
+      if (!filterCustomer) return true;
+      
+      // Extrahiere die Kunden-ID aus dem Benutzer (kann verschiedene Formate haben)
+      const userCustomerId = user.customerid?.id || user.customerid || user.customerId?.id || user.customerId;
+      const userCustomerName = user.customerName;
+      
+      // Finde den ausgewählten Kunden
+      const selectedCustomer = customers.find(c => {
+        const cId = c.id?.id || c.id || c.customerId;
+        const cName = c.title || c.name;
+        return (cId && cId.toString() === filterCustomer.toString()) || 
+               (cName && cName === filterCustomer);
+      });
+      
+      if (!selectedCustomer) return false;
+      
+      const selectedId = selectedCustomer.id?.id || selectedCustomer.id || selectedCustomer.customerId;
+      const selectedName = selectedCustomer.title || selectedCustomer.name;
+      
+      // Vergleiche sowohl mit ID als auch mit Name
+      const idMatch = userCustomerId && selectedId && 
+                     userCustomerId.toString() === selectedId.toString();
+      const nameMatch = userCustomerName && selectedName && 
+                       userCustomerName === selectedName;
+      
+      return idMatch || nameMatch;
+    })();
+
+    // Filter nach Status
+    const matchesStatus = !filterStatus || 
+      user.status?.toString() === filterStatus;
+
+    return matchesSearch && matchesCustomer && matchesStatus;
+  });
+
   if (loading) return <div>Loading...</div>
   if (error) return <div>Error: {error}</div>
 
   return (
     <div className="container mt-4">
       <div className="d-flex justify-content-between align-items-center mb-4">
-        <h2 className="text-light">Benutzer</h2>
+        <div className="d-flex align-items-center">
+          <button 
+            className="btn btn-outline-secondary me-3"
+            onClick={() => router.push('/config')}
+          >
+            <FontAwesomeIcon icon={faArrowLeft} />
+          </button>
+          <h1 style={{ color: '#fd7e14', fontSize: '2.5rem', fontWeight: 'bold' }}>Benutzer</h1>
+        </div>
         <button 
-          className="btn btn-warning"
+          className="btn"
           onClick={handleNew}
+          style={{ backgroundColor: '#fd7e14', borderColor: '#fd7e14', color: 'white' }}
         >
           <FontAwesomeIcon icon={faPlus} className="me-2" />
           Neuer Benutzer
         </button>
       </div>
 
-      <div className="card bg-dark">
+      {/* Filter- und Suchbereich */}
+      <div className="card mb-4" style={{ backgroundColor: '#ffffff', border: '1px solid #dee2e6' }}>
         <div className="card-body">
-          <div className="table-responsive">
-            <table className="table table-dark">
-              <thead>
-                <tr>
-                  <th>Benutzername</th>
-                  <th>Email</th>
-                  <th>Name</th>
-                  <th>Rolle</th>
-                  {isSuperAdmin && <th>Kunde</th>}
-                  <th>Status</th>
-                  <th>Erstellt</th>
-                  <th>Aktionen</th>
-                </tr>
-              </thead>
-              <tbody>
-                {users.map((user) => (
-                  <tr key={user.id}>
-                    <td>{user.username}</td>
-                    <td>{user.email}</td>
-                    <td>{user.firstName} {user.lastName}</td>
-                    <td>
-                      {(() => {
-                        try {
-                          return getRoleName(user.role)
-                        } catch (err) {
-                          console.error('Error getting role name:', err, user.role);
-                          return 'Fehler';
-                        }
-                      })()}
-                    </td>
-                    {isSuperAdmin && <td>{user.customerName}</td>}
-                    <td>{getStatusBadge(user.status)}</td>
-                    <td>{new Date(user.createdAt).toLocaleDateString()}</td>
-                    <td>
-                      <button
-                        className="btn btn-sm btn-outline-primary me-2"
-                        onClick={() => handleEdit(user.id)}
-                        title="Bearbeiten"
-                      >
-                        <FontAwesomeIcon icon={faEdit} />
-                      </button>
-                      
-                      {user.id !== currentUserId && (
-                        <>
-                          <button
-                            className="btn btn-sm btn-outline-danger me-2"
-                            onClick={() => handleDelete(user.id)}
-                            title="Löschen"
-                          >
-                            <FontAwesomeIcon icon={faTrash} />
-                          </button>
-                          
-                          {/* Sperren/Entsperren Button - nur für aktive oder gesperrte Benutzer */}
-                          {parseInt(user.status) === 1 && (
-                            <button
-                              className="btn btn-sm btn-outline-warning me-2"
-                              onClick={() => handleToggleLock(user.id, user.status)}
-                              title="Benutzer sperren"
-                            >
-                              <FontAwesomeIcon icon={faLock} />
-                            </button>
-                          )}
-                          
-                          {parseInt(user.status) === 99 && (
-                            <button
-                              className="btn btn-sm btn-outline-success me-2"
-                              onClick={() => handleToggleLock(user.id, user.status)}
-                              title="Benutzer entsperren"
-                            >
-                              <FontAwesomeIcon icon={faUnlock} />
-                            </button>
-                          )}
-                        </>
-                      )}
+          <div className="row g-3">
+            {/* Suchfeld */}
+            <div className="col-md-4">
+              <label className="form-label" style={{ color: '#fd7e14', fontWeight: 'bold' }}>
+                <FontAwesomeIcon icon={faSearch} className="me-2" />
+                Suche
+              </label>
+              <input
+                type="text"
+                className="form-control"
+                placeholder="Suche nach Name, Email, Benutzername..."
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                style={{ border: '1px solid #dee2e6' }}
+              />
+            </div>
 
-                      {parseInt(user.status) === 0 && (
-                        <button
-                          className="btn btn-sm btn-outline-success"
-                          onClick={() => handleActivationLink(user.id)}
-                          title="Aktivierungslink generieren"
-                        >
-                          <FontAwesomeIcon icon={faLink} />
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            {/* Filter nach Kunde - nur für Superadmin */}
+            {isSuperAdmin && (
+              <div className="col-md-4">
+                <label className="form-label" style={{ color: '#fd7e14', fontWeight: 'bold' }}>
+                  <FontAwesomeIcon icon={faFilter} className="me-2" />
+                  Filter nach Kunde
+                </label>
+                <select
+                  className="form-select"
+                  value={filterCustomer}
+                  onChange={(e) => setFilterCustomer(e.target.value)}
+                  style={{ border: '1px solid #dee2e6' }}
+                >
+                  <option value="">Alle Kunden</option>
+                  {customers.map((customer, index) => {
+                    // ThingsBoard gibt Kunden als { id: { id: "...", ... }, title: "..." } zurück
+                    const customerId = customer.id?.id || customer.id || customer.customerId;
+                    const customerName = customer.title || customer.name || 'Unbekannt';
+                    // Verwende die ID als Wert, falls vorhanden, sonst den Namen
+                    const optionValue = customerId ? customerId.toString() : customerName;
+                    return (
+                      <option key={customerId || `customer-${index}`} value={optionValue}>
+                        {customerName}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+            )}
+
+            {/* Filter nach Status */}
+            <div className="col-md-4">
+              <label className="form-label" style={{ color: '#fd7e14', fontWeight: 'bold' }}>
+                <FontAwesomeIcon icon={faFilter} className="me-2" />
+                Filter nach Status
+              </label>
+              <select
+                className="form-select"
+                value={filterStatus}
+                onChange={(e) => setFilterStatus(e.target.value)}
+                style={{ border: '1px solid #dee2e6' }}
+              >
+                <option value="">Alle Status</option>
+                <option value="1">Aktiv</option>
+                <option value="0">Inaktiv</option>
+                <option value="99">Gesperrt</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Ergebnisanzahl */}
+          <div className="mt-3">
+            <small className="text-muted">
+              {filteredUsers.length} von {users.length} Benutzer{filteredUsers.length !== 1 ? 'n' : ''} angezeigt
+            </small>
           </div>
         </div>
+      </div>
+
+      <div className="row g-4">
+        {filteredUsers.length === 0 ? (
+          <div className="col-12">
+            <div className="alert alert-info text-center">
+              Keine Benutzer gefunden. Bitte passen Sie Ihre Such- oder Filterkriterien an.
+            </div>
+          </div>
+        ) : (
+          filteredUsers.map((user) => (
+          <div key={user.id} className="col-md-4 col-lg-3">
+            <div className="card h-100" 
+                 style={{ 
+                   backgroundColor: '#ffffff',
+                   border: '1px solid #dee2e6',
+                   transition: 'all 0.3s'
+                 }}>
+              <div className="card-body text-center p-4">
+                <div className="mb-3">
+                  <FontAwesomeIcon icon={faUser} size="3x" style={{ color: '#fd7e14' }} />
+                </div>
+                
+                <h5 className="card-title mb-2" style={{ color: '#fd7e14' }}>
+                  {user.firstName} {user.lastName}
+                </h5>
+                
+                <p className="card-text text-muted mb-2" style={{ fontSize: '0.9rem' }}>
+                  <strong>Benutzername:</strong> {user.username}
+                </p>
+                
+                <p className="card-text text-muted mb-2" style={{ fontSize: '0.9rem' }}>
+                  <strong>Email:</strong> {user.email}
+                </p>
+                
+                <p className="card-text text-muted mb-2" style={{ fontSize: '0.9rem' }}>
+                  <strong>Rolle:</strong> {(() => {
+                    try {
+                      return getRoleName(user.role)
+                    } catch (err) {
+                      console.error('Error getting role name:', err, user.role);
+                      return 'Fehler';
+                    }
+                  })()}
+                </p>
+                
+                {isSuperAdmin && user.customerName && (
+                  <p className="card-text text-muted mb-2" style={{ fontSize: '0.9rem' }}>
+                    <strong>Kunde:</strong> {user.customerName}
+                  </p>
+                )}
+                
+                <div className="mb-3">
+                  {getStatusBadge(user.status)}
+                </div>
+                
+                <p className="card-text text-muted mb-3" style={{ fontSize: '0.85rem' }}>
+                  Erstellt: {new Date(user.createdAt).toLocaleDateString()}
+                </p>
+                
+                <div className="d-flex flex-wrap justify-content-center gap-2">
+                  <button
+                    className="btn btn-sm"
+                    onClick={() => handleEdit(user.id)}
+                    title="Bearbeiten"
+                    style={{ backgroundColor: '#007bff', borderColor: '#007bff', color: 'white' }}
+                  >
+                    <FontAwesomeIcon icon={faEdit} />
+                  </button>
+                  
+                  {user.id !== currentUserId && (
+                    <>
+                      <button
+                        className="btn btn-sm"
+                        onClick={() => handleDelete(user.id)}
+                        title="Löschen"
+                        style={{ backgroundColor: '#dc3545', borderColor: '#dc3545', color: 'white' }}
+                      >
+                        <FontAwesomeIcon icon={faTrash} />
+                      </button>
+                      
+                      {parseInt(user.status) === 1 && (
+                        <button
+                          className="btn btn-sm"
+                          onClick={() => handleToggleLock(user.id, user.status)}
+                          title="Benutzer sperren"
+                          style={{ backgroundColor: '#ffc107', borderColor: '#ffc107', color: 'black' }}
+                        >
+                          <FontAwesomeIcon icon={faLock} />
+                        </button>
+                      )}
+                      
+                      {parseInt(user.status) === 99 && (
+                        <button
+                          className="btn btn-sm"
+                          onClick={() => handleToggleLock(user.id, user.status)}
+                          title="Benutzer entsperren"
+                          style={{ backgroundColor: '#198754', borderColor: '#198754', color: 'white' }}
+                        >
+                          <FontAwesomeIcon icon={faUnlock} />
+                        </button>
+                      )}
+                    </>
+                  )}
+
+                  {parseInt(user.status) === 0 && (
+                    <button
+                      className="btn btn-sm"
+                      onClick={() => handleActivationLink(user.id)}
+                      title="Aktivierungslink generieren"
+                      style={{ backgroundColor: '#198754', borderColor: '#198754', color: 'white' }}
+                    >
+                      <FontAwesomeIcon icon={faLink} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        ))
+        )}
       </div>
 
       {/* Modal */}
@@ -487,32 +678,20 @@ export default function Users() {
       )}
 
       <style jsx>{`
-        .btn-warning {
-          background-color: #fd7e14;
-          border-color: #fd7e14;
-          color: white;
-        }
-        .btn-warning:hover {
-          background-color: #e66e12;
-          border-color: #e66e12;
-          color: white;
-        }
-        .btn-warning:disabled {
-          background-color: #fd7e14;
-          border-color: #fd7e14;
-          opacity: 0.65;
-        }
-        .table-dark {
-          color: #fff;
-          background-color: #343a40;
-        }
-        .table-dark th,
-        .table-dark td {
-          border-color: #454d55;
-        }
         .card {
-          border-color: #454d55;
+          transition: transform 0.2s, box-shadow 0.2s;
         }
+        
+        .card:hover {
+          transform: translateY(-5px);
+          box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+        
+        .btn-sm {
+          padding: 0.25rem 0.5rem;
+          font-size: 0.875rem;
+        }
+        
         .modal {
           background-color: transparent;
           z-index: 1050;

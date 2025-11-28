@@ -125,55 +125,53 @@
         border-top: 1px solid var(--border-color);
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
         z-index: 1000;
-        padding: 1rem;
+        padding: 0;
+        display: none;
     }
     
     .navbar-collapse.show {
         display: block !important;
     }
     
-    .navbar-nav {
+    /* Mobile menu direct links */
+    .navbar-nav.mobile-menu {
         margin: 0 !important;
-    }
-    
-    .navbar-nav .nav-item {
-        margin: 0.5rem 0;
-    }
-    
-    /* User menu positioning on mobile */
-    .navbar-nav.ms-auto {
-        margin-left: 0 !important;
-        margin-top: 1rem;
-        border-top: 1px solid var(--border-color);
-        padding-top: 1rem;
-    }
-    
-    /* Dropdown positioning on mobile */
-    .dropdown-menu {
-        position: static !important;
-        float: none;
+        flex-direction: column;
         width: 100%;
-        margin-top: 0.5rem;
-        border: 1px solid var(--border-color);
-        box-shadow: none;
     }
     
-    .dropdown-menu.show {
-        display: block !important;
-    }
-    
-    .dropdown-item {
+    .navbar-nav.mobile-menu .nav-link {
         padding: 0.75rem 1rem;
-        border-radius: 0;
+        color: var(--text-color) !important;
+        border-bottom: 1px solid var(--border-color);
+        text-decoration: none;
+        display: flex;
+        align-items: center;
+        width: 100%;
     }
     
-    .dropdown-item:hover {
+    .navbar-nav.mobile-menu .nav-link:hover {
         background-color: var(--hover-background);
+        color: var(--text-color) !important;
     }
     
-    .dropdown-divider {
-        margin: 0.5rem 0;
+    .navbar-nav.mobile-menu .nav-link.active-menu-item {
+        background-color: #fd7e14 !important;
+        color: white !important;
+    }
+    
+    .navbar-nav.mobile-menu .nav-link.active-menu-item .fa,
+    .navbar-nav.mobile-menu .nav-link.active-menu-item svg {
+        color: white !important;
+    }
+    
+    .navbar-nav.mobile-menu .dropdown-divider {
+        margin: 0;
         border-color: var(--border-color);
+    }
+    
+    .navbar-nav.mobile-menu button.nav-link {
+        cursor: pointer;
     }
 }
 

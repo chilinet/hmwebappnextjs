@@ -337,18 +337,18 @@ export default function HeatingSchedules() {
 
   return (
     <div className="container mt-4">
-      <div className="card bg-dark text-white">
+      <div className="card" style={{ backgroundColor: '#ffffff', border: '1px solid #dee2e6' }}>
         <div className="card-body">
           <div className="d-flex justify-content-between align-items-center mb-4">
             <div className="d-flex align-items-center">
               <button 
-                className="btn btn-outline-light me-3"
+                className="btn btn-outline-secondary me-3"
                 onClick={() => router.push('/config')}
               >
                 <FontAwesomeIcon icon={faArrowLeft} />
               </button>
-              <FontAwesomeIcon icon={faCalendarAlt} className="me-3" size="2x" />
-              <h2 className="mb-0">Heizpläne</h2>
+              <FontAwesomeIcon icon={faCalendarAlt} className="me-3" size="2x" style={{ color: '#fd7e14' }} />
+              <h1 className="mb-0" style={{ color: '#fd7e14', fontSize: '2.5rem', fontWeight: 'bold' }}>Heizpläne</h1>
             </div>
           </div>
 
@@ -368,21 +368,22 @@ export default function HeatingSchedules() {
 
           {loadingSchedule ? (
             <div className="text-center py-4">
-              <div className="spinner-border text-light" role="status">
+              <div className="spinner-border" role="status" style={{ color: '#fd7e14' }}>
                 <span className="visually-hidden">Lädt...</span>
               </div>
               <p className="mt-2">Heizpläne werden geladen...</p>
             </div>
           ) : scheduleData && Array.isArray(scheduleData) && scheduleData.length > 0 ? (
             <>
-              <div className="card mb-3 bg-secondary">
+              <div className="card mb-3" style={{ backgroundColor: '#ffffff', border: '1px solid #dee2e6' }}>
                 <div className="card-body">
                   <div className="d-flex justify-content-between align-items-center mb-3">
-                    <h5 className="card-title mb-0">Verfügbare Heizpläne ({scheduleData.length})</h5>
+                    <h5 className="card-title mb-0" style={{ color: '#212529', fontWeight: 'bold' }}>Verfügbare Heizpläne ({scheduleData.length})</h5>
                     <button
-                      className="btn btn-success"
+                      className="btn"
                       onClick={handleCreatePlan}
                       disabled={loading}
+                      style={{ backgroundColor: '#198754', borderColor: '#198754', color: 'white' }}
                     >
                       <FontAwesomeIcon icon={faPlus} className="me-2" />
                       Neuer Plan
@@ -392,15 +393,16 @@ export default function HeatingSchedules() {
                   {/* Search Bar */}
                   <div className="mb-3">
                     <div className="input-group">
-                      <span className="input-group-text bg-dark text-white border-secondary">
+                      <span className="input-group-text" style={{ backgroundColor: '#f8f9fa', border: '1px solid #dee2e6' }}>
                         <FontAwesomeIcon icon={faSearch} />
                       </span>
                       <input
                         type="text"
-                        className="form-control bg-dark text-white border-secondary"
+                        className="form-control"
                         placeholder="Plan suchen..."
                         value={planSearchTerm}
                         onChange={(e) => setPlanSearchTerm(e.target.value)}
+                        style={{ border: '1px solid #dee2e6' }}
                       />
                       {planSearchTerm && (
                         <button
@@ -416,15 +418,16 @@ export default function HeatingSchedules() {
 
                   {/* Plan Selection Dropdown */}
                   <div className="mb-3">
-                    <label htmlFor="planSelect" className="form-label">Plan auswählen</label>
+                    <label htmlFor="planSelect" className="form-label" style={{ color: '#212529', fontWeight: 'bold' }}>Plan auswählen</label>
                     <select
                       id="planSelect"
-                      className="form-select bg-dark text-white border-secondary"
+                      className="form-select"
                       value={selectedPlanIndex !== null ? selectedPlanIndex : ''}
                       onChange={(e) => {
                         const index = e.target.value === '' ? null : parseInt(e.target.value);
                         setSelectedPlanIndex(index);
                       }}
+                      style={{ border: '1px solid #dee2e6' }}
                     >
                       <option value="">-- Bitte wählen Sie einen Plan --</option>
                       {filteredPlans.map((plan, filteredIndex) => {
@@ -448,17 +451,19 @@ export default function HeatingSchedules() {
                   {selectedPlanIndex !== null && scheduleData[selectedPlanIndex] && (
                     <div className="d-flex gap-2 mb-3">
                       <button
-                        className="btn btn-warning flex-grow-1"
+                        className="btn flex-grow-1"
                         onClick={() => handleEditPlan(selectedPlanIndex)}
                         disabled={loading}
+                        style={{ backgroundColor: '#ffc107', borderColor: '#ffc107', color: 'black' }}
                       >
                         <FontAwesomeIcon icon={faEdit} className="me-2" />
                         Plan "{scheduleData[selectedPlanIndex][0]}" bearbeiten
                       </button>
                       <button
-                        className="btn btn-danger"
+                        className="btn"
                         onClick={() => handleDeletePlan(selectedPlanIndex)}
                         disabled={loading}
+                        style={{ backgroundColor: '#dc3545', borderColor: '#dc3545', color: 'white' }}
                       >
                         <FontAwesomeIcon icon={faTrash} className="me-2" />
                         Löschen
@@ -479,14 +484,14 @@ export default function HeatingSchedules() {
               </div>
 
               {selectedPlanIndex !== null && selectedPlan && (
-                <div className="card mb-3 bg-secondary">
+                <div className="card mb-3" style={{ backgroundColor: '#ffffff', border: '1px solid #dee2e6' }}>
                   <div className="card-body">
-                    <h5 className="card-title mb-3">
-                      Plan: <strong>{selectedPlan[0]}</strong>
+                    <h5 className="card-title mb-3" style={{ color: '#212529', fontWeight: 'bold' }}>
+                      Plan: <strong style={{ color: '#fd7e14' }}>{selectedPlan[0]}</strong>
                     </h5>
                     <div className="table-responsive">
-                      <table className="table table-sm table-bordered table-dark">
-                        <thead className="table-warning">
+                      <table className="table table-sm table-bordered">
+                        <thead style={{ backgroundColor: '#fd7e14', color: 'white' }}>
                           <tr>
                             <th style={{ width: '80px' }}>Stunde</th>
                             <th className="text-center">Temperatur</th>
@@ -498,15 +503,16 @@ export default function HeatingSchedules() {
                             return (
                               <tr key={hour}>
                                 <td className="fw-bold text-center" style={{ 
-                                  backgroundColor: hour % 2 === 0 ? '#343a40' : '#495057',
-                                  fontSize: '0.9rem'
+                                  backgroundColor: hour % 2 === 0 ? '#f8f9fa' : '#ffffff',
+                                  fontSize: '0.9rem',
+                                  color: '#212529'
                                 }}>
                                   {hour.toString().padStart(2, '0')}:00
                                 </td>
                                 <td className="text-center" style={{ 
-                                  backgroundColor: hour % 2 === 0 ? '#343a40' : '#495057',
+                                  backgroundColor: hour % 2 === 0 ? '#f8f9fa' : '#ffffff',
                                   fontSize: '1rem',
-                                  color: temp ? '#ffc107' : '#6c757d',
+                                  color: temp ? '#fd7e14' : '#6c757d',
                                   fontWeight: temp ? 'bold' : 'normal'
                                 }}>
                                   {temp ? `${temp}°C` : '-'}
@@ -529,14 +535,15 @@ export default function HeatingSchedules() {
               )}
             </>
           ) : scheduleData && Array.isArray(scheduleData) && scheduleData.length === 0 ? (
-            <div className="card mb-3 bg-secondary">
+            <div className="card mb-3" style={{ backgroundColor: '#ffffff', border: '1px solid #dee2e6' }}>
               <div className="card-body text-center">
-                <h5 className="card-title">Keine Heizpläne vorhanden</h5>
+                <h5 className="card-title" style={{ color: '#212529', fontWeight: 'bold' }}>Keine Heizpläne vorhanden</h5>
                 <p className="card-text mb-3">Erstellen Sie Ihren ersten Heizplan.</p>
                 <button
-                  className="btn btn-success"
+                  className="btn"
                   onClick={handleCreatePlan}
                   disabled={loading}
+                  style={{ backgroundColor: '#198754', borderColor: '#198754', color: 'white' }}
                 >
                   <FontAwesomeIcon icon={faPlus} className="me-2" />
                   Neuen Plan erstellen
@@ -544,9 +551,9 @@ export default function HeatingSchedules() {
               </div>
             </div>
           ) : (
-            <div className="card mb-3 bg-secondary">
+            <div className="card mb-3" style={{ backgroundColor: '#ffffff', border: '1px solid #dee2e6' }}>
               <div className="card-body">
-                <h5 className="card-title">Keine Heizpläne verfügbar</h5>
+                <h5 className="card-title" style={{ color: '#212529', fontWeight: 'bold' }}>Keine Heizpläne verfügbar</h5>
                 <p className="card-text">
                   {scheduleData ? 
                     'Keine gültigen Plan-Daten gefunden.' : 
@@ -561,14 +568,14 @@ export default function HeatingSchedules() {
           {showPlanModal && (
             <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }} tabIndex="-1">
               <div className="modal-dialog modal-lg modal-dialog-scrollable">
-                <div className="modal-content bg-dark text-white">
-                  <div className="modal-header">
-                    <h5 className="modal-title">
+                <div className="modal-content" style={{ backgroundColor: '#ffffff' }}>
+                  <div className="modal-header" style={{ borderBottom: '1px solid #dee2e6' }}>
+                    <h5 className="modal-title" style={{ color: '#212529', fontWeight: 'bold' }}>
                       {editingPlanIndex !== null ? 'Plan bearbeiten' : 'Neuen Plan erstellen'}
                     </h5>
                     <button
                       type="button"
-                      className="btn-close btn-close-white"
+                      className="btn-close"
                       onClick={handleCloseModal}
                     ></button>
                   </div>
@@ -587,14 +594,15 @@ export default function HeatingSchedules() {
                     )}
                     
                     <div className="mb-3">
-                      <label htmlFor="planName" className="form-label">Plan-Name</label>
+                      <label htmlFor="planName" className="form-label" style={{ color: '#212529', fontWeight: 'bold' }}>Plan-Name</label>
                       <input
                         type="text"
-                        className="form-control bg-secondary text-white border-secondary"
+                        className="form-control"
                         id="planName"
                         value={planName}
                         onChange={(e) => setPlanName(e.target.value)}
                         placeholder="z.B. Standard, Wochenende, etc."
+                        style={{ border: '1px solid #dee2e6' }}
                       />
                       {editingPlanIndex !== null && scheduleData && scheduleData[editingPlanIndex] && (
                         <div className="mt-2">
@@ -615,10 +623,10 @@ export default function HeatingSchedules() {
                     </div>
 
                     <div className="mb-3">
-                      <label className="form-label">Temperaturen pro Stunde (0-23 Uhr)</label>
+                      <label className="form-label" style={{ color: '#212529', fontWeight: 'bold' }}>Temperaturen pro Stunde (0-23 Uhr)</label>
                       <div className="table-responsive">
-                        <table className="table table-sm table-bordered table-dark">
-                          <thead className="table-warning">
+                        <table className="table table-sm table-bordered">
+                          <thead style={{ backgroundColor: '#fd7e14', color: 'white' }}>
                             <tr>
                               <th style={{ width: '80px' }}>Stunde</th>
                               <th>Temperatur (°C)</th>
@@ -628,16 +636,17 @@ export default function HeatingSchedules() {
                             {Array.from({ length: 24 }, (_, hour) => (
                               <tr key={hour}>
                                 <td className="fw-bold text-center" style={{ 
-                                  backgroundColor: hour % 2 === 0 ? '#343a40' : '#495057'
+                                  backgroundColor: hour % 2 === 0 ? '#f8f9fa' : '#ffffff',
+                                  color: '#212529'
                                 }}>
                                   {hour.toString().padStart(2, '0')}:00
                                 </td>
                                 <td style={{ 
-                                  backgroundColor: hour % 2 === 0 ? '#343a40' : '#495057'
+                                  backgroundColor: hour % 2 === 0 ? '#f8f9fa' : '#ffffff'
                                 }}>
                                   <input
                                     type="number"
-                                    className="form-control form-control-sm bg-secondary text-white border-secondary"
+                                    className="form-control form-control-sm"
                                     min="0"
                                     max="50"
                                     step="0.5"
@@ -648,6 +657,7 @@ export default function HeatingSchedules() {
                                       setPlanTemperatures(newTemps);
                                     }}
                                     placeholder="z.B. 20"
+                                    style={{ border: '1px solid #dee2e6' }}
                                   />
                                 </td>
                               </tr>
@@ -657,10 +667,10 @@ export default function HeatingSchedules() {
                       </div>
                     </div>
                   </div>
-                  <div className="modal-footer">
+                  <div className="modal-footer" style={{ borderTop: '1px solid #dee2e6' }}>
                     <button
                       type="button"
-                      className="btn btn-secondary"
+                      className="btn btn-outline-secondary"
                       onClick={handleCloseModal}
                       disabled={saving}
                     >
@@ -669,9 +679,10 @@ export default function HeatingSchedules() {
                     </button>
                     <button
                       type="button"
-                      className="btn btn-success"
+                      className="btn"
                       onClick={handleSavePlan}
                       disabled={saving}
+                      style={{ backgroundColor: '#198754', borderColor: '#198754', color: 'white' }}
                     >
                       {saving ? (
                         <>

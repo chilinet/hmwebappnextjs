@@ -198,17 +198,17 @@ export default function NewUser() {
 
   return (
     <div className="container mt-4">
-      <div className="card bg-dark text-light">
+      <div className="card" style={{ backgroundColor: '#ffffff', border: '1px solid #dee2e6' }}>
         <div className="card-body">
           <div className="d-flex justify-content-between align-items-center mb-4">
             <div className="d-flex align-items-center">
               <button 
-                className="btn btn-outline-light me-3"
+                className="btn btn-outline-secondary me-3"
                 onClick={() => router.push('/config/users')}
               >
                 <FontAwesomeIcon icon={faArrowLeft} />
               </button>
-              <h2 className="mb-0 text-white">Neuer Benutzer</h2>
+              <h1 className="mb-0" style={{ color: '#fd7e14', fontSize: '2.5rem', fontWeight: 'bold' }}>Neuer Benutzer</h1>
             </div>
           </div>
 
@@ -221,64 +221,69 @@ export default function NewUser() {
           <form onSubmit={handleSubmit}>
             <div className="row">
               <div className="col-md-6 mb-3">
-                <label htmlFor="username" className="form-label text-white">Benutzername</label>
+                <label htmlFor="username" className="form-label" style={{ color: '#212529', fontWeight: 'bold' }}>Benutzername</label>
                 <input
                   type="text"
-                  className="form-control bg-white text-dark"
+                  className="form-control"
                   id="username"
                   name="username"
                   value={user.username}
                   onChange={handleChange}
                   required
+                  style={{ border: '1px solid #dee2e6' }}
                 />
               </div>
 
               <div className="col-md-6 mb-3">
-                <label htmlFor="email" className="form-label text-white">Email</label>
+                <label htmlFor="email" className="form-label" style={{ color: '#212529', fontWeight: 'bold' }}>Email</label>
                 <input
                   type="email"
-                  className="form-control bg-white text-dark"
+                  className="form-control"
                   id="email"
                   name="email"
                   value={user.email}
                   onChange={handleChange}
                   required
+                  style={{ border: '1px solid #dee2e6' }}
                 />
               </div>
 
               <div className="col-md-6 mb-3">
-                <label htmlFor="firstName" className="form-label text-white">Vorname</label>
+                <label htmlFor="firstName" className="form-label" style={{ color: '#212529', fontWeight: 'bold' }}>Vorname</label>
                 <input
                   type="text"
-                  className="form-control bg-white text-dark"
+                  className="form-control"
                   id="firstName"
                   name="firstName"
                   value={user.firstName}
                   onChange={handleChange}
+                  style={{ border: '1px solid #dee2e6' }}
                 />
               </div>
 
               <div className="col-md-6 mb-3">
-                <label htmlFor="lastName" className="form-label text-white">Nachname</label>
+                <label htmlFor="lastName" className="form-label" style={{ color: '#212529', fontWeight: 'bold' }}>Nachname</label>
                 <input
                   type="text"
-                  className="form-control bg-white text-dark"
+                  className="form-control"
                   id="lastName"
                   name="lastName"
                   value={user.lastName}
                   onChange={handleChange}
+                  style={{ border: '1px solid #dee2e6' }}
                 />
               </div>
 
               <div className="col-md-6 mb-3">
-                <label htmlFor="role" className="form-label text-white">Rolle</label>
+                <label htmlFor="role" className="form-label" style={{ color: '#212529', fontWeight: 'bold' }}>Rolle</label>
                 <select
-                  className="form-select bg-white text-dark"
+                  className="form-select"
                   id="role"
                   name="role"
                   value={user.role}
                   onChange={handleChange}
                   required
+                  style={{ border: '1px solid #dee2e6' }}
                 >
                   <option value="">Bitte wählen...</option>
                   {roles.map(role => (
@@ -293,28 +298,30 @@ export default function NewUser() {
               </div>
 
               <div className="col-md-6 mb-3">
-                <label htmlFor="password" className="form-label text-white">Passwort</label>
+                <label htmlFor="password" className="form-label" style={{ color: '#212529', fontWeight: 'bold' }}>Passwort</label>
                 <input
                   type="password"
-                  className="form-control bg-white text-dark"
+                  className="form-control"
                   id="password"
                   name="password"
                   value={user.password}
                   onChange={handleChange}
                   required
+                  style={{ border: '1px solid #dee2e6' }}
                 />
               </div>
 
               {isSuperAdmin && (
                 <div className="col-md-6 mb-3">
-                  <label htmlFor="customerid" className="form-label text-white">Kunde</label>
+                  <label htmlFor="customerid" className="form-label" style={{ color: '#212529', fontWeight: 'bold' }}>Kunde</label>
                   <select
-                    className="form-select bg-white text-dark"
+                    className="form-select"
                     id="customerid"
                     name="customerid"
                     value={user.customerid}
                     onChange={handleChange}
                     required
+                    style={{ border: '1px solid #dee2e6' }}
                   >
                     <option value="">Bitte wählen...</option>
                     {customers.map(customer => (
@@ -330,15 +337,16 @@ export default function NewUser() {
             <div className="d-flex justify-content-end gap-2">
               <button
                 type="button"
-                className="btn btn-outline-light"
+                className="btn btn-outline-secondary"
                 onClick={() => router.push('/config/users')}
               >
                 Abbrechen
               </button>
               <button
                 type="submit"
-                className="btn btn-warning"
+                className="btn"
                 disabled={saving}
+                style={{ backgroundColor: '#fd7e14', borderColor: '#fd7e14', color: 'white' }}
               >
                 <FontAwesomeIcon icon={faSave} className="me-2" />
                 {saving ? 'Speichern...' : 'Speichern'}
@@ -349,19 +357,14 @@ export default function NewUser() {
       </div>
 
       <style jsx>{`
-        .btn-warning {
-          background-color: #fd7e14;
-          border-color: #fd7e14;
-          color: white;
+        .form-label {
+          color: #212529;
+          font-weight: bold;
         }
-        .btn-warning:hover {
-          background-color: #e66e12;
-          border-color: #e66e12;
-          color: white;
+        .btn:hover {
+          opacity: 0.9;
         }
-        .btn-warning:disabled {
-          background-color: #fd7e14;
-          border-color: #fd7e14;
+        .btn:disabled {
           opacity: 0.65;
         }
       `}</style>

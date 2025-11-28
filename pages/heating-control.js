@@ -15,6 +15,7 @@ import {
   faChartLine,
   faThermometerHalf,
   faTachometerAlt,
+  faSlidersH,
   faExclamationTriangle,
   faCheckCircle,
   faClock,
@@ -3053,10 +3054,9 @@ export default function HeatingControl() {
         }
         
         .responsive-card {
-          flex: 0 0 200px !important;
-          min-width: 200px !important;
-          max-width: 200px !important;
-          width: 200px !important;
+          flex: 1 1 calc(50% - 0.5rem) !important;
+          min-width: calc(50% - 0.5rem) !important;
+          max-width: calc(50% - 0.5rem) !important;
         }
         
         .responsive-card .card {
@@ -3085,41 +3085,57 @@ export default function HeatingControl() {
           height: 1rem;
         }
         
+        @media (min-width: 768px) {
+          .responsive-card {
+            flex: 1 1 calc(33.333% - 0.5rem) !important;
+            min-width: calc(33.333% - 0.5rem) !important;
+            max-width: calc(33.333% - 0.5rem) !important;
+          }
+        }
+        
+        @media (min-width: 992px) {
+          .responsive-card {
+            flex: 1 1 calc(25% - 0.5rem) !important;
+            min-width: calc(25% - 0.5rem) !important;
+            max-width: calc(25% - 0.5rem) !important;
+          }
+        }
+        
         @media (min-width: 1200px) {
-          .responsive-cards {
-            flex-wrap: nowrap;
-          }
-          
           .responsive-card {
-            flex: 0 0 200px !important;
-            min-width: 200px !important;
-            max-width: 200px !important;
-            width: 200px !important;
+            flex: 1 1 calc(20% - 0.5rem) !important;
+            min-width: calc(20% - 0.5rem) !important;
+            max-width: calc(20% - 0.5rem) !important;
           }
         }
         
-        @media (max-width: 1199px) {
-          .responsive-cards {
-            flex-wrap: wrap;
-          }
-          
+        @media (max-width: 575px) {
           .responsive-card {
-            flex: 0 0 200px !important;
-            min-width: 200px !important;
-            max-width: 200px !important;
-            width: 200px !important;
+            flex: 1 1 100% !important;
+            min-width: 100% !important;
+            max-width: 100% !important;
           }
         }
-        
-         @media (max-width: 768px) {
-           .responsive-card {
-             flex: 1 1 100%;
-           }
-         }
 
          .disabled-card {
            opacity: 0.5;
            filter: grayscale(100%);
+         }
+         
+         /* Hide tab text in responsive mode, show only icons */
+         @media (max-width: 991.98px) {
+           .nav-tabs .nav-link {
+             padding: 0.5rem 0.75rem;
+             justify-content: center;
+           }
+           
+           .nav-tabs .nav-link .me-2 {
+             margin-right: 0 !important;
+           }
+           
+           .nav-tabs .nav-link .tab-text {
+             display: none;
+           }
          }
       `}</style>
       <div className="container-fluid p-0 heating-control-page" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: 'white' }}>
@@ -3129,8 +3145,8 @@ export default function HeatingControl() {
             <button
               className="btn btn-primary position-fixed shadow"
               style={{ 
-                top: '10px', 
-                left: '10px', 
+                bottom: '20px', 
+                left: '20px', 
                 zIndex: 1050,
                 borderRadius: '50%',
                 width: '50px',
@@ -3355,7 +3371,7 @@ export default function HeatingControl() {
                           type="button"
                         >
                           <FontAwesomeIcon icon={faFolder} className="me-2" />
-                          Übersicht
+                          <span className="tab-text">Übersicht</span>
                         </button>
                       </li>
                     )}
@@ -3367,7 +3383,7 @@ export default function HeatingControl() {
                           type="button"
                         >
                           <FontAwesomeIcon icon={faChartLine} className="me-2" />
-                          Verlauf
+                          <span className="tab-text">Verlauf</span>
                         </button>
                       </li>
                     )}
@@ -3424,7 +3440,7 @@ export default function HeatingControl() {
                           type="button"
                         >
                           <FontAwesomeIcon icon={faBullseye} className="me-2" />
-                          Temperatur
+                          <span className="tab-text">Temperatur</span>
                         </button>
                       </li>
                     )}
@@ -3435,8 +3451,8 @@ export default function HeatingControl() {
                           onClick={() => setActiveTab('details')}
                           type="button"
                         >
-                          <FontAwesomeIcon icon={faCog} className="me-2" />
-                          Details
+                          <FontAwesomeIcon icon={faInfoCircle} className="me-2" />
+                          <span className="tab-text">Details</span>
                         </button>
                       </li>
                     )}
@@ -3462,7 +3478,7 @@ export default function HeatingControl() {
                           type="button"
                         >
                           <FontAwesomeIcon icon={faCog} className="me-2" />
-                          Einstellungen
+                          <span className="tab-text">Einstellungen</span>
                         </button>
                       </li>
                     )}
@@ -3577,7 +3593,7 @@ export default function HeatingControl() {
                           <div className="responsive-card">
                             <div className="card">
                               <div className="card-body text-center">
-                                <FontAwesomeIcon icon={faCog} className="text-secondary mb-3" size="2x" />
+                                <FontAwesomeIcon icon={faSlidersH} className="text-secondary mb-3" size="2x" />
                                 <h4 className="card-title">Ventilöffnung</h4>
                                 {loadingTemperature ? (
                                   <div className="d-flex align-items-center justify-content-center">
@@ -4912,4 +4928,5 @@ export default function HeatingControl() {
     </DndProvider>
   );
 }
+
 

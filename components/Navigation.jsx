@@ -76,8 +76,8 @@ export default function Navigation() {
 
                 {/* Navigation Items */}
                 <div className={`navbar-collapse ${isMobileMenuOpen ? 'show' : ''}`} id="navbarNav">
-                    {/* User Menu */}
-                    <div className="navbar-nav ms-auto d-flex align-items-center">
+                    {/* Desktop User Menu */}
+                    <div className="navbar-nav ms-auto d-flex align-items-center d-none d-lg-flex">
                         {/* Customer Name */}
                         {customerName && (
                             <span className="nav-link text-muted fw-semibold me-3">
@@ -106,6 +106,7 @@ export default function Navigation() {
                                             className={`dropdown-item d-flex align-items-center ${
                                                 router.pathname === '/heating-control' ? 'active-menu-item' : ''
                                             }`}
+                                            onClick={() => setIsDropdownOpen(false)}
                                         >
                                             <FontAwesomeIcon icon={faThermometerHalf} className="me-2" />
                                             Heizungssteuerung
@@ -115,6 +116,7 @@ export default function Navigation() {
                                             className={`dropdown-item d-flex align-items-center ${
                                                 router.pathname === '/alarms' ? 'active-menu-item' : ''
                                             }`}
+                                            onClick={() => setIsDropdownOpen(false)}
                                         >
                                             <FontAwesomeIcon icon={faBell} className="me-2" />
                                             Alarme
@@ -123,6 +125,7 @@ export default function Navigation() {
                                         <Link href="/profile" className={`dropdown-item d-flex align-items-center ${
                                             router.pathname === '/profile' ? 'active-menu-item' : ''
                                         }`}
+                                        onClick={() => setIsDropdownOpen(false)}
                                         >
                                             <FontAwesomeIcon icon={faUser} className="me-2" />
                                             Profil
@@ -132,6 +135,7 @@ export default function Navigation() {
                                             className={`dropdown-item d-flex align-items-center ${
                                                 router.pathname.startsWith('/config') ? 'active-menu-item' : ''
                                             }`}
+                                            onClick={() => setIsDropdownOpen(false)}
                                         >
                                             <FontAwesomeIcon icon={faCog} className="me-2" />
                                             Konfiguration
@@ -143,6 +147,7 @@ export default function Navigation() {
                                             className={`dropdown-item d-flex align-items-center ${
                                               router.pathname === '/admin/customer-sync' ? 'active-menu-item' : ''
                                             }`}
+                                            onClick={() => setIsDropdownOpen(false)}
                                           >
                                             <FontAwesomeIcon icon={faUsers} className="me-2" />
                                             Customer-Sync
@@ -169,6 +174,77 @@ export default function Navigation() {
                             </button>
                         )}
                     </div>
+
+                    {/* Mobile Menu - Direct Links */}
+                    {session && (
+                        <div className="navbar-nav d-lg-none mobile-menu">
+                            <Link 
+                                href="/heating-control" 
+                                className={`nav-link d-flex align-items-center ${
+                                    router.pathname === '/heating-control' ? 'active-menu-item' : ''
+                                }`}
+                                onClick={() => setIsMobileMenuOpen(false)}
+                            >
+                                <FontAwesomeIcon icon={faThermometerHalf} className="me-2" />
+                                Heizungssteuerung
+                            </Link>
+                            <Link 
+                                href="/alarms" 
+                                className={`nav-link d-flex align-items-center ${
+                                    router.pathname === '/alarms' ? 'active-menu-item' : ''
+                                }`}
+                                onClick={() => setIsMobileMenuOpen(false)}
+                            >
+                                <FontAwesomeIcon icon={faBell} className="me-2" />
+                                Alarme
+                            </Link>
+                            <div className="dropdown-divider"></div>
+                            <Link 
+                                href="/profile" 
+                                className={`nav-link d-flex align-items-center ${
+                                    router.pathname === '/profile' ? 'active-menu-item' : ''
+                                }`}
+                                onClick={() => setIsMobileMenuOpen(false)}
+                            >
+                                <FontAwesomeIcon icon={faUser} className="me-2" />
+                                Profil
+                            </Link>
+                            <Link 
+                                href="/config" 
+                                className={`nav-link d-flex align-items-center ${
+                                    router.pathname.startsWith('/config') ? 'active-menu-item' : ''
+                                }`}
+                                onClick={() => setIsMobileMenuOpen(false)}
+                            >
+                                <FontAwesomeIcon icon={faCog} className="me-2" />
+                                Konfiguration
+                            </Link>
+                            {/* Customer-Sync Admin-Menüpunkt - nur für Superadmin */}
+                            {session.user?.role === 1 && (
+                                <Link 
+                                    href="/admin/customer-sync" 
+                                    className={`nav-link d-flex align-items-center ${
+                                        router.pathname === '/admin/customer-sync' ? 'active-menu-item' : ''
+                                    }`}
+                                    onClick={() => setIsMobileMenuOpen(false)}
+                                >
+                                    <FontAwesomeIcon icon={faUsers} className="me-2" />
+                                    Customer-Sync
+                                </Link>
+                            )}
+                            <div className="dropdown-divider"></div>
+                            <button 
+                                onClick={() => {
+                                    setIsMobileMenuOpen(false);
+                                    handleSignOut();
+                                }}
+                                className="nav-link d-flex align-items-center text-danger border-0 bg-transparent w-100 text-start"
+                            >
+                                <FontAwesomeIcon icon={faSignOutAlt} className="me-2" />
+                                Abmelden
+                            </button>
+                        </div>
+                    )}
                 </div>
             </div>
             
@@ -196,6 +272,24 @@ export default function Navigation() {
                     background-color: #fd7e14 !important;
                     color: white !important;
                     border-color: #fd7e14 !important;
+                }
+                
+                /* Mobile menu active items */
+                @media (max-width: 991.98px) {
+                    .mobile-menu .nav-link.active-menu-item {
+                        background-color: #fd7e14 !important;
+                        color: white !important;
+                    }
+                    
+                    .mobile-menu .nav-link.active-menu-item:hover {
+                        background-color: #e96c11 !important;
+                        color: white !important;
+                    }
+                    
+                    .mobile-menu .nav-link.active-menu-item .fa,
+                    .mobile-menu .nav-link.active-menu-item svg {
+                        color: white !important;
+                    }
                 }
             `}</style>
         </nav>

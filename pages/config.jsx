@@ -44,7 +44,7 @@ export default function Config() {
 
   return (
     <div className="container mt-4">
-      <h2 className="mb-4 text-white">Konfiguration</h2>
+      <h1 className="mb-4" style={{ color: '#fd7e14', fontSize: '2.5rem', fontWeight: 'bold' }}>Konfiguration</h1>
       <div className="row g-4">
         {/* Kundenverwaltung Kachel - nur für Superadmin */}
         {isSuperAdmin && (
@@ -52,16 +52,17 @@ export default function Config() {
             <div className="card h-100 text-center p-4" 
                 style={{ 
                   cursor: 'pointer',
-                  backgroundColor: '#2C3E50',
-                  transition: 'background-color 0.3s'
+                  backgroundColor: '#ffffff',
+                  transition: 'background-color 0.3s',
+                  border: '1px solid #dee2e6'
                 }}
-                onMouseOver={e => e.currentTarget.style.backgroundColor = '#1a252f'}
-                onMouseOut={e => e.currentTarget.style.backgroundColor = '#2C3E50'}
+                onMouseOver={e => e.currentTarget.style.backgroundColor = '#f8f9fa'}
+                onMouseOut={e => e.currentTarget.style.backgroundColor = '#ffffff'}
                 onClick={() => router.push('/config/customers')}>
               <div className="card-body">
-                <FontAwesomeIcon icon={faUsers} size="3x" className="mb-3 text-white" />
-                <h5 className="card-title text-white">Kundenverwaltung</h5>
-                <p className="card-text text-white-50">
+                <FontAwesomeIcon icon={faUsers} size="3x" className="mb-3" style={{ color: '#fd7e14' }} />
+                <h5 className="card-title" style={{ color: '#fd7e14' }}>Kundenverwaltung</h5>
+                <p className="card-text text-muted">
                   Kunden anlegen, bearbeiten und verwalten
                 </p>
               </div>
@@ -74,16 +75,17 @@ export default function Config() {
           <div className="card h-100 text-center p-4" 
                style={{ 
                  cursor: 'pointer',
-                 backgroundColor: '#2C3E50',
-                 transition: 'background-color 0.3s'
+                 backgroundColor: '#ffffff',
+                 transition: 'background-color 0.3s',
+                 border: '1px solid #dee2e6'
                }}
-               onMouseOver={e => e.currentTarget.style.backgroundColor = '#1a252f'}
-               onMouseOut={e => e.currentTarget.style.backgroundColor = '#2C3E50'}
+               onMouseOver={e => e.currentTarget.style.backgroundColor = '#f8f9fa'}
+               onMouseOut={e => e.currentTarget.style.backgroundColor = '#ffffff'}
                onClick={() => router.push('/config/users')}>
             <div className="card-body">
-              <FontAwesomeIcon icon={faUserCog} size="3x" className="mb-3 text-white" />
-              <h5 className="card-title text-white">Benutzerverwaltung</h5>
-              <p className="card-text text-white-50">
+              <FontAwesomeIcon icon={faUserCog} size="3x" className="mb-3" style={{ color: '#fd7e14' }} />
+              <h5 className="card-title" style={{ color: '#fd7e14' }}>Benutzerverwaltung</h5>
+              <p className="card-text text-muted">
                 Benutzer und Berechtigungen verwalten
               </p>
             </div>
@@ -96,16 +98,17 @@ export default function Config() {
             <div className="card h-100 text-center p-4" 
                  style={{ 
                    cursor: 'pointer',
-                   backgroundColor: '#2C3E50',
-                   transition: 'background-color 0.3s'
+                   backgroundColor: '#ffffff',
+                   transition: 'background-color 0.3s',
+                   border: '1px solid #dee2e6'
                  }}
-                 onMouseOver={e => e.currentTarget.style.backgroundColor = '#1a252f'}
-                 onMouseOut={e => e.currentTarget.style.backgroundColor = '#2C3E50'}
+                 onMouseOver={e => e.currentTarget.style.backgroundColor = '#f8f9fa'}
+                 onMouseOut={e => e.currentTarget.style.backgroundColor = '#ffffff'}
                  onClick={() => router.push('/config/structure')}>
               <div className="card-body">
-                <FontAwesomeIcon icon={faSitemap} size="3x" className="mb-3 text-white" />
-                <h5 className="card-title text-white">Objektstruktur</h5>
-                <p className="card-text text-white-50">
+                <FontAwesomeIcon icon={faSitemap} size="3x" className="mb-3" style={{ color: '#fd7e14' }} />
+                <h5 className="card-title" style={{ color: '#fd7e14' }}>Objektstruktur</h5>
+                <p className="card-text text-muted">
                   Gebäude und Anlagenstruktur verwalten
                 </p>
               </div>
@@ -119,16 +122,17 @@ export default function Config() {
             <div className="card h-100 text-center p-4" 
                 style={{ 
                   cursor: 'pointer',
-                  backgroundColor: '#2C3E50',
-                  transition: 'background-color 0.3s'
+                  backgroundColor: '#ffffff',
+                  transition: 'background-color 0.3s',
+                  border: '1px solid #dee2e6'
                 }}
-                onMouseOver={e => e.currentTarget.style.backgroundColor = '#1a252f'}
-                onMouseOut={e => e.currentTarget.style.backgroundColor = '#2C3E50'}
+                onMouseOver={e => e.currentTarget.style.backgroundColor = '#f8f9fa'}
+                onMouseOut={e => e.currentTarget.style.backgroundColor = '#ffffff'}
                 onClick={() => router.push('/config/roles')}>
               <div className="card-body">
-                <FontAwesomeIcon icon={faUserShield} size="3x" className="mb-3 text-white" />
-                <h5 className="card-title text-white">Rollen und Berechtigungen</h5>
-                <p className="card-text text-white-50">
+                <FontAwesomeIcon icon={faUserShield} size="3x" className="mb-3" style={{ color: '#fd7e14' }} />
+                <h5 className="card-title" style={{ color: '#fd7e14' }}>Rollen und Berechtigungen</h5>
+                <p className="card-text text-muted">
                   Rollen und Berechtigungen verwalten
                 </p>
               </div>
@@ -142,16 +146,17 @@ export default function Config() {
             <div className="card h-100 text-center p-4" 
                  style={{ 
                    cursor: 'pointer',
-                   backgroundColor: '#2C3E50',
-                   transition: 'background-color 0.3s'
+                   backgroundColor: '#ffffff',
+                   transition: 'background-color 0.3s',
+                   border: '1px solid #dee2e6'
                  }}
-                 onMouseOver={e => e.currentTarget.style.backgroundColor = '#1a252f'}
-                 onMouseOut={e => e.currentTarget.style.backgroundColor = '#2C3E50'}
+                 onMouseOver={e => e.currentTarget.style.backgroundColor = '#f8f9fa'}
+                 onMouseOut={e => e.currentTarget.style.backgroundColor = '#ffffff'}
                  onClick={() => router.push('/config/processes')}>
               <div className="card-body">
-                <FontAwesomeIcon icon={faGears} size="3x" className="mb-3 text-white" />
-                <h5 className="card-title text-white">Prozesse</h5>
-                <p className="card-text text-white-50">
+                <FontAwesomeIcon icon={faGears} size="3x" className="mb-3" style={{ color: '#fd7e14' }} />
+                <h5 className="card-title" style={{ color: '#fd7e14' }}>Prozesse</h5>
+                <p className="card-text text-muted">
                   Prozesse verwalten
                 </p>
               </div>
@@ -164,20 +169,21 @@ export default function Config() {
           <div className="card h-100 text-center p-4" 
                style={{ 
                  cursor: 'pointer',
-                 backgroundColor: '#2C3E50',
-                 transition: 'background-color 0.3s'
+                 backgroundColor: '#ffffff',
+                 transition: 'background-color 0.3s',
+                 border: '1px solid #dee2e6'
                }}
-               onMouseOver={e => e.currentTarget.style.backgroundColor = '#1a252f'}
-               onMouseOut={e => e.currentTarget.style.backgroundColor = '#2C3E50'}
+               onMouseOver={e => e.currentTarget.style.backgroundColor = '#f8f9fa'}
+               onMouseOut={e => e.currentTarget.style.backgroundColor = '#ffffff'}
                onClick={() => router.push('/config/devices')}>
             <div className="card-body">
               <FontAwesomeIcon 
                 icon={faGears} 
-                className="mb-3 text-white" 
-                style={{ fontSize: '2rem' }}
+                className="mb-3" 
+                style={{ fontSize: '2rem', color: '#fd7e14' }}
               />
-              <h5 className="card-title text-white">Geräte</h5>
-              <p className="card-text text-white-50">
+              <h5 className="card-title" style={{ color: '#fd7e14' }}>Geräte</h5>
+              <p className="card-text text-muted">
                 Geräte verwalten
               </p>
             </div>
@@ -190,20 +196,21 @@ export default function Config() {
             <div className="card h-100 text-center p-4" 
                  style={{ 
                    cursor: 'pointer',
-                   backgroundColor: '#2C3E50',
-                   transition: 'background-color 0.3s'
+                   backgroundColor: '#ffffff',
+                   transition: 'background-color 0.3s',
+                   border: '1px solid #dee2e6'
                  }}
-                 onMouseOver={e => e.currentTarget.style.backgroundColor = '#1a252f'}
-                 onMouseOut={e => e.currentTarget.style.backgroundColor = '#2C3E50'}
+                 onMouseOver={e => e.currentTarget.style.backgroundColor = '#f8f9fa'}
+                 onMouseOut={e => e.currentTarget.style.backgroundColor = '#ffffff'}
                  onClick={() => router.push('/config/inventory')}>
               <div className="card-body">
                 <FontAwesomeIcon 
                   icon={faBoxes} 
-                  className="mb-3 text-white" 
-                  style={{ fontSize: '2rem' }}
+                  className="mb-3" 
+                  style={{ fontSize: '2rem', color: '#fd7e14' }}
                 />
-                <h5 className="card-title text-white">Inventar</h5>
-                <p className="card-text text-white-50">
+                <h5 className="card-title" style={{ color: '#fd7e14' }}>Inventar</h5>
+                <p className="card-text text-muted">
                   Inventar verwalten
                 </p>
               </div>
@@ -216,16 +223,17 @@ export default function Config() {
           <div className="card h-100 text-center p-4" 
                style={{ 
                  cursor: 'pointer',
-                 backgroundColor: '#2C3E50',
-                 transition: 'background-color 0.3s'
+                 backgroundColor: '#ffffff',
+                 transition: 'background-color 0.3s',
+                 border: '1px solid #dee2e6'
                }}
-               onMouseOver={e => e.currentTarget.style.backgroundColor = '#1a252f'}
-               onMouseOut={e => e.currentTarget.style.backgroundColor = '#2C3E50'}
+               onMouseOver={e => e.currentTarget.style.backgroundColor = '#f8f9fa'}
+               onMouseOut={e => e.currentTarget.style.backgroundColor = '#ffffff'}
                onClick={() => router.push('/config/heating-schedules')}>
             <div className="card-body">
-              <FontAwesomeIcon icon={faCalendarAlt} size="3x" className="mb-3 text-white" />
-              <h5 className="card-title text-white">Heizpläne</h5>
-              <p className="card-text text-white-50">
+              <FontAwesomeIcon icon={faCalendarAlt} size="3x" className="mb-3" style={{ color: '#fd7e14' }} />
+              <h5 className="card-title" style={{ color: '#fd7e14' }}>Heizpläne</h5>
+              <p className="card-text text-muted">
                 Heizpläne verwalten und konfigurieren
               </p>
             </div>
