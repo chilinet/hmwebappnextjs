@@ -79,12 +79,12 @@ export default function EditUser() {
     <div className="container mt-4">
       <div className="d-flex align-items-center mb-4">
         <button 
-          className="btn btn-link text-white me-3" 
+          className="btn btn-outline-secondary me-3" 
           onClick={() => router.back()}
         >
-          <FontAwesomeIcon icon={faArrowLeft} /> Zurück
+          <FontAwesomeIcon icon={faArrowLeft} />
         </button>
-        <h2 className="mb-0 text-white">Benutzerdaten bearbeiten</h2>
+        <h1 className="mb-0" style={{ color: '#fd7e14', fontSize: '2.5rem', fontWeight: 'bold' }}>Benutzerdaten bearbeiten</h1>
       </div>
 
       {error && (
@@ -98,12 +98,12 @@ export default function EditUser() {
         </div>
       )}
 
-      <div className="card" style={{ backgroundColor: '#2C3E50' }}>
+      <div className="card" style={{ backgroundColor: '#ffffff', border: '1px solid #dee2e6' }}>
         <div className="card-body">
           <form onSubmit={handleSubmit}>
             <div className="row">
               <div className="col-md-6 mb-3">
-                <label htmlFor="username" className="form-label text-white">
+                <label htmlFor="username" className="form-label" style={{ color: '#212529', fontWeight: 'bold' }}>
                   Benutzername
                 </label>
                 <input
@@ -114,10 +114,11 @@ export default function EditUser() {
                   value={userData.username}
                   onChange={handleChange}
                   required
+                  style={{ border: '1px solid #dee2e6' }}
                 />
               </div>
               <div className="col-md-6 mb-3">
-                <label htmlFor="email" className="form-label text-white">
+                <label htmlFor="email" className="form-label" style={{ color: '#212529', fontWeight: 'bold' }}>
                   E-Mail
                 </label>
                 <input
@@ -128,12 +129,13 @@ export default function EditUser() {
                   value={userData.email}
                   onChange={handleChange}
                   required
+                  style={{ border: '1px solid #dee2e6' }}
                 />
               </div>
             </div>
             <div className="row">
               <div className="col-md-6 mb-3">
-                <label htmlFor="firstname" className="form-label text-white">
+                <label htmlFor="firstname" className="form-label" style={{ color: '#212529', fontWeight: 'bold' }}>
                   Vorname
                 </label>
                 <input
@@ -143,10 +145,11 @@ export default function EditUser() {
                   name="firstname"
                   value={userData.firstname}
                   onChange={handleChange}
+                  style={{ border: '1px solid #dee2e6' }}
                 />
               </div>
               <div className="col-md-6 mb-3">
-                <label htmlFor="lastname" className="form-label text-white">
+                <label htmlFor="lastname" className="form-label" style={{ color: '#212529', fontWeight: 'bold' }}>
                   Nachname
                 </label>
                 <input
@@ -156,6 +159,7 @@ export default function EditUser() {
                   name="lastname"
                   value={userData.lastname}
                   onChange={handleChange}
+                  style={{ border: '1px solid #dee2e6' }}
                 />
               </div>
             </div>
@@ -163,7 +167,7 @@ export default function EditUser() {
             <div className="d-flex justify-content-between mt-4">
               <button
                 type="button"
-                className="btn btn-secondary"
+                className="btn btn-outline-secondary"
                 onClick={() => setShowPasswordModal(true)}
               >
                 <FontAwesomeIcon icon={faKey} className="me-2" />
@@ -171,8 +175,9 @@ export default function EditUser() {
               </button>
               <button
                 type="submit"
-                className="btn btn-primary"
+                className="btn"
                 disabled={isLoading}
+                style={{ backgroundColor: '#fd7e14', borderColor: '#fd7e14', color: 'white' }}
               >
                 <FontAwesomeIcon icon={faSave} className="me-2" />
                 {isLoading ? 'Speichert...' : 'Speichern'}
@@ -186,12 +191,12 @@ export default function EditUser() {
       {showPasswordModal && (
         <div className="modal show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
           <div className="modal-dialog">
-            <div className="modal-content" style={{ backgroundColor: '#2C3E50' }}>
-              <div className="modal-header border-0">
-                <h5 className="modal-title text-white">Passwort ändern</h5>
+            <div className="modal-content" style={{ backgroundColor: '#ffffff' }}>
+              <div className="modal-header" style={{ borderBottom: '1px solid #dee2e6' }}>
+                <h5 className="modal-title" style={{ color: '#212529', fontWeight: 'bold' }}>Passwort ändern</h5>
                 <button
                   type="button"
-                  className="btn-close btn-close-white"
+                  className="btn-close"
                   onClick={() => setShowPasswordModal(false)}
                 />
               </div>
@@ -265,7 +270,7 @@ function PasswordChangeForm({ userId, onClose }) {
           </div>
         )}
         <div className="mb-3">
-          <label htmlFor="currentPassword" className="form-label text-white">
+          <label htmlFor="currentPassword" className="form-label" style={{ color: '#212529', fontWeight: 'bold' }}>
             Aktuelles Passwort
           </label>
           <input
@@ -276,10 +281,11 @@ function PasswordChangeForm({ userId, onClose }) {
             value={passwords.currentPassword}
             onChange={handleChange}
             required
+            style={{ border: '1px solid #dee2e6' }}
           />
         </div>
         <div className="mb-3">
-          <label htmlFor="newPassword" className="form-label text-white">
+          <label htmlFor="newPassword" className="form-label" style={{ color: '#212529', fontWeight: 'bold' }}>
             Neues Passwort
           </label>
           <input
@@ -290,10 +296,11 @@ function PasswordChangeForm({ userId, onClose }) {
             value={passwords.newPassword}
             onChange={handleChange}
             required
+            style={{ border: '1px solid #dee2e6' }}
           />
         </div>
         <div className="mb-3">
-          <label htmlFor="confirmPassword" className="form-label text-white">
+          <label htmlFor="confirmPassword" className="form-label" style={{ color: '#212529', fontWeight: 'bold' }}>
             Neues Passwort bestätigen
           </label>
           <input
@@ -304,21 +311,23 @@ function PasswordChangeForm({ userId, onClose }) {
             value={passwords.confirmPassword}
             onChange={handleChange}
             required
+            style={{ border: '1px solid #dee2e6' }}
           />
         </div>
       </div>
-      <div className="modal-footer border-0">
+      <div className="modal-footer" style={{ borderTop: '1px solid #dee2e6' }}>
         <button
           type="button"
-          className="btn btn-secondary"
+          className="btn btn-outline-secondary"
           onClick={onClose}
         >
           Abbrechen
         </button>
         <button
           type="submit"
-          className="btn btn-primary"
+          className="btn"
           disabled={isLoading}
+          style={{ backgroundColor: '#fd7e14', borderColor: '#fd7e14', color: 'white' }}
         >
           {isLoading ? 'Speichert...' : 'Passwort ändern'}
         </button>
