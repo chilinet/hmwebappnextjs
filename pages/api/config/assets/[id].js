@@ -33,6 +33,7 @@ async function fetchAssetAttributes(assetId, tbToken) {
       const extractedAttributes = {};
       const attributeKeys = [
         'operationalMode',
+        'operationalDevice',
         'childLock', 
         'fixValue',
         'maxTemp',
@@ -210,7 +211,7 @@ export default async function handler(req, res) {
         attributes: attributes
       });
     } else if (req.method === 'PUT') {
-      const { minTemp, maxTemp, overruleMinutes, runStatus, fixValue, schedulerPlan, childLock, windowSensor } = req.body;
+      const { minTemp, maxTemp, overruleMinutes, runStatus, fixValue, schedulerPlan, childLock, windowSensor, operationalMode, operationalDevice, extTempDevice } = req.body;
 
       // Wenn es ein Tree-Only-Update ist, überspringe ThingsBoard Update
       if (isTreeOnlyUpdate) {
@@ -228,6 +229,12 @@ export default async function handler(req, res) {
       if (schedulerPlan !== undefined) attributesToUpdate.schedulerPlan = schedulerPlan;
       if (childLock !== undefined) attributesToUpdate.childLock = childLock;
       if (windowSensor !== undefined) attributesToUpdate.windowSensor = windowSensor;
+      if (operationalMode !== undefined) attributesToUpdate.operationalMode = operationalMode;
+      if (operationalDevice !== undefined) attributesToUpdate.operationalDevice = operationalDevice;
+      if (extTempDevice !== undefined) {
+        // Wenn extTempDevice null ist, entferne das Attribut (setze es auf null)
+        attributesToUpdate.extTempDevice = extTempDevice;
+      }
 
       if (Object.keys(attributesToUpdate).length === 0) {
         return res.status(400).json({ message: 'No attributes to update' });

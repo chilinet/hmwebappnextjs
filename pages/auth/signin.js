@@ -4,7 +4,7 @@ import { useRouter } from 'next/router'
 import Image from "next/image"
 import Head from 'next/head'
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faEnvelope } from "@fortawesome/free-solid-svg-icons";
+import { faEnvelope, faUser } from "@fortawesome/free-solid-svg-icons";
 
 export default function SignIn() {
     const [username, setUsername] = useState('')
@@ -12,10 +12,14 @@ export default function SignIn() {
     const [error, setError] = useState(null)
     const [isLoading, setIsLoading] = useState(false)
     const [showForgotPassword, setShowForgotPassword] = useState(false)
+    const [showForgotUsername, setShowForgotUsername] = useState(false)
     const [email, setEmail] = useState('')
     const [forgotPasswordUsername, setForgotPasswordUsername] = useState('')
     const [forgotPasswordLoading, setForgotPasswordLoading] = useState(false)
     const [forgotPasswordSuccess, setForgotPasswordSuccess] = useState(false)
+    const [forgotUsernameEmail, setForgotUsernameEmail] = useState('')
+    const [forgotUsernameLoading, setForgotUsernameLoading] = useState(false)
+    const [forgotUsernameSuccess, setForgotUsernameSuccess] = useState(false)
     const router = useRouter()
 
     const handleSubmit = async (e) => {
@@ -76,6 +80,40 @@ export default function SignIn() {
             setError(err.message)
         } finally {
             setForgotPasswordLoading(false)
+        }
+    }
+
+    const handleForgotUsername = async (e) => {
+        e.preventDefault()
+        setError(null)
+        setForgotUsernameLoading(true)
+
+        try {
+            const response = await fetch('/api/auth/forgot-username', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ email: forgotUsernameEmail }),
+            })
+
+            const data = await response.json()
+
+            if (!response.ok) {
+                throw new Error(data.message || 'Fehler beim Senden der E-Mail')
+            }
+
+            setForgotUsernameSuccess(true)
+            setTimeout(() => {
+                setShowForgotUsername(false)
+                setForgotUsernameSuccess(false)
+                setForgotUsernameEmail('')
+            }, 5000)
+
+        } catch (err) {
+            setError(err.message)
+        } finally {
+            setForgotUsernameLoading(false)
         }
     }
 
@@ -151,16 +189,27 @@ export default function SignIn() {
                                     </button>
                                 </form>
 
-                                {/* Passwort vergessen Link */}
+                                {/* Passwort vergessen und Benutzername vergessen Links */}
                                 <div className="mt-3 text-center">
-                                    <button
-                                        type="button"
-                                        className="btn btn-link text-decoration-none p-0"
-                                        onClick={() => setShowForgotPassword(true)}
-                                        disabled={isLoading}
-                                    >
-                                        Passwort vergessen?
-                                    </button>
+                                    <div className="d-flex justify-content-center gap-3 flex-wrap">
+                                        <button
+                                            type="button"
+                                            className="btn btn-link text-decoration-none p-0"
+                                            onClick={() => setShowForgotUsername(true)}
+                                            disabled={isLoading}
+                                        >
+                                            Benutzername vergessen?
+                                        </button>
+                                        <span className="text-muted">|</span>
+                                        <button
+                                            type="button"
+                                            className="btn btn-link text-decoration-none p-0"
+                                            onClick={() => setShowForgotPassword(true)}
+                                            disabled={isLoading}
+                                        >
+                                            Passwort vergessen?
+                                        </button>
+                                    </div>
                                 </div>
                                 
                                 <div className="mt-4 text-center">
@@ -190,6 +239,94 @@ export default function SignIn() {
                     </div>
                 </div>
             </div>
+
+            {/* Benutzername vergessen Modal */}
+            {showForgotUsername && (
+                <div className="modal fade show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+                    <div className="modal-dialog modal-dialog-centered">
+                        <div className="modal-content">
+                            <div className="modal-header">
+                                <h5 className="modal-title">
+                                    <FontAwesomeIcon icon={faUser} className="me-2" />
+                                    Benutzername anfordern
+                                </h5>
+                                <button
+                                    type="button"
+                                    className="btn-close"
+                                    onClick={() => {
+                                        setShowForgotUsername(false)
+                                        setForgotUsernameEmail('')
+                                        setError(null)
+                                        setForgotUsernameSuccess(false)
+                                    }}
+                                ></button>
+                            </div>
+                            <div className="modal-body">
+                                {forgotUsernameSuccess ? (
+                                    <div className="alert alert-success">
+                                        <strong>E-Mail gesendet!</strong><br />
+                                        Falls die E-Mail-Adresse in unserem System registriert ist, erhalten Sie eine E-Mail mit Ihrem Benutzernamen.
+                                    </div>
+                                ) : (
+                                    <>
+                                        <p>Geben Sie Ihre E-Mail-Adresse ein. Wir senden Ihnen eine E-Mail mit Ihrem Benutzernamen.</p>
+                                        
+                                        {error && (
+                                            <div className="alert alert-danger">
+                                                <strong>Fehler:</strong> {error}
+                                            </div>
+                                        )}
+                                        
+                                        <form onSubmit={handleForgotUsername}>
+                                            <div className="mb-3">
+                                                <label className="form-label">E-Mail-Adresse</label>
+                                                <input
+                                                    type="email"
+                                                    className="form-control"
+                                                    value={forgotUsernameEmail}
+                                                    onChange={(e) => setForgotUsernameEmail(e.target.value)}
+                                                    required
+                                                    disabled={forgotUsernameLoading}
+                                                    placeholder="ihre.email@beispiel.de"
+                                                />
+                                            </div>
+                                            
+                                            <div className="d-flex gap-2">
+                                                <button
+                                                    type="submit"
+                                                    className="btn btn-primary"
+                                                    disabled={forgotUsernameLoading}
+                                                >
+                                                    {forgotUsernameLoading ? (
+                                                        <>
+                                                            <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                                                            Sende...
+                                                        </>
+                                                    ) : (
+                                                        'E-Mail senden'
+                                                    )}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className="btn btn-secondary"
+                                                    onClick={() => {
+                                                        setShowForgotUsername(false)
+                                                        setForgotUsernameEmail('')
+                                                        setError(null)
+                                                        setForgotUsernameSuccess(false)
+                                                    }}
+                                                >
+                                                    Abbrechen
+                                                </button>
+                                            </div>
+                                        </form>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Passwort vergessen Modal */}
             {showForgotPassword && (

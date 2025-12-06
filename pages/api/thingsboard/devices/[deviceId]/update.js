@@ -4,13 +4,19 @@ import thingsboardAuth from '../../auth';
 import axios from 'axios';
 import sql from 'mssql';
 
+// Determine if this is a local connection
+const isLocalConnection = (process.env.MSSQL_SERVER || 'hmcdev01.database.windows.net') === '127.0.0.1' || 
+                          (process.env.MSSQL_SERVER || 'hmcdev01.database.windows.net') === 'localhost' ||
+                          (process.env.MSSQL_SERVER || 'hmcdev01.database.windows.net')?.includes('localhost');
+
 const config = {
-  user: 'hmroot',
-  password: '9YJLpf6CfyteKzoN',
-  server: 'hmcdev01.database.windows.net',
-  database: 'hmcdev',
+  user: process.env.MSSQL_USER || 'hmroot',
+  password: process.env.MSSQL_PASSWORD || '9YJLpf6CfyteKzoN',
+  server: process.env.MSSQL_SERVER || 'hmcdev01.database.windows.net',
+  database: process.env.MSSQL_DATABASE || 'hmcdev',
   options: {
-    encrypt: true
+    encrypt: !isLocalConnection, // Disable encryption for local connections
+    trustServerCertificate: true
   }
 };
 

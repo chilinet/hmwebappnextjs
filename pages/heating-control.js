@@ -2117,7 +2117,20 @@ export default function HeatingControl() {
   // Function to fetch telemetry data for a node
   const fetchNodeTelemetry = async (node) => {
     if (!node || !node.relatedDevices || node.relatedDevices.length === 0) {
-      return { currentTemp: null, targetTemp: null, valvePosition: null, batteryVoltage: null, rssi: null, runStatus: node.runStatus || null };
+      // Fetch runStatus from ThingsBoard even if no devices
+      let runStatus = null;
+      if (node.id) {
+        try {
+          const assetResponse = await fetch(`/api/config/assets/${node.id}`);
+          if (assetResponse.ok) {
+            const assetData = await assetResponse.json();
+            runStatus = assetData.attributes?.runStatus || null;
+          }
+        } catch (error) {
+          console.warn(`Error fetching runStatus for node ${node.id}:`, error);
+        }
+      }
+      return { currentTemp: null, targetTemp: null, valvePosition: null, batteryVoltage: null, rssi: null, runStatus: runStatus || node.runStatus || null };
     }
 
     try {
@@ -2129,7 +2142,34 @@ export default function HeatingControl() {
       }).filter(id => id);
 
       if (deviceIds.length === 0) {
-        return { currentTemp: null, targetTemp: null, valvePosition: null, batteryVoltage: null, rssi: null, runStatus: node.runStatus || null };
+        // Fetch runStatus from ThingsBoard even if no devices
+        let runStatus = null;
+        if (node.id) {
+          try {
+            const assetResponse = await fetch(`/api/config/assets/${node.id}`);
+            if (assetResponse.ok) {
+              const assetData = await assetResponse.json();
+              runStatus = assetData.attributes?.runStatus || null;
+            }
+          } catch (error) {
+            console.warn(`Error fetching runStatus for node ${node.id}:`, error);
+          }
+        }
+        return { currentTemp: null, targetTemp: null, valvePosition: null, batteryVoltage: null, rssi: null, runStatus: runStatus || node.runStatus || null };
+      }
+
+      // Fetch runStatus from ThingsBoard for the asset
+      let runStatus = null;
+      if (node.id) {
+        try {
+          const assetResponse = await fetch(`/api/config/assets/${node.id}`);
+          if (assetResponse.ok) {
+            const assetData = await assetResponse.json();
+            runStatus = assetData.attributes?.runStatus || null;
+          }
+        } catch (error) {
+          console.warn(`Error fetching runStatus for node ${node.id}:`, error);
+        }
       }
 
       // Fetch latest data for all devices
@@ -2217,11 +2257,24 @@ export default function HeatingControl() {
         valvePosition: avgValvePosition,
         batteryVoltage: avgBatteryVoltage,
         rssi: avgRssi,
-        runStatus: node.runStatus || null
+        runStatus: runStatus || node.runStatus || null
       };
     } catch (error) {
       console.error('Error fetching node telemetry:', error);
-      return { currentTemp: null, targetTemp: null, valvePosition: null, batteryVoltage: null, rssi: null, runStatus: node.runStatus || null };
+      // Try to fetch runStatus even on error
+      let runStatus = null;
+      if (node.id) {
+        try {
+          const assetResponse = await fetch(`/api/config/assets/${node.id}`);
+          if (assetResponse.ok) {
+            const assetData = await assetResponse.json();
+            runStatus = assetData.attributes?.runStatus || null;
+          }
+        } catch (fetchError) {
+          console.warn(`Error fetching runStatus for node ${node.id}:`, fetchError);
+        }
+      }
+      return { currentTemp: null, targetTemp: null, valvePosition: null, batteryVoltage: null, rssi: null, runStatus: runStatus || node.runStatus || null };
     }
   };
 

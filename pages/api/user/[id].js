@@ -8,7 +8,8 @@ const config = {
   server: 'hmcdev01.database.windows.net',
   database: 'hmcdev',
   options: {
-    encrypt: true
+    encrypt: !isLocalConnection, // Disable encryption for local connections
+    trustServerCertificate: true
   }
 };
 

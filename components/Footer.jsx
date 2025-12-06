@@ -5,7 +5,7 @@ export default function Footer() {
     const currentYear = new Date().getFullYear();
     
     return (
-        <footer className="light-theme border-top mt-auto">
+        <footer className="light-theme border-top mt-auto" style={{ backgroundColor: '#fff3e0' }}>
             <div className="container-fluid py-4">
                 <div className="row align-items-center">
                     <div className="col-md-6">

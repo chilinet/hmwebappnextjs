@@ -8,7 +8,7 @@ const sqlConfig = {
   database: process.env.MSSQL_DATABASE,
   server: process.env.MSSQL_SERVER,
   options: {
-    encrypt: true,
+    encrypt: !isLocalConnection, // Disable encryption for local connections
     trustServerCertificate: true
   }
 }

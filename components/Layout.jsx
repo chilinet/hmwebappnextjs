@@ -4,7 +4,7 @@ import Footer from "../components/Footer";
 
 export default function Layout({ children }) {
   return (
-    <div className="light-theme min-vh-100 d-flex flex-column">
+    <div className="light-theme min-vh-100 d-flex flex-column" style={{ backgroundColor: '#fff3e0' }}>
       <Head>
         <title>HeatManager - Intelligente Heizungssteuerung</title>
         <meta name="description" content="HeatManager - Ihr intelligentes System zur Heizungssteuerung und -überwachung" />
@@ -15,7 +15,7 @@ export default function Layout({ children }) {
       
       <Navigation />
       
-      <main className="flex-grow-1">
+      <main className="flex-grow-1" style={{ backgroundColor: '#fff3e0' }}>
         {children}
       </main>
       

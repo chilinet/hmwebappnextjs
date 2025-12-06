@@ -3,13 +3,19 @@ import { getServerSession } from "next-auth/next"
 import sql from 'mssql'
 import { authOptions } from "../../auth/[...nextauth]";
 
+// Determine if this is a local connection
+const isLocalConnection = process.env.MSSQL_SERVER === '127.0.0.1' || 
+                          process.env.MSSQL_SERVER === 'localhost' ||
+                          process.env.MSSQL_SERVER?.includes('localhost');
+
 const config = {
   user: process.env.MSSQL_USER,
   password: process.env.MSSQL_PASSWORD,
   server: process.env.MSSQL_SERVER,
   database: process.env.MSSQL_DATABASE,
   options: {
-    encrypt: true
+    encrypt: !isLocalConnection, // Disable encryption for local connections
+    trustServerCertificate: true
   }
 }
 

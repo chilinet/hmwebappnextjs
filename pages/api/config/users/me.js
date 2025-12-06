@@ -3,13 +3,18 @@ import { authOptions } from "../../auth/[...nextauth]";
 import sql from 'mssql';
 import { getConnection } from '../../../../lib/db';
 
+// Determine if this is a local connection
+const isLocalConnection = process.env.MSSQL_SERVER === '127.0.0.1' || 
+                          process.env.MSSQL_SERVER === 'localhost' ||
+                          process.env.MSSQL_SERVER?.includes('localhost');
+
 const config = {
   user: process.env.MSSQL_USER,
   password: process.env.MSSQL_PASSWORD,
   database: process.env.MSSQL_DATABASE,
   server: process.env.MSSQL_SERVER,
   options: {
-    encrypt: true,
+    encrypt: !isLocalConnection, // Disable encryption for local connections
     trustServerCertificate: true,
     enableArithAbort: true,
     connectTimeout: 30000, // 30 Sekunden

@@ -19,7 +19,7 @@ export default async function handler(req, res) {
     database: process.env.MSSQL_DATABASE,
     server: process.env.MSSQL_SERVER,
     options: {
-      encrypt: true,
+      encrypt: !isLocalConnection, // Disable encryption for local connections
       trustServerCertificate: true // Hinzugefügt
     }
   };
