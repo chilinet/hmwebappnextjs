@@ -86,6 +86,7 @@ export default function HeatingControl() {
   const [loadingWeather, setLoadingWeather] = useState(false);
   const [currentTemperature, setCurrentTemperature] = useState(null);
   const [currentTargetTemperature, setCurrentTargetTemperature] = useState(null);
+  const [plannedTargetTemperature, setPlannedTargetTemperature] = useState(null);
   const [currentValveOpen, setCurrentValveOpen] = useState(null);
   const [valveOpenHistory, setValveOpenHistory] = useState([]);
   const [loadingCurrentTemp, setLoadingCurrentTemp] = useState(false);
@@ -103,7 +104,8 @@ export default function HeatingControl() {
   const [loadingImages, setLoadingImages] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
   const [ws, setWs] = useState(null);
-  const treeRef = useRef(null); 
+  const treeRef = useRef(null);
+  const treeScrollContainerRef = useRef(null); 
 
   // Temperature state (API only)
   const [deviceTemperatures, setDeviceTemperatures] = useState({});
@@ -226,6 +228,95 @@ export default function HeatingControl() {
     }));
     setHasUnsavedChanges(true);
   };
+
+  // Funktion zur Berechnung der geplanten Zieltemperatur
+  const calculatePlannedTargetTemperature = useCallback(() => {
+    if (!nodeDetails || !nodeDetails.attributes) {
+      setPlannedTargetTemperature(null);
+      return;
+    }
+
+    const runStatus = pendingRunStatus !== null ? pendingRunStatus : nodeDetails.attributes.runStatus;
+    
+    // Wenn fixe Temperatur eingestellt ist
+    if (runStatus === 'fix') {
+      const fixValue = pendingFixValue !== null ? pendingFixValue : nodeDetails.attributes.fixValue;
+      if (fixValue !== null && fixValue !== undefined) {
+        setPlannedTargetTemperature(Number(fixValue));
+      } else {
+        setPlannedTargetTemperature(null);
+      }
+      return;
+    }
+
+    // Wenn Schedule eingestellt ist
+    if (runStatus === 'schedule') {
+      const schedulerPlanValue = nodeDetails.attributes.schedulerPlan;
+      if (!schedulerPlanValue || !scheduleData || !Array.isArray(scheduleData)) {
+        setPlannedTargetTemperature(null);
+        return;
+      }
+
+      try {
+        // Parse schedulerPlan Array (7 Werte für Montag-Sonntag)
+        const planArray = JSON.parse(schedulerPlanValue);
+        if (!Array.isArray(planArray) || planArray.length === 0) {
+          setPlannedTargetTemperature(null);
+          return;
+        }
+
+        // Aktuellen Wochentag bestimmen (0 = Sonntag, 1 = Montag, ..., 6 = Samstag)
+        const now = new Date();
+        let dayOfWeek = now.getDay(); // 0 = Sonntag, 1 = Montag, etc.
+        
+        // schedulerPlan Array: [Montag, Dienstag, Mittwoch, Donnerstag, Freitag, Samstag, Sonntag]
+        // Array-Index: [0, 1, 2, 3, 4, 5, 6]
+        // JavaScript getDay(): Sonntag=0, Montag=1, ..., Samstag=6
+        // Mapping: Sonntag (0) -> Index 6, Montag (1) -> Index 0, etc.
+        let planArrayIndex;
+        if (dayOfWeek === 0) {
+          planArrayIndex = 6; // Sonntag
+        } else {
+          planArrayIndex = dayOfWeek - 1; // Montag=0, Dienstag=1, etc.
+        }
+
+        const planName = planArray[planArrayIndex];
+        if (!planName) {
+          setPlannedTargetTemperature(null);
+          return;
+        }
+
+        // Plan aus scheduleData finden
+        const plan = scheduleData.find(p => Array.isArray(p) && p[0] === planName);
+        if (!plan || !Array.isArray(plan[1]) || plan[1].length !== 24) {
+          setPlannedTargetTemperature(null);
+          return;
+        }
+
+        // Aktuelle Stunde bestimmen (0-23)
+        const currentHour = now.getHours();
+        const temperature = plan[1][currentHour];
+
+        if (temperature !== null && temperature !== undefined) {
+          setPlannedTargetTemperature(Number(temperature));
+        } else {
+          setPlannedTargetTemperature(null);
+        }
+      } catch (error) {
+        console.error('Error calculating planned target temperature:', error);
+        setPlannedTargetTemperature(null);
+      }
+      return;
+    }
+
+    // Wenn weder fix noch schedule
+    setPlannedTargetTemperature(null);
+  }, [nodeDetails, pendingRunStatus, pendingFixValue, scheduleData]);
+
+  // Berechne geplante Zieltemperatur wenn sich relevante Daten ändern
+  useEffect(() => {
+    calculatePlannedTargetTemperature();
+  }, [calculatePlannedTargetTemperature]);
 
   const saveChanges = async () => {
     if (!selectedNode) return;
@@ -587,6 +678,23 @@ export default function HeatingControl() {
     };
     
     collectIds(nodes);
+    return nodeIds;
+  };
+
+  // Hilfsfunktion um nur Level 1 (Root-Ebene) aufzuklappen
+  const getFirstLevelNodeIds = (nodes) => {
+    const nodeIds = [];
+    
+    // Nur die Root-Knoten (Level 0) werden aufgeklappt
+    // Dadurch werden ihre direkten Kinder (Level 1) sichtbar
+    if (!Array.isArray(nodes)) return nodeIds;
+    
+    nodes.forEach(node => {
+      if (node.id) {
+        nodeIds.push(node.id);
+      }
+    });
+    
     return nodeIds;
   };
 
@@ -2779,6 +2887,7 @@ export default function HeatingControl() {
     return (
       <div 
         className={`tree-node ${isSelected ? 'selected' : ''}`}
+        data-node-id={node.id}
         style={{
           padding: '8px 12px',
           cursor: 'pointer',
@@ -2974,19 +3083,19 @@ export default function HeatingControl() {
     return findPath(nodes, nodeId);
   }, [treeData]);
 
-  // Expand all nodes when tree data is loaded
+  // Expand only Level 1 (first level) when tree data is loaded
   useEffect(() => {
     if (treeData && treeData.length > 0) {
-      const allNodeIds = getAllNodeIds(treeData);
-      console.log('Tree data loaded, expanding all nodes:', allNodeIds);
+      const firstLevelNodeIds = getFirstLevelNodeIds(treeData);
+      console.log('Tree data loaded, expanding Level 1:', firstLevelNodeIds);
       console.log('Current openNodes before setting:', openNodes);
-      setOpenNodes(allNodeIds);
+      setOpenNodes(firstLevelNodeIds);
       setForceExpand(true);
       
       // Force re-render after a short delay to ensure the tree is ready
       setTimeout(() => {
-        console.log('Setting openNodes after delay:', allNodeIds);
-        setOpenNodes(allNodeIds);
+        console.log('Setting openNodes after delay:', firstLevelNodeIds);
+        setOpenNodes(firstLevelNodeIds);
         setForceExpand(true);
       }, 100);
     }
@@ -3004,6 +3113,28 @@ export default function HeatingControl() {
       }
     }
   }, [selectedNode, treeData, getPathToNode]);
+
+  // Scroll to selected node when it changes
+  useEffect(() => {
+    if (selectedNode && treeScrollContainerRef.current) {
+      // Wait for DOM to update after opening nodes
+      const timeoutId = setTimeout(() => {
+        const selectedNodeElement = treeScrollContainerRef.current?.querySelector(
+          `[data-node-id="${selectedNode.id}"]`
+        );
+        
+        if (selectedNodeElement) {
+          selectedNodeElement.scrollIntoView({
+            behavior: 'smooth',
+            block: 'center',
+            inline: 'nearest'
+          });
+        }
+      }, 300); // Delay to allow tree to expand first
+
+      return () => clearTimeout(timeoutId);
+    }
+  }, [selectedNode, openNodes]);
 
   // Fallback function to fetch temperatures via API
   const fetchTemperaturesViaAPI = useCallback(async (deviceIds) => {
@@ -3175,6 +3306,27 @@ export default function HeatingControl() {
            filter: grayscale(100%);
          }
          
+         .tree-container {
+           display: flex !important;
+           flex-direction: column !important;
+           min-height: 0 !important;
+           overflow: hidden !important;
+           height: 100% !important;
+         }
+         
+         .tree-header {
+           flex-shrink: 0;
+           flex-grow: 0;
+         }
+         
+         .tree-content {
+           flex: 1 1 auto !important;
+           min-height: 0 !important;
+           overflow-y: auto !important;
+           overflow-x: hidden !important;
+           height: 0 !important; /* Force flexbox to calculate height */
+         }
+         
          /* Hide tab text in responsive mode, show only icons */
          @media (max-width: 991.98px) {
            .nav-tabs .nav-link {
@@ -3233,7 +3385,8 @@ export default function HeatingControl() {
              style={{ 
                minWidth: isMobile ? '100%' : '400px',
                width: isMobile ? '100%' : '400px',
-               height: '100%',
+               height: isMobile ? '100vh' : '100%',
+               maxHeight: isMobile ? '100vh' : '100%',
                position: isMobile ? 'fixed' : 'relative',
                top: isMobile ? '0' : 'auto',
                left: isMobile ? '0' : 'auto',
@@ -3259,9 +3412,9 @@ export default function HeatingControl() {
                       )}
                     </h5>
                   </div>
-            <div className="card-body tree-container" style={{ flex: 1, minHeight: 0 }}>
+            <div className="card-body tree-container" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
               {/* Suchfeld für Tree */}
-              <div className="tree-header">
+              <div className="tree-header" style={{ flexShrink: 0 }}>
                 <div className="d-flex gap-2">
                 <div className="input-group">
                   <span className="input-group-text bg-white text-dark border-secondary">
@@ -3335,7 +3488,18 @@ export default function HeatingControl() {
               </div>
 
               {/* Scrollbarer Bereich für Tree */}
-              <div className="tree-content">
+              <div 
+                ref={treeScrollContainerRef}
+                className="tree-content"
+                style={{
+                  overflowY: 'auto',
+                  overflowX: 'hidden',
+                  flex: 1,
+                  minHeight: 0,
+                  height: 0, // Force flexbox to calculate height
+                  WebkitOverflowScrolling: 'touch' // Smooth scrolling on iOS
+                }}
+              >
                 {error && (
                   <div className="alert alert-danger" role="alert">
                     {error}
@@ -3633,6 +3797,14 @@ export default function HeatingControl() {
                                     <div className="display-4 text-success mb-2">
                                       {Number(currentTargetTemperature.value).toFixed(1)}°C
                                     </div>
+                                    {plannedTargetTemperature !== null && (
+                                      <div className="mt-2">
+                                        <small className="text-muted d-block">Geplante Zieltemperatur</small>
+                                        <div className="text-info fw-bold">
+                                          {Number(plannedTargetTemperature).toFixed(1)}°C
+                                        </div>
+                                      </div>
+                                    )}
                                   </div>
                                 ) : (
                                   <div className="text-muted">
