@@ -49,7 +49,7 @@ export default function Navigation() {
     };
 
     return (
-        <nav className="navbar navbar-expand-lg light-theme shadow-sm sticky-top" style={{ backgroundColor: '#fff3e0' }}>
+        <nav className="navbar navbar-expand-lg light-theme shadow-sm sticky-top" style={{ backgroundColor: 'var(--custom-bg-color, #fff3e0)' }}>
             <div className="container-fluid">
                 {/* Logo */}
                 <Link href="/" className="navbar-brand d-flex align-items-center">
@@ -101,7 +101,7 @@ export default function Navigation() {
                                 </button>
                                 
                                 {isDropdownOpen && (
-                                    <div className="dropdown-menu show shadow-sm border-0 position-absolute" style={{ backgroundColor: '#fff3e0' }}>
+                                    <div className="dropdown-menu show shadow-sm border-0 position-absolute" style={{ backgroundColor: 'var(--custom-bg-color, #fff3e0)' }}>
                                         <Link 
                                             href="/heating-control" 
                                             className={`dropdown-item d-flex align-items-center ${

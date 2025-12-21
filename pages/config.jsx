@@ -1,7 +1,7 @@
 import { useRouter } from 'next/router';
 import { useSession, getSession } from 'next-auth/react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faUsers, faUserCog, faSitemap, faUserShield, faGears, faBoxes, faCalendarAlt, faMicrochip } from '@fortawesome/free-solid-svg-icons';
+import { faUsers, faUserCog, faSitemap, faUserShield, faGears, faBoxes, faCalendarAlt, faMicrochip, faPalette } from '@fortawesome/free-solid-svg-icons';
 import { useEffect, useState } from 'react';
 import styles from '@/styles/config.module.css';
 
@@ -176,6 +176,22 @@ export default function Config() {
             </div>
           </div>
         </div>
+
+        {/* Layout Kachel - nur für Superadmin */}
+        {isSuperAdmin && (
+          <div className="col-md-4">
+            <div className={`card h-100 text-center p-4 ${styles.cardOrange}`} 
+                 onClick={() => router.push('/config/layout')}>
+              <div className="card-body">
+                <FontAwesomeIcon icon={faPalette} size="3x" className={`mb-3 ${styles.iconOrange}`} />
+                <h5 className={`card-title ${styles.titleOrange}`}>Layout</h5>
+                <p className={`card-text ${styles.textOrange}`}>
+                  Styles und Layout der Seite anpassen
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
 
       </div>

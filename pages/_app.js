@@ -10,6 +10,7 @@ import { useState } from 'react'
 import { ThingsboardProvider } from '@/contexts/ThingsboardContext'
 import { useRouter } from 'next/router'
 import AutoLogout from '../components/AutoLogout'
+import LayoutStyleProvider from '@/components/LayoutStyleProvider'
 
 // Initialize ThingsBoard token refresh service (server-side only)
 if (typeof window === 'undefined') {
@@ -26,14 +27,16 @@ export default function App({
   return (
     <SessionProvider session={session}>
       <ThingsboardProvider>
-        <AutoLogout />
-        {showLayout ? (
-          <Layout>
+        <LayoutStyleProvider>
+          <AutoLogout />
+          {showLayout ? (
+            <Layout>
+              <Component {...pageProps} />
+            </Layout>
+          ) : (
             <Component {...pageProps} />
-          </Layout>
-        ) : (
-          <Component {...pageProps} />
-        )}
+          )}
+        </LayoutStyleProvider>
       </ThingsboardProvider>
     </SessionProvider>
   );

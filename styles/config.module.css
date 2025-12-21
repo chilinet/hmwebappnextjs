@@ -13,26 +13,26 @@
 /* Orange Kacheln */
 .cardOrange {
   cursor: pointer;
-  background-color: #fd7e14 !important;
+  background-color: var(--custom-tile-bg, #fd7e14) !important;
   transition: background-color 0.3s;
   border: none !important;
   box-shadow: none !important;
 }
 
 .cardOrange:hover {
-  background-color: #e66a00 !important;
+  background-color: var(--custom-tile-hover-bg, #e66a00) !important;
 }
 
 .iconOrange {
-  color: #800020;
+  color: var(--custom-tile-icon-color, #800020);
 }
 
 .titleOrange {
-  color: #ffffff;
+  color: var(--custom-tile-text-color, #ffffff);
 }
 
 .textOrange {
-  color: #ffffff;
+  color: var(--custom-tile-text-color, #ffffff);
 }
 
 /* Graue Kachel (Geräte) */

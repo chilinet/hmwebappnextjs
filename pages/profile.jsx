@@ -2,6 +2,7 @@ import { useRouter } from 'next/router';
 import { useSession } from 'next-auth/react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faUser, faArrowLeft } from '@fortawesome/free-solid-svg-icons';
+import styles from '@/styles/config.module.css';
 
 export default function Profile() {
   const router = useRouter();
@@ -13,7 +14,7 @@ export default function Profile() {
   });
 
   return (
-    <div className="container mt-4">
+    <div className={`container mt-4 ${styles.container}`}>
       <div className="d-flex align-items-center mb-4">
         <button 
           className="btn btn-outline-secondary me-3"
@@ -21,32 +22,19 @@ export default function Profile() {
         >
           <FontAwesomeIcon icon={faArrowLeft} />
         </button>
-        <h1 className="mb-0" style={{ color: '#fd7e14', fontSize: '2.5rem', fontWeight: 'bold' }}>Profil</h1>
+        <h1 className={`mb-0 ${styles.heading}`}>Profil</h1>
       </div>
       <div className="row g-4">
         {/* Benutzer ändern Kachel */}
         <div className="col-md-4">
-          <div className="card h-100 text-center p-4" 
-               style={{ 
-                 cursor: 'pointer',
-                 backgroundColor: '#ffffff',
-                 border: '1px solid #dee2e6',
-                 transition: 'all 0.3s'
-               }}
-               onMouseOver={e => {
-                 e.currentTarget.style.backgroundColor = '#f8f9fa';
-                 e.currentTarget.style.transform = 'translateY(-5px)';
-                 e.currentTarget.style.boxShadow = '0 4px 8px rgba(0, 0, 0, 0.1)';
-               }}
-               onMouseOut={e => {
-                 e.currentTarget.style.backgroundColor = '#ffffff';
-                 e.currentTarget.style.transform = 'translateY(0)';
-                 e.currentTarget.style.boxShadow = 'none';
-               }}
+          <div className={`card h-100 text-center p-4 ${styles.cardOrange}`} 
                onClick={() => router.push('/profile/edit-user')}>
             <div className="card-body">
-              <FontAwesomeIcon icon={faUser} size="3x" className="mb-3" style={{ color: '#fd7e14' }} />
-              <h5 className="card-title" style={{ color: '#fd7e14' }}>Benutzer ändern</h5>
+              <FontAwesomeIcon icon={faUser} size="3x" className={`mb-3 ${styles.iconOrange}`} />
+              <h5 className={`card-title ${styles.titleOrange}`}>Benutzer ändern</h5>
+              <p className={`card-text ${styles.textOrange}`}>
+                Persönliche Daten und Einstellungen ändern
+              </p>
             </div>
           </div>
         </div>

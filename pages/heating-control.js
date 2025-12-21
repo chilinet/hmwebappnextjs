@@ -3306,12 +3306,20 @@ export default function HeatingControl() {
            filter: grayscale(100%);
          }
          
+         /* Ensure card uses full height and is flex container */
+         .heating-control-page .card {
+           display: flex !important;
+           flex-direction: column !important;
+           overflow: hidden !important;
+         }
+         
          .tree-container {
            display: flex !important;
            flex-direction: column !important;
            min-height: 0 !important;
            overflow: hidden !important;
-           height: 100% !important;
+           flex: 1 1 auto !important;
+           height: 0 !important; /* Force flexbox to calculate height */
          }
          
          .tree-header {
@@ -3343,8 +3351,8 @@ export default function HeatingControl() {
            }
          }
       `}</style>
-      <div className="container-fluid p-0 heating-control-page" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: 'white' }}>
-        <div className="d-flex" style={{ flex: 1, minHeight: 0 }}>
+      <div className="container-fluid p-0 heating-control-page" style={{ height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: 'white', overflow: 'hidden' }}>
+        <div className="d-flex" style={{ flex: 1, minHeight: 0, height: '100%', overflow: 'hidden' }}>
           {/* Mobile Toggle Button */}
           {isMobile && (
             <button
@@ -3396,7 +3404,7 @@ export default function HeatingControl() {
                overflow: 'hidden'
              }}
            >
-                  <div className="card-header bg-white border-secondary">
+                  <div className="card-header bg-white border-secondary" style={{ flexShrink: 0 }}>
                     <h5 className="mb-0 d-flex align-items-center justify-content-between">
                       <div className="d-flex align-items-center">
                         <FontAwesomeIcon icon={faBuilding} className="me-2 text-primary" />
@@ -3412,7 +3420,7 @@ export default function HeatingControl() {
                       )}
                     </h5>
                   </div>
-            <div className="card-body tree-container" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <div className="card-body tree-container" style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
               {/* Suchfeld für Tree */}
               <div className="tree-header" style={{ flexShrink: 0 }}>
                 <div className="d-flex gap-2">
@@ -3560,9 +3568,9 @@ export default function HeatingControl() {
           </div>
 
           {/* Rechte Seite: Dashboard Content */}
-          <div className={`flex-grow-1 d-flex flex-column main-content ${isMobile && showTree ? 'd-none' : 'd-flex'}`} style={{ minHeight: 0, backgroundColor: 'white' }}>
+          <div className={`flex-grow-1 d-flex flex-column main-content ${isMobile && showTree ? 'd-none' : 'd-flex'}`} style={{ minHeight: 0, height: '100%', overflow: 'hidden', backgroundColor: 'white' }}>
             {selectedNode ? (
-              <div className="flex-grow-1 p-4" style={{ overflow: 'auto' }}>
+              <div className="flex-grow-1 p-4" style={{ overflow: 'auto', height: '100%' }}>
                 <div className="node-details">
                   <div className="d-flex align-items-center mb-3">
                     <FontAwesomeIcon 

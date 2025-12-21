@@ -5,7 +5,7 @@ export default function Footer() {
     const currentYear = new Date().getFullYear();
     
     return (
-        <footer className="light-theme border-top mt-auto" style={{ backgroundColor: '#fff3e0' }}>
+        <footer className="light-theme border-top mt-auto" style={{ backgroundColor: 'var(--custom-bg-color, #fff3e0)' }}>
             <div className="container-fluid py-4">
                 <div className="row align-items-center">
                     <div className="col-md-6">
@@ -19,7 +19,7 @@ export default function Footer() {
                                 © {currentYear} HeatManager. Alle Rechte vorbehalten.
                             </span>
                             <span className="text-muted ms-2 small">
-                                v0.9
+                                v0.95a
                             </span>
                         </div>
                     </div>
