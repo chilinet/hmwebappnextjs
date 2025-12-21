@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { signIn } from 'next-auth/react'
 import { useRouter } from 'next/router'
 import Image from "next/image"
@@ -20,7 +20,29 @@ export default function SignIn() {
     const [forgotUsernameEmail, setForgotUsernameEmail] = useState('')
     const [forgotUsernameLoading, setForgotUsernameLoading] = useState(false)
     const [forgotUsernameSuccess, setForgotUsernameSuccess] = useState(false)
+    const [quote, setQuote] = useState({
+        quote_text: 'Die beste Energie ist die, die wir nicht verbrauchen.',
+        author: 'Angela Merkel',
+        author_title: 'Ehemalige Bundeskanzlerin'
+    })
     const router = useRouter()
+
+    // Load random quote on component mount
+    useEffect(() => {
+        const fetchQuote = async () => {
+            try {
+                const response = await fetch('/api/quotes/random')
+                if (response.ok) {
+                    const data = await response.json()
+                    setQuote(data)
+                }
+            } catch (error) {
+                console.error('Error fetching quote:', error)
+                // Keep default quote on error
+            }
+        }
+        fetchQuote()
+    }, [])
 
     const handleSubmit = async (e) => {
         e.preventDefault()
@@ -226,14 +248,16 @@ export default function SignIn() {
                         <div className="quote-container">
                             <div className="quote-content">
                                 <div className="quote-text">
-                                    &ldquo;Die beste Energie ist die, die wir nicht verbrauchen.&rdquo;
+                                    &ldquo;{quote.quote_text}&rdquo;
                                 </div>
                                 <div className="quote-author">
-                                    — Angela Merkel
+                                    — {quote.author}
                                 </div>
-                                <div className="quote-subtitle">
-                                    Ehemalige Bundeskanzlerin
-                                </div>
+                                {quote.author_title && (
+                                    <div className="quote-subtitle">
+                                        {quote.author_title}
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>
