@@ -118,7 +118,7 @@ export default async function handler(req, res) {
     
     try {
       // SQL Query zusammenbauen - Funktion verwenden
-      let query = 'SELECT * FROM hmreporting.f_customer_hourly_avg($1, $2)';
+      let query = 'SELECT * FROM hmreporting.f_customer_hourly_avg_valveopen($1, $2)';
       const queryParams = [];
       let paramIndex = 3; // Start bei 3, da $1 und $2 bereits belegt sind
       
@@ -126,8 +126,24 @@ export default async function handler(req, res) {
       const endDate = req.query.end_date ? new Date(req.query.end_date) : new Date();
       const startDate = req.query.start_date ? new Date(req.query.start_date) : new Date(endDate.getTime() - 24 * 60 * 60 * 1000);
       
-      queryParams.push(startDate.toISOString());
-      queryParams.push(endDate.toISOString());
+      // Datum im PostgreSQL-Format mit Zeitzone formatieren (YYYY-MM-DD HH:mm+TZ)
+      // Konvertiere zu lokaler Zeit mit Zeitzone im Format +01 oder -01
+      const formatDateForPostgres = (date) => {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        // PostgreSQL erwartet Zeitzone im Format +01 oder -01 (nur Stunden, keine Minuten)
+        const timezoneOffset = -date.getTimezoneOffset(); // Negiert, weil getTimezoneOffset() das Gegenteil zurückgibt
+        const timezoneHours = Math.floor(Math.abs(timezoneOffset) / 60);
+        const timezoneSign = timezoneOffset >= 0 ? '+' : '-';
+        const timezoneStr = `${timezoneSign}${String(timezoneHours).padStart(2, '0')}`;
+        return `${year}-${month}-${day} ${hours}:${minutes}${timezoneStr}`;
+      };
+      
+      queryParams.push(formatDateForPostgres(startDate));
+      queryParams.push(formatDateForPostgres(endDate));
       
       // Zusätzliche Filter als WHERE Klausel
       const conditions = [];
@@ -145,7 +161,7 @@ export default async function handler(req, res) {
       }
       
       // ORDER BY hinzufügen
-      query += ' ORDER BY hour_start DESC, customer_id';
+      query += ' ORDER BY hour_start';
       
       // LIMIT und OFFSET hinzufügen
       const limit = parseInt(req.query.limit) || 24; // Default: 24 Stunden
@@ -173,7 +189,7 @@ export default async function handler(req, res) {
         offset: offset,
         has_more: result.rows.length === limit,
         query_time: new Date().toISOString(),
-        function_name: 'hmreporting.f_customer_hourly_avg',
+        function_name: 'hmreporting.f_customer_hourly_avg_valveopen',
         time_range: {
           start_date: startDate.toISOString(),
           end_date: endDate.toISOString()
@@ -198,7 +214,7 @@ export default async function handler(req, res) {
     if (error.code === '42P01') {
       return res.status(404).json({
         error: 'Function not found',
-        message: 'Die Funktion hmreporting.f_customer_hourly_avg wurde nicht gefunden'
+        message: 'Die Funktion hmreporting.f_customer_hourly_avg_valveopen wurde nicht gefunden'
       });
     }
     
@@ -240,8 +256,9 @@ QUERY PARAMETERS:
 - end_date (optional): End-Datum für Filterung (ISO Format, default: jetzt)
 
 FUNCTION USAGE:
-Die API verwendet die PostgreSQL-Funktion: hmreporting.f_customer_hourly_avg(start_date, end_date)
+Die API verwendet die PostgreSQL-Funktion: hmreporting.f_customer_hourly_avg_valveopen(start_date, end_date)
 Standard: letzte 24 Stunden (now() - INTERVAL '24 hours', now())
+Die Datumsformate werden im Format 'YYYY-MM-DD HH:mm+TZ' übergeben (z.B. '2025-02-01 00:00+01')
 
 EXAMPLES:
 GET /api/customer-hourly-avg?key=your-key&limit=48&customer_id=2ea4ba70-647a-11ef-8cd8-8b580d9aa086
@@ -259,7 +276,7 @@ RESPONSE FORMAT:
     "offset": 0,
     "has_more": false,
     "query_time": "2025-01-15T10:30:00.000Z",
-    "function_name": "hmreporting.f_customer_hourly_avg",
+    "function_name": "hmreporting.f_customer_hourly_avg_valveopen",
     "time_range": {
       "start_date": "2025-10-20T20:00:00.000Z",
       "end_date": "2025-10-21T20:00:00.000Z"

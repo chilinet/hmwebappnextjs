@@ -54,13 +54,24 @@ export default async function handler(req, res) {
     console.log('Calling external reporting API:', fullUrl);
     
     try {
+      // Timeout für große Datenmengen: 90 Sekunden für 30/90 Tage, 60 Sekunden für 7 Tage, 30 Sekunden für 24h
+      const limitNum = parseInt(limit);
+      const timeoutMs = limitNum >= 2160 ? 90000 : limitNum >= 720 ? 90000 : limitNum >= 168 ? 60000 : 30000;
+      
+      // AbortController für Timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      
       const response = await fetch(fullUrl, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
           'X-API-Key': PRESHARED_KEY
-        }
+        },
+        signal: controller.signal
       });
+      
+      clearTimeout(timeoutId);
       
       if (!response.ok) {
         const errorText = await response.text();
@@ -97,6 +108,16 @@ export default async function handler(req, res) {
       
     } catch (fetchError) {
       console.error('Fetch error:', fetchError);
+      
+      // Timeout-Fehler speziell behandeln
+      if (fetchError.name === 'AbortError' || fetchError.message.includes('aborted')) {
+        return res.status(504).json({
+          error: 'Gateway Timeout',
+          message: 'Die Anfrage hat zu lange gedauert. Bitte versuchen Sie es mit einem kürzeren Zeitraum oder versuchen Sie es später erneut.',
+          details: 'Die externe API hat nicht rechtzeitig geantwortet'
+        });
+      }
+      
       return res.status(503).json({
         error: 'External API Connection Failed',
         message: 'Verbindung zur Reporting-API fehlgeschlagen',

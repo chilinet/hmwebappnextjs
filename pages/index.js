@@ -41,6 +41,8 @@ export default function Home() {
   const [error, setError] = useState(null);
   const [showTimeModal, setShowTimeModal] = useState(false);
   const [selectedTimePeriod, setSelectedTimePeriod] = useState('24h');
+  const [loadingHeatDemand, setLoadingHeatDemand] = useState(false);
+  const [heatDemandError, setHeatDemandError] = useState(null);
 
   // Time period options
   const timePeriodOptions = [
@@ -84,8 +86,10 @@ export default function Home() {
     console.log('handleTimePeriodChange called with period:', period);
     setSelectedTimePeriod(period);
     setShowTimeModal(false);
+    setHeatDemandError(null);
     
     if (session?.user?.customerid) {
+      setLoadingHeatDemand(true);
       try {
         const { startDate, endDate } = getDateRange(period);
         const limit = period === '24h' ? 24 : period === '7d' ? 168 : period === '30d' ? 720 : 2160;
@@ -98,14 +102,27 @@ export default function Home() {
           const heatDemandData = await heatDemandResponse.json();
           console.log('Heat demand data received for period:', period, heatDemandData);
           setHeatDemandData(heatDemandData);
+          setHeatDemandError(null);
         } else {
-          console.warn('Failed to fetch heat demand data for period:', period);
+          const errorData = await heatDemandResponse.json().catch(() => ({}));
+          const errorMessage = errorData.message || `Fehler beim Laden der Daten (Status: ${heatDemandResponse.status})`;
+          console.warn('Failed to fetch heat demand data for period:', period, errorMessage);
+          setHeatDemandError(errorMessage);
+          
+          // Bei Timeout-Fehler spezielle Meldung
+          if (heatDemandResponse.status === 504) {
+            setHeatDemandError('Die Anfrage hat zu lange gedauert. Bitte versuchen Sie es mit einem kürzeren Zeitraum oder versuchen Sie es später erneut.');
+          }
         }
       } catch (err) {
         console.error('Error fetching heat demand data for period:', period, err);
+        setHeatDemandError('Netzwerkfehler beim Laden der Daten. Bitte versuchen Sie es erneut.');
+      } finally {
+        setLoadingHeatDemand(false);
       }
     } else {
       console.warn('No customer ID in session');
+      setLoadingHeatDemand(false);
     }
   };
 
@@ -134,13 +151,13 @@ export default function Home() {
     }
 
     const data = heatDemandData.data;
-    const maxItems = selectedTimePeriod === '24h' ? 24 : selectedTimePeriod === '7d' ? 7 : selectedTimePeriod === '30d' ? 15 : 20;
     
     // Sort data by hour_start in ascending order (oldest first) for all periods
     // This ensures the chart shows time progression from left to right
+    // Show all data points that were fetched (no artificial limit)
     const sortedData = [...data].sort((a, b) => new Date(a.hour_start) - new Date(b.hour_start));
     
-    return sortedData.slice(0, maxItems).map(hour => {
+    return sortedData.map(hour => {
       let timeLabel;
       const date = new Date(hour.hour_start);
       
@@ -678,17 +695,44 @@ export default function Home() {
                     <h5 className="mb-0 fw-bold">HEIZUNGSSTEUERUNG & WÄRMEANFORDERUNG</h5>
                     <button 
                       className="btn btn-outline-secondary btn-sm"
+                      disabled={loadingHeatDemand}
                       onClick={(e) => {
                         e.stopPropagation(); // Prevent card click when button is clicked
                         console.log('Opening time modal...');
                         setShowTimeModal(true);
                       }}
                     >
-                      {timePeriodOptions.find(opt => opt.value === selectedTimePeriod)?.label || 'Letzte 24 h'}
+                      {loadingHeatDemand ? (
+                        <>
+                          <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                          Laden...
+                        </>
+                      ) : (
+                        timePeriodOptions.find(opt => opt.value === selectedTimePeriod)?.label || 'Letzte 24 h'
+                      )}
                     </button>
                   </div>
                   <div className="heat-demand-chart">
-                    {heatDemandData?.data && heatDemandData.data.length > 0 ? (
+                    {loadingHeatDemand ? (
+                      <div className="text-center py-5">
+                        <div className="spinner-border text-primary mb-3" role="status">
+                          <span className="visually-hidden">Loading...</span>
+                        </div>
+                        <p className="text-muted">Daten werden geladen...</p>
+                        <small className="text-muted">Dies kann bei größeren Zeiträumen einige Sekunden dauern.</small>
+                      </div>
+                    ) : heatDemandError ? (
+                      <div className="text-center py-5">
+                        <FontAwesomeIcon icon={faExclamationTriangle} size="3x" className="text-warning mb-3" />
+                        <p className="text-danger mb-2">{heatDemandError}</p>
+                        <button 
+                          className="btn btn-sm btn-outline-primary"
+                          onClick={() => handleTimePeriodChange(selectedTimePeriod)}
+                        >
+                          Erneut versuchen
+                        </button>
+                      </div>
+                    ) : heatDemandData?.data && heatDemandData.data.length > 0 ? (
                       <div className="chart-container">
                         <div className="chart-header mb-3">
                           <div className="d-flex justify-content-between align-items-center">

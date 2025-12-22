@@ -22,7 +22,6 @@ ELSE
 BEGIN
     PRINT 'Table signin_quotes already exists';
 END
-GO
 
 -- Insert initial quotes
 -- Check if quotes already exist
@@ -51,5 +50,5 @@ ELSE
 BEGIN
     PRINT 'Quotes already exist in the table';
 END
-GO
+
 
