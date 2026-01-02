@@ -40,12 +40,15 @@ function authenticateRequest(req) {
  * Sendet eine Downlink-Nachricht an einen IoT LNS über MQTT
  * 
  * Request Body:
- * - name2: Name2 aus nwconnections Tabelle (Format: "typ:applicationid", z.B. "ttn:2")
- * - deviceEui: Device EUI (z.B. "eui-7066e1fffe01ac4a")
- * - f_port: F-Port (z.B. 10)
+ * - deviceId: ThingsBoard Device ID (z.B. "123e4567-e89b-12d3-a456-426614174000")
  * - frm_payload: Payload als HEX-String (z.B. "03F40B")
  * - confirmed: Boolean (optional, default: false)
  * - priority: String (optional, default: "NORMAL")
+ * 
+ * Die folgenden Werte werden aus ThingsBoard Client-Attributen ermittelt:
+ * - device_id → deviceEui
+ * - fPort → f_port
+ * - integration + applicationid → name2 (Format: "integration:applicationid")
  */
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -71,18 +74,10 @@ export default async function handler(req, res) {
     const userEmail = session?.user?.email || 'api-key-client';
 
     // Request-Body validieren
-    const { name2, deviceEui, f_port, frm_payload, confirmed = false, priority = 'NORMAL' } = req.body;
+    const { deviceId, frm_payload, confirmed = false, priority = 'NORMAL' } = req.body;
 
-    if (!name2) {
-      return res.status(400).json({ error: 'name2 is required (format: "typ:applicationid", e.g. "ttn:2")' });
-    }
-
-    if (!deviceEui) {
-      return res.status(400).json({ error: 'deviceEui is required' });
-    }
-
-    if (f_port === undefined || f_port === null) {
-      return res.status(400).json({ error: 'f_port is required' });
+    if (!deviceId) {
+      return res.status(400).json({ error: 'deviceId (ThingsBoard Device ID) is required' });
     }
 
     if (!frm_payload) {
@@ -104,6 +99,129 @@ export default async function handler(req, res) {
     if (!validPriorities.includes(priority)) {
       return res.status(400).json({ error: `priority must be one of: ${validPriorities.join(', ')}` });
     }
+
+    // ThingsBoard-Authentifizierung
+    const THINGSBOARD_URL = process.env.THINGSBOARD_URL;
+    const THINGSBOARD_USERNAME = process.env.THINGSBOARD_USERNAME;
+    const THINGSBOARD_PASSWORD = process.env.THINGSBOARD_PASSWORD;
+
+    if (!THINGSBOARD_URL || !THINGSBOARD_USERNAME || !THINGSBOARD_PASSWORD) {
+      return res.status(500).json({
+        error: 'ThingsBoard configuration incomplete',
+        details: 'Missing THINGSBOARD_URL, THINGSBOARD_USERNAME, or THINGSBOARD_PASSWORD in environment variables'
+      });
+    }
+
+    // ThingsBoard Token holen
+    let tbToken;
+    try {
+      const tbLoginResponse = await fetch(`${THINGSBOARD_URL}/api/auth/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          username: THINGSBOARD_USERNAME,
+          password: THINGSBOARD_PASSWORD
+        }),
+      });
+
+      if (!tbLoginResponse.ok) {
+        const errorText = await tbLoginResponse.text();
+        return res.status(401).json({
+          error: 'ThingsBoard authentication failed',
+          details: errorText
+        });
+      }
+
+      const tbLoginData = await tbLoginResponse.json();
+      tbToken = tbLoginData.token;
+    } catch (error) {
+      console.error('[LNS] ThingsBoard login error:', error);
+      return res.status(500).json({
+        error: 'Failed to authenticate with ThingsBoard',
+        details: error.message
+      });
+    }
+
+    // Device Client-Attribute von ThingsBoard abrufen
+    let deviceAttributes;
+    let deviceEui, f_port, name2;
+    
+    try {
+      const attributesResponse = await fetch(
+        `${THINGSBOARD_URL}/api/plugins/telemetry/DEVICE/${deviceId}/values/attributes/CLIENT_SCOPE`,
+        {
+          headers: {
+            'X-Authorization': `Bearer ${tbToken}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      if (!attributesResponse.ok) {
+        const errorText = await attributesResponse.text();
+        return res.status(attributesResponse.status).json({
+          error: 'Failed to fetch device attributes from ThingsBoard',
+          details: errorText,
+          deviceId: deviceId
+        });
+      }
+
+      const attributesData = await attributesResponse.json();
+      
+      // Konvertiere Array zu Objekt für einfacheren Zugriff
+      deviceAttributes = {};
+      attributesData.forEach(attr => {
+        deviceAttributes[attr.key] = attr.value;
+      });
+
+      // Erforderliche Attribute prüfen
+      deviceEui = deviceAttributes.device_id;
+      f_port = deviceAttributes.fPort;
+      const integration = deviceAttributes.integration;
+      const applicationid = deviceAttributes.applicationid;
+
+      if (!deviceEui) {
+        return res.status(400).json({
+          error: 'Missing required device attribute',
+          details: 'device_id attribute not found in ThingsBoard client attributes',
+          deviceId: deviceId,
+          availableAttributes: Object.keys(deviceAttributes)
+        });
+      }
+
+      if (f_port === undefined || f_port === null) {
+        return res.status(400).json({
+          error: 'Missing required device attribute',
+          details: 'fPort attribute not found in ThingsBoard client attributes',
+          deviceId: deviceId,
+          availableAttributes: Object.keys(deviceAttributes)
+        });
+      }
+
+      if (!integration || !applicationid) {
+        return res.status(400).json({
+          error: 'Missing required device attributes',
+          details: 'integration and/or applicationid attributes not found in ThingsBoard client attributes',
+          deviceId: deviceId,
+          availableAttributes: Object.keys(deviceAttributes)
+        });
+      }
+
+      // name2 aus integration und applicationid erstellen
+      name2 = `${integration}:${applicationid}`;
+    } catch (error) {
+      console.error('[LNS] Error fetching ThingsBoard attributes:', error);
+      return res.status(500).json({
+        error: 'Failed to fetch device attributes from ThingsBoard',
+        details: error.message,
+        deviceId: deviceId
+      });
+    }
+
+    // Weiter mit der bestehenden Logik, verwende die ermittelten Werte
+    // (name2, deviceEui, f_port wurden jetzt aus ThingsBoard geholt)
 
     // MSSQL-Zugangsdaten aus .env lesen
     const mssqlConfig = {
