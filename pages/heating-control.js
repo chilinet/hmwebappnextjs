@@ -3346,6 +3346,12 @@ export default function HeatingControl() {
            font-size: 1.0rem !important;
          }
          
+         /* Smaller headings in subordinate node cards */
+         .col-md-6 .card .card-body h6.card-title,
+         .col-lg-4 .card .card-body h6.card-title {
+           font-size: 0.875rem !important;
+         }
+         
          /* Hide tab text in responsive mode, show only icons */
          @media (max-width: 991.98px) {
            .nav-tabs .nav-link {
@@ -4543,10 +4549,6 @@ export default function HeatingControl() {
                             <div>
                               {/* Strukturpfad */}
                               <div className="mb-4">
-                                <h6 className="text-muted mb-3">
-                                  <FontAwesomeIcon icon={faMapMarkerAlt} className="me-2" />
-                                  Strukturpfad
-                                </h6>
                                 <nav aria-label="breadcrumb">
                                   <ol className="breadcrumb">
                                     {path.map((node, index) => (
@@ -4573,11 +4575,6 @@ export default function HeatingControl() {
 
                               {/* Untergeordnete Nodes */}
                               <div className="mb-4">
-                                <h6 className="text-muted mb-3">
-                                  <FontAwesomeIcon icon={faLayerGroup} className="me-2" />
-                                  Untergeordnete Bereiche ({subordinates.length})
-                                </h6>
-                                
                                 {subordinates.length > 0 ? (
                                   <div className="row">
                                     {subordinates.map((node) => (
@@ -4589,7 +4586,7 @@ export default function HeatingControl() {
                                                 icon={getIconForType(node.type)} 
                                                 className="me-2 text-primary"
                                               />
-                                              <h6 className="card-title mb-0">
+                                              <h6 className="card-title mb-0" style={{ fontSize: '0.875rem' }}>
                                                 {node.label || node.name || node.text}
                                               </h6>
                                               {node.hasDevices && (
@@ -4725,32 +4722,6 @@ export default function HeatingControl() {
                                     <p className="mb-0">Keine untergeordneten Bereiche vorhanden</p>
                                   </div>
                                 )}
-                              </div>
-
-                              {/* Zusammenfassung */}
-                              <div className="card">
-                                <div className="card-body">
-                                  <h6 className="card-title">
-                                    <FontAwesomeIcon icon={faInfoCircle} className="me-2" />
-                                    Zusammenfassung
-                                  </h6>
-                                  <div className="row">
-                                    <div className="col-md-6">
-                                      <div className="text-center">
-                                        <FontAwesomeIcon icon={faThermometerHalf} className="text-success mb-2" size="lg" />
-                                        <h5 className="mb-1">{subordinatesWithDevices}</h5>
-                                        <small className="text-muted">Bereiche mit Geräten</small>
-                                      </div>
-                                    </div>
-                                    <div className="col-md-6">
-                                      <div className="text-center">
-                                        <FontAwesomeIcon icon={faInfoCircle} className="text-info mb-2" size="lg" />
-                                        <h5 className="mb-1">{emptySubordinates}</h5>
-                                        <small className="text-muted">Leere Bereiche (ausgeblendet)</small>
-                                      </div>
-                                    </div>
-                                  </div>
-                                </div>
                               </div>
                             </div>
                           );
