@@ -19,7 +19,7 @@ export default function Footer() {
                                 © {currentYear} HeatManager. Alle Rechte vorbehalten.
                             </span>
                             <span className="text-muted ms-2 small">
-                                v0.95a
+                                v1.00
                             </span>
                         </div>
                     </div>

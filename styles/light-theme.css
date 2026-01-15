@@ -166,7 +166,7 @@
 
 /* Signin page specific styles */
 .signin-page {
-  background: linear-gradient(135deg, #e2e3e5 0%, #cbcbcb 100%);
+  background: linear-gradient(135deg, #fefefe 0%, #fcfcfc 100%);
   min-height: 100vh;
   display: flex;
   align-items: center;

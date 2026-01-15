@@ -42,12 +42,27 @@ export default function SignIn() {
                 // Keep default quote on error
             }
         }
+        
+        const fetchLoginImages = async () => {
+            try {
+                const response = await fetch('/api/login/images')
+                if (response.ok) {
+                    const data = await response.json()
+                    if (data.images && data.images.length > 0) {
+                        // Select random background image from all available images
+                        const randomImage = data.images[Math.floor(Math.random() * data.images.length)]
+                        setBackgroundImage(randomImage)
+                    }
+                }
+            } catch (error) {
+                console.error('Error fetching login images:', error)
+                // Fallback to default image
+                setBackgroundImage('/assets/login/nature01.jpeg')
+            }
+        }
+        
         fetchQuote()
-
-        // Select random background image
-        const images = ['/assets/login/nature01.jpeg', '/assets/login/nature02.jpeg']
-        const randomImage = images[Math.floor(Math.random() * images.length)]
-        setBackgroundImage(randomImage)
+        fetchLoginImages()
     }, [])
 
     const handleSubmit = async (e) => {
@@ -243,6 +258,10 @@ export default function SignIn() {
                                 <div className="mt-4 text-center">
                                     <small className="text-muted">
                                         HeatManager - Intelligente Heizungssteuerung
+                                    </small>
+                                    <br />
+                                    <small className="text-muted">
+                                        v1.00
                                     </small>
                                 </div>
                             </div>
