@@ -1,7 +1,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faUser, faTachometerAlt, faSliders, faCog, faSignOutAlt, faBars, faUsers, faThermometerHalf, faBell } from "@fortawesome/free-solid-svg-icons";
+import { faUser, faTachometerAlt, faSliders, faCog, faSignOutAlt, faBars, faUsers, faThermometerHalf, faBell, faChartLine } from "@fortawesome/free-solid-svg-icons";
 import { useSession, signIn, signOut } from "next-auth/react";
 import { useRouter } from 'next/router';
 import { useState, useEffect } from 'react';
@@ -113,6 +113,16 @@ export default function Navigation() {
                                             Heizungssteuerung
                                         </Link>
                                         <Link 
+                                            href="/auswertungen" 
+                                            className={`dropdown-item d-flex align-items-center ${
+                                                router.pathname === '/auswertungen' ? 'active-menu-item' : ''
+                                            }`}
+                                            onClick={() => setIsDropdownOpen(false)}
+                                        >
+                                            <FontAwesomeIcon icon={faChartLine} className="me-2" />
+                                            Auswertungen
+                                        </Link>
+                                        <Link 
                                             href="/alarms" 
                                             className={`dropdown-item d-flex align-items-center ${
                                                 router.pathname === '/alarms' ? 'active-menu-item' : ''
@@ -188,6 +198,16 @@ export default function Navigation() {
                             >
                                 <FontAwesomeIcon icon={faThermometerHalf} className="me-2" />
                                 Heizungssteuerung
+                            </Link>
+                            <Link 
+                                href="/auswertungen" 
+                                className={`nav-link d-flex align-items-center ${
+                                    router.pathname === '/auswertungen' ? 'active-menu-item' : ''
+                                }`}
+                                onClick={() => setIsMobileMenuOpen(false)}
+                            >
+                                <FontAwesomeIcon icon={faChartLine} className="me-2" />
+                                Auswertungen
                             </Link>
                             <Link 
                                 href="/alarms" 

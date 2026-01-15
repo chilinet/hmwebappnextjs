@@ -3235,6 +3235,7 @@ export default function HeatingControl() {
           display: flex;
           flex-wrap: wrap;
           gap: 0.5rem;
+          justify-content: center;
         }
         
         .responsive-card {
@@ -3245,15 +3246,23 @@ export default function HeatingControl() {
         
         .responsive-card .card {
           height: 200px !important;
+          width: 100% !important;
+          max-width: 200px !important;
+          margin-left: auto !important;
+          margin-right: auto !important;
         }
         
         .responsive-card .card-body {
           padding: 0.75rem;
         }
         
-        .responsive-card .card-title {
-          font-size: 0.875rem;
-          margin-bottom: 0.5rem;
+        /* Force smaller headings on tiles (Bootstrap h4 defaults are large) */
+        .responsive-card .card-title,
+        .responsive-card h4.card-title {
+          font-size: 0.8rem !important;
+          line-height: 1.15 !important;
+          font-weight: 500 !important;
+          margin-bottom: 0.4rem !important;
         }
         
         .responsive-card .display-4 {
@@ -3269,27 +3278,21 @@ export default function HeatingControl() {
           height: 1rem;
         }
         
+        /* >=768px: tiles should never exceed 200px, but may shrink to fit */
         @media (min-width: 768px) {
           .responsive-card {
-            flex: 1 1 calc(33.333% - 0.5rem) !important;
-            min-width: calc(33.333% - 0.5rem) !important;
-            max-width: calc(33.333% - 0.5rem) !important;
+            flex: 1 1 200px !important;   /* preferred size */
+            min-width: 0 !important;      /* allow shrinking */
+            max-width: 200px !important;  /* hard cap */
           }
         }
-        
-        @media (min-width: 992px) {
+
+        /* >=1400px: keep the same 200px cap */
+        @media (min-width: 1400px) {
           .responsive-card {
-            flex: 1 1 calc(25% - 0.5rem) !important;
-            min-width: calc(25% - 0.5rem) !important;
-            max-width: calc(25% - 0.5rem) !important;
-          }
-        }
-        
-        @media (min-width: 1200px) {
-          .responsive-card {
-            flex: 1 1 calc(20% - 0.5rem) !important;
-            min-width: calc(20% - 0.5rem) !important;
-            max-width: calc(20% - 0.5rem) !important;
+            flex: 1 1 200px !important;
+            min-width: 0 !important;
+            max-width: 200px !important;
           }
         }
         
