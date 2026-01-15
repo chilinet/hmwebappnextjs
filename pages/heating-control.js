@@ -106,6 +106,7 @@ export default function HeatingControl() {
   const [ws, setWs] = useState(null);
   const treeRef = useRef(null);
   const treeScrollContainerRef = useRef(null); 
+  const lastLoadedCustomerIdRef = useRef(null); // Track last loaded customer ID to prevent unnecessary reloads
 
   // Temperature state (API only)
   const [deviceTemperatures, setDeviceTemperatures] = useState({});
@@ -513,9 +514,8 @@ export default function HeatingControl() {
       setPendingOverruleMinutes(null);
       setPendingWindowSensor(null);
       
-      // Refresh node details and tree data
+      // Refresh node details only (settings don't change tree structure)
       fetchNodeDetails(selectedNode.id);
-      fetchTreeData();
     } catch (error) {
       console.error('Error saving settings:', error);
       alert('Fehler beim Speichern der Einstellungen');
@@ -2999,10 +2999,13 @@ export default function HeatingControl() {
 
 
   useEffect(() => {
-    if (customerData?.customerid) {
+    // Only reload tree data if customerid actually changed, not on every render/focus
+    const currentCustomerId = customerData?.customerid;
+    if (currentCustomerId && currentCustomerId !== lastLoadedCustomerIdRef.current) {
+      lastLoadedCustomerIdRef.current = currentCustomerId;
       fetchTreeData();
     }
-  }, [customerData, fetchTreeData]);
+  }, [customerData?.customerid, fetchTreeData]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -3235,7 +3238,7 @@ export default function HeatingControl() {
           display: flex;
           flex-wrap: wrap;
           gap: 0.5rem;
-          justify-content: center;
+          justify-content: flex-start;
         }
         
         .responsive-card {
@@ -3336,6 +3339,11 @@ export default function HeatingControl() {
            overflow-y: auto !important;
            overflow-x: hidden !important;
            height: 0 !important; /* Force flexbox to calculate height */
+         }
+         
+         /* Smaller temperature chart header */
+         .card-header h6.mb-0 {
+           font-size: 1.0rem !important;
          }
          
          /* Hide tab text in responsive mode, show only icons */
@@ -3573,24 +3581,26 @@ export default function HeatingControl() {
           {/* Rechte Seite: Dashboard Content */}
           <div className={`flex-grow-1 d-flex flex-column main-content ${isMobile && showTree ? 'd-none' : 'd-flex'}`} style={{ minHeight: 0, height: '100%', overflow: 'hidden', backgroundColor: 'white' }}>
             {selectedNode ? (
-              <div className="flex-grow-1 p-4" style={{ overflow: 'auto', height: '100%' }}>
-                <div className="node-details">
-                  <div className="d-flex align-items-center mb-3">
-                    <FontAwesomeIcon 
-                      icon={getIconForType(selectedNode.type)} 
-                      className="me-3 text-primary" 
-                      size="2x"
-                    />
-                    <div>
-                      <h4 className="mb-1">{selectedNode.label || selectedNode.name}</h4>
-                      <span className="badge bg-secondary">
-                        {getNodeTypeLabel(selectedNode.type)}
-                      </span>
+              <div className="flex-grow-1 d-flex flex-column" style={{ minHeight: 0, height: '100%', overflow: 'hidden' }}>
+                {/* Fixed Header and Tabs - not scrollable */}
+                <div className="p-4 pb-0" style={{ flexShrink: 0, backgroundColor: 'white', borderBottom: '1px solid #dee2e6' }}>
+                  <div className="node-details">
+                    <div className="d-flex align-items-center mb-3">
+                      <FontAwesomeIcon 
+                        icon={getIconForType(selectedNode.type)} 
+                        className="me-3 text-primary" 
+                        size="2x"
+                      />
+                      <div>
+                        <h4 className="mb-1">{selectedNode.label || selectedNode.name}</h4>
+                        <span className="badge bg-secondary">
+                          {getNodeTypeLabel(selectedNode.type)}
+                        </span>
+                      </div>
                     </div>
-                  </div>
 
-                  {/* Tab Navigation */}
-                  <ul className="nav nav-tabs mb-4" id="nodeTabs" role="tablist">
+                    {/* Tab Navigation */}
+                    <ul className="nav nav-tabs mb-0" id="nodeTabs" role="tablist" style={{ borderBottom: 'none' }}>
                     {selectedNode && (selectedNode.hasDevices === false || (selectedNode.data?.hasDevices === false)) && (
                       <li className="nav-item" role="presentation">
                         <button
@@ -3711,9 +3721,12 @@ export default function HeatingControl() {
                       </li>
                     )}
                   </ul>
-
-                  {/* Tab Content */}
-                  <div className="tab-content">
+                  </div>
+                </div>
+                
+                {/* Scrollable Tab Content */}
+                <div className="flex-grow-1 p-4 pt-0" style={{ overflow: 'auto', minHeight: 0 }}>
+                  <div className="tab-content" style={{ paddingTop: '1rem' }}>
                     {/* Übersicht Tab */}
                     {activeTab === 'overview' && (
                       <div className="tab-pane fade show active">
@@ -3849,18 +3862,6 @@ export default function HeatingControl() {
                                     <p>Keine Ventilöffnungsdaten verfügbar</p>
                                   </div>
                                 )}
-                              </div>
-                            </div>
-                          </div>
-                          
-                          <div className="responsive-card disabled-card">
-                            <div className="card">
-                              <div className="card-body text-center">
-                                <FontAwesomeIcon icon={faCloud} className="text-info mb-3" size="2x" />
-                                <h4 className="card-title">Wetter</h4>
-                                <div className="text-muted">
-                                  <p>Nicht konfiguriert</p>
-                                </div>
                               </div>
                             </div>
                           </div>
