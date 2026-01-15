@@ -25,9 +25,10 @@ export default function SignIn() {
         author: 'Angela Merkel',
         author_title: 'Ehemalige Bundeskanzlerin'
     })
+    const [backgroundImage, setBackgroundImage] = useState('/assets/login/nature01.jpeg')
     const router = useRouter()
 
-    // Load random quote on component mount
+    // Load random quote and random background image on component mount
     useEffect(() => {
         const fetchQuote = async () => {
             try {
@@ -42,6 +43,11 @@ export default function SignIn() {
             }
         }
         fetchQuote()
+
+        // Select random background image
+        const images = ['/assets/login/nature01.jpeg', '/assets/login/nature02.jpeg']
+        const randomImage = images[Math.floor(Math.random() * images.length)]
+        setBackgroundImage(randomImage)
     }, [])
 
     const handleSubmit = async (e) => {
@@ -244,7 +250,7 @@ export default function SignIn() {
                     </div>
 
                     {/* Rechte Seite - Weißer Bereich */}
-                    <div className="signin-right">
+                    <div className="signin-right" style={{ backgroundImage: `url(${backgroundImage})` }}>
                         <div className="quote-container">
                             <div className="quote-content">
                                 <div className="quote-text">
