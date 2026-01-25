@@ -71,14 +71,18 @@ export default async function handler(req, res) {
       const asset = await assetResponse.json();
       const data = asset;
 
-      // Setze den operationalMode als Attribut, falls angegeben
-      if (req.body.operationalMode !== undefined) {
+      // Setze den operationalMode und operationalDevice als Attribut, falls angegeben
+      if (req.body.operationalMode !== undefined || req.body.operationalDevice !== undefined) {
         try {
-          const attributesBody = {
-            operationalMode: req.body.operationalMode
-          };
+          const attributesBody = {};
+          if (req.body.operationalMode !== undefined) {
+            attributesBody.operationalMode = req.body.operationalMode;
+          }
+          if (req.body.operationalDevice !== undefined) {
+            attributesBody.operationalDevice = req.body.operationalDevice;
+          }
           
-          console.log('Setting operationalMode attribute for new asset:', attributesBody);
+          console.log('Setting operational attributes for new asset:', attributesBody);
           
           const attributesResponse = await fetch(`${TB_API_URL}/api/plugins/telemetry/ASSET/${asset.id.id}/attributes/SERVER_SCOPE`, {
             method: 'POST',
@@ -90,13 +94,38 @@ export default async function handler(req, res) {
           });
 
           if (!attributesResponse.ok) {
-            console.error('Error setting operationalMode attribute:', attributesResponse.status);
+            console.error('Error setting operational attributes:', attributesResponse.status);
             // Nicht kritisch - das Asset wurde bereits erstellt
           } else {
-            console.log('operationalMode attribute set successfully for new asset');
+            console.log('Operational attributes set successfully for new asset');
           }
         } catch (error) {
-          console.error('Error setting operationalMode attribute for new asset:', error);
+          console.error('Error setting operational attributes for new asset:', error);
+          // Nicht kritisch - das Asset wurde bereits erstellt
+        }
+      }
+      
+      // Setze extTempDevice als Attribut, falls operationalMode 2 oder 10 ist und operationalDevice vorhanden ist
+      if (req.body.operationalDevice && (req.body.operationalMode === '2' || req.body.operationalMode === '10')) {
+        try {
+          const extTempDeviceResponse = await fetch(`${TB_API_URL}/api/plugins/telemetry/ASSET/${asset.id.id}/attributes/SERVER_SCOPE`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Authorization': `Bearer ${session.tbToken}`
+            },
+            body: JSON.stringify({
+              extTempDevice: req.body.operationalDevice
+            })
+          });
+
+          if (!extTempDeviceResponse.ok) {
+            console.warn('Failed to save extTempDevice attribute for new asset, but asset was created');
+          } else {
+            console.log('extTempDevice attribute set successfully for new asset');
+          }
+        } catch (error) {
+          console.error('Error setting extTempDevice attribute for new asset:', error);
           // Nicht kritisch - das Asset wurde bereits erstellt
         }
       }

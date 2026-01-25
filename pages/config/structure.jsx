@@ -725,21 +725,28 @@ export default function Structure() {
         setIsNewNode(false);
       } else {
         // Bestehenden Node aktualisieren (bisherige Logik)
+        // Stelle sicher, dass operationalDevice explizit gesetzt wird (auch wenn leer)
+        const updateBody = {
+          ...editedDetails,
+          operationalMode: operationalMode || '0',
+          operationalDevice: operationalDevice || ''
+        };
+        
+        console.log('Updating asset with:', updateBody);
+        
         const assetResponse = await fetch(`/api/config/assets/${selectedNode.id}`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${session.token}`
           },
-          body: JSON.stringify({
-            ...editedDetails,
-            operationalMode: operationalMode,
-            operationalDevice: operationalDevice
-          })
+          body: JSON.stringify(updateBody)
         });
 
         if (!assetResponse.ok) {
-          throw new Error('Failed to update asset');
+          const errorText = await assetResponse.text();
+          console.error('Failed to update asset:', errorText);
+          throw new Error(`Failed to update asset: ${errorText}`);
         }
 
         // Speichere die Device-ID als Attribut extTempDevice am Asset
@@ -757,6 +764,8 @@ export default function Structure() {
 
           if (!attributesResponse.ok) {
             console.warn('Failed to save extTempDevice attribute, but asset was updated');
+          } else {
+            console.log('extTempDevice attribute saved successfully:', operationalDevice);
           }
         } else {
           // Wenn kein externes Gerät ausgewählt ist, entferne das Attribut
@@ -773,6 +782,8 @@ export default function Structure() {
 
           if (!attributesResponse.ok) {
             console.warn('Failed to remove extTempDevice attribute');
+          } else {
+            console.log('extTempDevice attribute removed successfully');
           }
         }
 

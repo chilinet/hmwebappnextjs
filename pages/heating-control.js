@@ -3370,26 +3370,6 @@ export default function HeatingControl() {
       `}</style>
       <div className="container-fluid p-0 heating-control-page" style={{ height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: 'white', overflow: 'hidden' }}>
         <div className="d-flex" style={{ flex: 1, minHeight: 0, height: '100%', overflow: 'hidden' }}>
-          {/* Mobile Toggle Button */}
-          {isMobile && (
-            <button
-              className="btn btn-primary position-fixed shadow"
-              style={{ 
-                bottom: '20px', 
-                left: '20px', 
-                zIndex: 1050,
-                borderRadius: '50%',
-                width: '50px',
-                height: '50px',
-                boxShadow: '0 4px 8px rgba(0,0,0,0.3)'
-              }}
-              onClick={() => setShowTree(!showTree)}
-              title="Struktur anzeigen/verstecken"
-            >
-              <FontAwesomeIcon icon={faBuilding} />
-            </button>
-          )}
-          
           {/* Mobile Overlay */}
           {isMobile && showTree && (
             <div 
@@ -3398,15 +3378,49 @@ export default function HeatingControl() {
                 top: 0, 
                 left: 0, 
                 zIndex: 1035,
-                opacity: 0.5
+                opacity: 0.5,
+                pointerEvents: 'auto'
               }}
               onClick={() => setShowTree(false)}
             />
           )}
           
+          {/* Mobile Toggle Button - placed after overlay to ensure it's on top */}
+          {isMobile && (
+            <button
+              className="btn btn-primary position-fixed shadow"
+              type="button"
+              style={{ 
+                bottom: '20px', 
+                left: '20px', 
+                zIndex: 1060,
+                borderRadius: '50%',
+                width: '50px',
+                height: '50px',
+                boxShadow: '0 4px 8px rgba(0,0,0,0.3)',
+                pointerEvents: 'auto',
+                touchAction: 'manipulation',
+                border: 'none'
+              }}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setShowTree(prev => !prev);
+              }}
+              onTouchStart={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setShowTree(prev => !prev);
+              }}
+              title="Struktur anzeigen/verstecken"
+            >
+              <FontAwesomeIcon icon={faBuilding} />
+            </button>
+          )}
+          
            {/* Linke Seite: Hierarchie */}
            <div 
-             className={`card bg-white text-dark ${isMobile ? (showTree ? 'd-block' : 'd-none') : 'd-block'}`}
+             className="card bg-white text-dark"
              style={{ 
                minWidth: isMobile ? '100%' : '400px',
                width: isMobile ? '100%' : '400px',
@@ -3416,7 +3430,7 @@ export default function HeatingControl() {
                top: isMobile ? '0' : 'auto',
                left: isMobile ? '0' : 'auto',
                zIndex: isMobile ? 1040 : 'auto',
-               display: 'flex',
+               display: isMobile ? (showTree ? 'flex' : 'none') : 'flex',
                flexDirection: 'column',
                overflow: 'hidden'
              }}
@@ -3585,7 +3599,16 @@ export default function HeatingControl() {
           </div>
 
           {/* Rechte Seite: Dashboard Content */}
-          <div className={`flex-grow-1 d-flex flex-column main-content ${isMobile && showTree ? 'd-none' : 'd-flex'}`} style={{ minHeight: 0, height: '100%', overflow: 'hidden', backgroundColor: 'white' }}>
+          <div 
+            className="flex-grow-1 flex-column main-content"
+            style={{ 
+              minHeight: 0, 
+              height: '100%', 
+              overflow: 'hidden', 
+              backgroundColor: 'white',
+              display: isMobile ? (showTree ? 'none' : 'flex') : 'flex'
+            }}
+          >
             {selectedNode ? (
               <div className="flex-grow-1 d-flex flex-column" style={{ minHeight: 0, height: '100%', overflow: 'hidden' }}>
                 {/* Fixed Header and Tabs - not scrollable */}

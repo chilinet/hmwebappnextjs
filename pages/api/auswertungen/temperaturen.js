@@ -89,17 +89,14 @@ export default async function handler(req, res) {
         LEFT JOIN attribute_kv ak
             ON ak.entity_id = d.id
         WHERE c.id = $1
-          AND dp.name IN (
-            'dnt-LW-eTRV-C',
-            'dnt-LW-eTRV',
+          AND LOWER(dp.name) IN (
             'dnt-lw-etrv-c',
-            'mcpanel',
-            'LW-eTRV',
-            'LW-ETRV',
-            'VICKI',
             'dnt-lw-etrv',
+            'mcpanel',
+            'lw-etrv',
             'vicki',
-            'dnt-lw-wth'
+            'dnt-lw-wth',
+            'tbhh100'
           )
         GROUP BY
             c.id,
