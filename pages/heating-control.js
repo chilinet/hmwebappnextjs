@@ -319,6 +319,31 @@ export default function HeatingControl() {
     calculatePlannedTargetTemperature();
   }, [calculatePlannedTargetTemperature]);
 
+  // Debug: Log runStatus changes
+  useEffect(() => {
+    const currentRunStatus = pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus;
+    console.log('🟣 [DEBUG] runStatus changed - pendingRunStatus:', pendingRunStatus, 'nodeDetails?.attributes?.runStatus:', nodeDetails?.attributes?.runStatus, 'currentRunStatus:', currentRunStatus);
+  }, [pendingRunStatus, nodeDetails?.attributes?.runStatus]);
+
+  // Update selectedNode.data when nodeDetails changes to keep them in sync
+  useEffect(() => {
+    if (nodeDetails && selectedNode && selectedNode.id === nodeDetails.id) {
+      console.log('🟠 [DEBUG] Syncing selectedNode.data with nodeDetails - runStatus:', nodeDetails?.attributes?.runStatus);
+      setSelectedNode(prev => {
+        if (!prev || prev.id !== nodeDetails.id) return prev;
+        return {
+          ...prev,
+          data: {
+            ...prev.data,
+            runStatus: nodeDetails?.attributes?.runStatus,
+            fixValue: nodeDetails?.attributes?.fixValue,
+            schedulerPlan: nodeDetails?.attributes?.schedulerPlan
+          }
+        };
+      });
+    }
+  }, [nodeDetails, selectedNode]);
+
   const saveChanges = async () => {
     if (!selectedNode) return;
     
@@ -354,10 +379,11 @@ export default function HeatingControl() {
         }
       }
 
-      console.log('Saving heating control data:', updateData);
-      console.log('Selected day plans:', selectedDayPlans);
-      console.log('Original scheduler plan:', originalSchedulerPlan);
-      console.log('Schedule data:', scheduleData);
+      console.log('🔵 [DEBUG] Saving heating control data:', updateData);
+      console.log('🔵 [DEBUG] pendingRunStatus before save:', pendingRunStatus);
+      console.log('🔵 [DEBUG] Selected day plans:', selectedDayPlans);
+      console.log('🔵 [DEBUG] Original scheduler plan:', originalSchedulerPlan);
+      console.log('🔵 [DEBUG] Schedule data:', scheduleData);
 
       const response = await fetch(`/api/config/assets/${selectedNode.id}`, {
         method: 'PUT',
@@ -368,8 +394,22 @@ export default function HeatingControl() {
         body: JSON.stringify(updateData)
       });
 
+      console.log('🔵 [DEBUG] Save response status:', response.status, response.statusText);
+      
       if (!response.ok) {
         throw new Error('Failed to save changes');
+      }
+      
+      const savedData = await response.json();
+      console.log('🔵 [DEBUG] Saved asset data:', savedData);
+      console.log('🔵 [DEBUG] Saved runStatus:', savedData?.attributes?.runStatus);
+
+      // Save original values BEFORE resetting pending values
+      console.log('🔵 [DEBUG] Setting originalRunStatus to:', pendingRunStatus);
+      if (pendingRunStatus !== null) setOriginalRunStatus(pendingRunStatus);
+      if (pendingFixValue !== null) setOriginalFixValue(pendingFixValue);
+      if (updateData.schedulerPlan) {
+        setOriginalSchedulerPlan(JSON.parse(updateData.schedulerPlan));
       }
 
       setHasUnsavedChanges(false);
@@ -377,12 +417,22 @@ export default function HeatingControl() {
       setPendingRunStatus(null);
       setPendingFixValue(null);
       
-      if (pendingRunStatus !== null) setOriginalRunStatus(pendingRunStatus);
-      if (pendingFixValue !== null) setOriginalFixValue(pendingFixValue);
-      if (updateData.schedulerPlan) {
-        setOriginalSchedulerPlan(JSON.parse(updateData.schedulerPlan));
+      // Update selectedNode.data with the new runStatus immediately
+      if (pendingRunStatus !== null && selectedNode) {
+        console.log('🔵 [DEBUG] Updating selectedNode.data.runStatus to:', pendingRunStatus);
+        setSelectedNode(prev => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            data: {
+              ...prev.data,
+              runStatus: pendingRunStatus
+            }
+          };
+        });
       }
       
+      console.log('🔵 [DEBUG] Calling fetchNodeDetails after save...');
       fetchNodeDetails(selectedNode.id);
     } catch (error) {
       console.error('Error saving changes:', error);
@@ -743,18 +793,56 @@ export default function HeatingControl() {
       setLoadingDetails(true);
       setNodeDetails(null);
       
+      console.log('🟢 [DEBUG] fetchNodeDetails - Fetching asset:', nodeId);
       const response = await fetch(`/api/config/assets/${nodeId}`, {
         headers: {
-          'Authorization': `Bearer ${session.token}`
-        }
+          'Authorization': `Bearer ${session.token}`,
+          'Cache-Control': 'no-cache'
+        },
+        cache: 'no-store'
       });
+
+      console.log('🟢 [DEBUG] fetchNodeDetails - Response status:', response.status, response.statusText);
+      console.log('🟢 [DEBUG] fetchNodeDetails - Response headers:', Object.fromEntries(response.headers.entries()));
 
       if (!response.ok) {
         throw new Error('Failed to fetch node details');
       }
 
       const nodeData = await response.json();
+      console.log('🟢 [DEBUG] fetchNodeDetails - Full nodeData:', nodeData);
+      console.log('🟢 [DEBUG] fetchNodeDetails - nodeData.attributes:', nodeData?.attributes);
+      console.log('🟢 [DEBUG] fetchNodeDetails - runStatus from API:', nodeData?.attributes?.runStatus);
+      console.log('🟢 [DEBUG] fetchNodeDetails - runStatus type:', typeof nodeData?.attributes?.runStatus);
+      console.log('🟢 [DEBUG] fetchNodeDetails - runStatus === "PIR":', nodeData?.attributes?.runStatus === 'PIR');
+      console.log('🟢 [DEBUG] fetchNodeDetails - runStatus === "fix":', nodeData?.attributes?.runStatus === 'fix');
+      
       setNodeDetails(nodeData);
+      
+      // Update selectedNode.data to keep it in sync with nodeDetails
+      if (selectedNode && selectedNode.id === nodeId) {
+        console.log('🟢 [DEBUG] fetchNodeDetails - Updating selectedNode.data with new runStatus:', nodeData?.attributes?.runStatus);
+        setSelectedNode(prev => {
+          if (!prev || prev.id !== nodeId) return prev;
+          return {
+            ...prev,
+            data: {
+              ...prev.data,
+              runStatus: nodeData?.attributes?.runStatus,
+              fixValue: nodeData?.attributes?.fixValue,
+              schedulerPlan: nodeData?.attributes?.schedulerPlan
+            }
+          };
+        });
+      }
+      
+      // Update original runStatus from node details
+      if (nodeData?.attributes?.runStatus !== undefined) {
+        console.log('🟢 [DEBUG] fetchNodeDetails - Setting originalRunStatus to:', nodeData.attributes.runStatus);
+        setOriginalRunStatus(nodeData.attributes.runStatus);
+      } else {
+        console.log('🟢 [DEBUG] fetchNodeDetails - runStatus is undefined in nodeData.attributes');
+      }
       
       // Update original scheduler plan from node details
       const schedulerPlanValue = nodeData?.attributes?.schedulerPlan;
@@ -3661,9 +3749,18 @@ export default function HeatingControl() {
                           onClick={() => {
                             setActiveTab('settings');
                             // Initialize heating control state when opening settings tab
+                            // Always prefer nodeDetails over selectedNode.data, as nodeDetails is always fresh from API
                             if (selectedNode) {
-                              const runStatus = nodeDetails?.attributes?.runStatus || selectedNode.data?.runStatus || selectedNode.runStatus;
-                              const fixValue = nodeDetails?.attributes?.fixValue || selectedNode.data?.fixValue || selectedNode.fixValue;
+                              const runStatus = nodeDetails?.attributes?.runStatus ?? selectedNode.data?.runStatus ?? selectedNode.runStatus;
+                              const fixValue = nodeDetails?.attributes?.fixValue ?? selectedNode.data?.fixValue ?? selectedNode.fixValue;
+                              
+                              console.log('🟡 [DEBUG] Opening settings tab');
+                              console.log('🟡 [DEBUG] nodeDetails?.attributes?.runStatus:', nodeDetails?.attributes?.runStatus);
+                              console.log('🟡 [DEBUG] selectedNode.data?.runStatus:', selectedNode.data?.runStatus);
+                              console.log('🟡 [DEBUG] selectedNode.runStatus:', selectedNode.runStatus);
+                              console.log('🟡 [DEBUG] Final runStatus (preferring nodeDetails):', runStatus);
+                              console.log('🟡 [DEBUG] runStatus === "PIR":', runStatus === 'PIR');
+                              console.log('🟡 [DEBUG] runStatus === "fix":', runStatus === 'fix');
                               
                               // Set original values
                               setOriginalRunStatus(runStatus);
@@ -3792,9 +3889,18 @@ export default function HeatingControl() {
                             <div className="card" style={{ cursor: 'pointer' }} onClick={() => {
                               setActiveTab('settings');
                               // Initialize heating control state
+                              // Always prefer nodeDetails over selectedNode.data, as nodeDetails is always fresh from API
                               if (selectedNode) {
-                                const runStatus = nodeDetails?.attributes?.runStatus || selectedNode.data?.runStatus || selectedNode.runStatus;
-                                const fixValue = nodeDetails?.attributes?.fixValue || selectedNode.data?.fixValue || selectedNode.fixValue;
+                                const runStatus = nodeDetails?.attributes?.runStatus ?? selectedNode.data?.runStatus ?? selectedNode.runStatus;
+                                const fixValue = nodeDetails?.attributes?.fixValue ?? selectedNode.data?.fixValue ?? selectedNode.fixValue;
+                                
+                                console.log('🟡 [DEBUG] Opening settings tab (from card)');
+                                console.log('🟡 [DEBUG] nodeDetails?.attributes?.runStatus:', nodeDetails?.attributes?.runStatus);
+                                console.log('🟡 [DEBUG] selectedNode.data?.runStatus:', selectedNode.data?.runStatus);
+                                console.log('🟡 [DEBUG] selectedNode.runStatus:', selectedNode.runStatus);
+                                console.log('🟡 [DEBUG] Final runStatus (preferring nodeDetails):', runStatus);
+                                console.log('🟡 [DEBUG] runStatus === "PIR":', runStatus === 'PIR');
+                                console.log('🟡 [DEBUG] runStatus === "fix":', runStatus === 'fix');
                                 
                                 // Set original values
                                 setOriginalRunStatus(runStatus);
@@ -4247,6 +4353,17 @@ export default function HeatingControl() {
                                     <small className="text-muted">Fix</small>
                                   </div>
                                 </div>
+                                <div className="text-center">
+                                  <img 
+                                    src={(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) === 'PIR' ? "/assets/img/hm_pir_active.svg" : "/assets/img/hm_pir_inactive.svg"}
+                                    alt="Bewegung"
+                                    style={{ width: '60px', height: '60px', cursor: 'pointer' }}
+                                    onClick={() => updateRunStatus('PIR')}
+                                  />
+                                  <div className="mt-2">
+                                    <small className="text-muted">Bewegung</small>
+                                  </div>
+                                </div>
                               </div>
                             </div>
 
@@ -4490,6 +4607,13 @@ export default function HeatingControl() {
                                     )}
                                   </div>
                                 </div>
+                              </div>
+                            )}
+
+                            {/* Motion Widget - Placeholder for future implementation */}
+                            {(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) === 'PIR' && (
+                              <div className="mb-4">
+                                {/* Content will be added in future steps */}
                               </div>
                             )}
 

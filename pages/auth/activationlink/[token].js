@@ -18,14 +18,26 @@ export default function ActivateAccount() {
   // Warte bis der Router bereit ist
   useEffect(() => {
     if (!router.isReady) return;
-  }, [router.isReady]);
+    
+    // Prüfe ob Token vorhanden ist
+    if (!router.query.token) {
+      setError('Ungültiger Aktivierungslink - Token fehlt');
+    }
+  }, [router.isReady, router.query.token]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setLoading(true);
 
-    // Validierung
+    // Validierung: Token vorhanden?
+    if (!router.query.token || typeof router.query.token !== 'string' || router.query.token.trim().length === 0) {
+      setError('Ungültiger Aktivierungslink - Token fehlt');
+      setLoading(false);
+      return;
+    }
+
+    // Validierung: Passwort
     if (formData.password.length < 8) {
       setError('Das Passwort muss mindestens 8 Zeichen lang sein');
       setLoading(false);
@@ -45,7 +57,7 @@ export default function ActivateAccount() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          token: router.query.token,
+          token: router.query.token.trim(),
           password: formData.password,
         }),
       });
