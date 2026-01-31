@@ -35,7 +35,28 @@ function Devices() {
   const [refreshInterval, setRefreshInterval] = useState(null);
   const [showScrollToTop, setShowScrollToTop] = useState(false);
   const [openDropdown, setOpenDropdown] = useState(null);
+  const [treeData, setTreeData] = useState(null);
   const tableContainerRef = useRef(null);
+
+  // Helper: find asset path in tree (same pattern as window-status)
+  const findAssetPath = useCallback((assetId, treeNodes, currentPath = []) => {
+    const nodes = Array.isArray(treeNodes) ? treeNodes : (treeNodes ? [treeNodes] : []);
+    for (const node of nodes) {
+      const newPath = [...currentPath, node.label || node.name || node.text || '?'];
+      if (node.id === assetId) return newPath;
+      if (node.children?.length > 0) {
+        const found = findAssetPath(assetId, node.children, newPath);
+        if (found) return found;
+      }
+    }
+    return null;
+  }, []);
+
+  const getAssetPathString = useCallback((assetId) => {
+    if (!treeData || !assetId) return null;
+    const path = findAssetPath(assetId, treeData);
+    return path && path.length > 0 ? path.join(' → ') : null;
+  }, [treeData, findAssetPath]);
 
   // Load cached data on component mount
   useEffect(() => {
@@ -48,6 +69,16 @@ function Devices() {
       fetchDevices();
     }
   }, [tbToken, session?.token]);
+
+  // Load tree data for path display (same pattern as window-status)
+  useEffect(() => {
+    if (session?.user?.customerid) {
+      fetch(`/api/config/customers/${session.user.customerid}/tree`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => setTreeData(data))
+        .catch((err) => console.warn('Error loading tree for device paths:', err));
+    }
+  }, [session?.user?.customerid]);
 
   // Auto-refresh functionality
   useEffect(() => {
@@ -317,13 +348,10 @@ function Devices() {
       // Bereite Daten für Excel vor
       const excelData = cachedDevices.map(device => {
         const serialNumber = getSerialNumber(device);
-        const assetPath = device.asset && typeof device.asset === 'object' ? (
-          device.asset.fullPath?.labels && device.asset.fullPath.labels.length > 0 ? (
-            device.asset.fullPath.labels.join(' / ')
-          ) : device.asset.pathString && !device.asset.pathString.startsWith('Asset ') ? (
-            device.asset.pathString
-          ) : '-'
-        ) : '-';
+        const assetPath = (device.asset?.id && getAssetPathString(device.asset.id))
+          || (device.asset?.fullPath?.labels?.length > 0 ? device.asset.fullPath.labels.join(' → ') : null)
+          || (device.asset?.pathString && !device.asset.pathString.startsWith('Asset ') ? device.asset.pathString : null)
+          || '-';
         
         const lastActivity = device.telemetry?.lastActivityTime ? 
           new Date(parseInt(device.telemetry.lastActivityTime)).toLocaleString('de-DE', {
@@ -402,7 +430,7 @@ function Devices() {
       console.error('Error exporting devices:', error);
       alert('Fehler beim Exportieren der Geräte: ' + error.message);
     }
-  }, [cachedDevices]);
+  }, [cachedDevices, getAssetPathString]);
 
   const scrollToTop = () => {
     // Scroll page to top
@@ -446,11 +474,12 @@ function Devices() {
     return displayDevices.filter(device => {
       if (!device) return false;
       const serialNumber = getSerialNumber(device).toLowerCase();
+      const pathStr = (device.asset?.id && getAssetPathString(device.asset.id)) || device.asset?.pathString || '';
       const matchesSearch = !searchTerm || 
         (device.name || '').toLowerCase().includes(searchLower) ||
         (device.label || '').toLowerCase().includes(searchLower) ||
         (device.type || '').toLowerCase().includes(searchLower) ||
-        (device.asset?.pathString || '').toLowerCase().includes(searchLower) ||
+        pathStr.toLowerCase().includes(searchLower) ||
         serialNumber.includes(searchLower) ||
         (device.telemetry?.gatewayId || '').toLowerCase().includes(searchLower);
 
@@ -468,7 +497,7 @@ function Devices() {
 
       return matchesSearch && matchesType && matchesStatus && matchesGateway;
     });
-  }, [displayDevices, searchTerm, selectedType, selectedStatus, selectedGateway]);
+  }, [displayDevices, searchTerm, selectedType, selectedStatus, selectedGateway, getAssetPathString]);
 
   const handleClose = () => {
     setShowModal(false);
@@ -872,17 +901,15 @@ function Devices() {
                     {device.telemetry?.gatewayId || '-'}
                   </td>
                   <td>
-                    {device.asset && typeof device.asset === 'object' ? (
-                      device.asset.fullPath?.labels && device.asset.fullPath.labels.length > 0 ? (
-                        <div>
-                          {device.asset.fullPath.labels.join(' / ')}
-                        </div>
-                      ) : device.asset.pathString && !device.asset.pathString.startsWith('Asset ') ? (
-                        <div>
-                          {device.asset.pathString}
-                        </div>
-                      ) : '-'
-                    ) : '-'}
+                    {(() => {
+                      const pathFromTree = device.asset?.id && getAssetPathString(device.asset.id);
+                      if (pathFromTree) return <div><small className="text-info">{pathFromTree}</small></div>;
+                      if (device.asset && typeof device.asset === 'object') {
+                        if (device.asset.fullPath?.labels?.length > 0) return <div>{device.asset.fullPath.labels.join(' / ')}</div>;
+                        if (device.asset.pathString && !device.asset.pathString.startsWith('Asset ')) return <div>{device.asset.pathString}</div>;
+                      }
+                      return '-';
+                    })()}
                   </td>
                   <td>
                     {device.telemetry?.batteryVoltage ? (
@@ -1098,15 +1125,16 @@ function Devices() {
                     </span>
                   </div>
                   <div className="mb-3">
-                    <strong>Pfad:</strong> {
-                      selectedDevice?.asset && typeof selectedDevice.asset === 'object' ? (
-                        selectedDevice.asset.fullPath?.labels && selectedDevice.asset.fullPath.labels.length > 0 ? (
-                          selectedDevice.asset.fullPath.labels.join(' / ')
-                        ) : selectedDevice.asset.pathString && !selectedDevice.asset.pathString.startsWith('Asset ') ? (
-                          selectedDevice.asset.pathString
-                        ) : 'Nicht zugewiesen'
-                      ) : 'Nicht zugewiesen'
-                    }
+                    <strong>Pfad:</strong>{' '}
+                    {selectedDevice?.asset?.id && getAssetPathString(selectedDevice.asset.id) ? (
+                      <span className="text-info">{getAssetPathString(selectedDevice.asset.id)}</span>
+                    ) : selectedDevice?.asset?.fullPath?.labels?.length > 0 ? (
+                      selectedDevice.asset.fullPath.labels.join(' → ')
+                    ) : selectedDevice?.asset?.pathString && !selectedDevice.asset.pathString.startsWith('Asset ') ? (
+                      selectedDevice.asset.pathString
+                    ) : (
+                      'Nicht zugewiesen'
+                    )}
                   </div>
                   {/* Weitere Geräteinformationen hier */}
                 </div>

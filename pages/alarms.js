@@ -560,6 +560,14 @@ export default function Alarms() {
                                     <small className="text-muted">
                                       <strong>Gerät:</strong> {alarm.originatorLabel || alarm.device?.name || alarm.originator?.name || 'Unbekanntes Gerät'}
                                     </small>
+                                    {alarm.devicePath && (
+                                      <>
+                                        <br />
+                                        <small className="text-info">
+                                          <strong>Pfad:</strong> {alarm.devicePath}
+                                        </small>
+                                      </>
+                                    )}
                                   </div>
                                   <div className="device-id">
                                     <small className="text-muted">
@@ -697,6 +705,12 @@ export default function Alarms() {
               <div className="mb-3">
                 <label className="form-label">
                   <strong>Gerät:</strong> {acknowledgingAlarm?.originatorLabel || acknowledgingAlarm?.device?.name || 'Unbekanntes Gerät'}
+                  {acknowledgingAlarm?.devicePath && (
+                    <>
+                      <br />
+                      <span className="text-info small"><strong>Pfad:</strong> {acknowledgingAlarm.devicePath}</span>
+                    </>
+                  )}
                 </label>
               </div>
               <div className="mb-3">

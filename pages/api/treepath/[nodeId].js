@@ -8,7 +8,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { id } = req.query;
+  const { id, customerId: queryCustomerId } = req.query;
 
   // Validate required parameters
   if (!id) {
@@ -21,9 +21,9 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Node ID must be a valid UUID' });
   }
 
-  // Get customer ID from session
+  // Get customer ID: query (for backend callers) > session
   const session = await getServerSession(req, res, authOptions);
-  const customerId = session?.user?.customerid || '2EA4BA70-647A-11EF-8CD8-8B580D9AA086';
+  const customerId = queryCustomerId || session?.user?.customerid || '2EA4BA70-647A-11EF-8CD8-8B580D9AA086';
 
   let connection;
   try {

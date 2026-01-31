@@ -2,6 +2,38 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "../auth/[...nextauth]";
 import { makeThingsBoardRequest } from "../../../lib/utils/thingsboardRequest";
 
+/** Holt den Asset-Pfad für ein Gerät (wie config/devices getAssetHierarchy). */
+async function getDevicePath(deviceId, tbToken, customer_id) {
+  if (!deviceId || !tbToken) return null;
+  try {
+    const relationsResponse = await makeThingsBoardRequest(
+      `${process.env.THINGSBOARD_URL}/api/relations?toId=${deviceId}&toType=DEVICE&relationTypeGroup=COMMON`,
+      { method: 'GET', headers: { 'accept': 'application/json' } },
+      customer_id
+    );
+    if (!relationsResponse.ok) return null;
+    const relations = await relationsResponse.json();
+    const assetRelation = relations.find((r) => r.from?.entityType === 'ASSET');
+    if (!assetRelation?.from?.id) return null;
+    const baseUrl = process.env.NEXTAUTH_URL || 'http://localhost:3000';
+    const treepathRes = await fetch(
+      `${baseUrl}/api/treepath/${assetRelation.from.id}?customerId=${encodeURIComponent(customer_id)}`,
+      { headers: { 'x-api-source': 'backend' } }
+    );
+    if (!treepathRes.ok) return null;
+    const treepathData = await treepathRes.json();
+    if (treepathData.fullPath?.labels?.length) {
+      return treepathData.fullPath.labels.join(' → ');
+    }
+    if (treepathData.pathString && !treepathData.pathString.startsWith('Asset ')) {
+      return treepathData.pathString;
+    }
+    return null;
+  } catch (e) {
+    console.warn('getDevicePath error:', e?.message);
+    return null;
+  }
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -123,50 +155,51 @@ export default async function handler(req, res) {
     const endIndex = startIndex + parseInt(limit);
     alarms = alarms.slice(startIndex, endIndex);
     
-    // Device-Informationen für jeden Alarm laden
+    // Device-Informationen und Geräte-Pfad für jeden Alarm laden
     if (alarms.length > 0) {
       try {
         const enrichedAlarms = await Promise.all(alarms.map(async (alarm) => {
-          if (alarm.originator?.id?.entityType === 'DEVICE' && alarm.originator?.id?.id) {
+          const deviceId = alarm.originator?.id?.entityType === 'DEVICE' ? alarm.originator?.id?.id : null;
+          let device = {
+            id: alarm.originator?.id?.id || 'Unknown',
+            name: alarm.originator?.name || 'Unbekanntes Gerät',
+            type: 'Unknown'
+          };
+          let devicePath = null;
+
+          if (deviceId) {
             try {
-              const deviceResponse = await makeThingsBoardRequest(`${thingsboardUrl}/api/device/${alarm.originator.id.id}`, {
-                method: 'GET',
-                headers: {
-                  'Content-Type': 'application/json'
-                }
-              }, customer_id);
-              
-              if (deviceResponse.ok) {
+              const [deviceResponse, path] = await Promise.all([
+                makeThingsBoardRequest(`${thingsboardUrl}/api/device/${deviceId}`, {
+                  method: 'GET',
+                  headers: { 'Content-Type': 'application/json' }
+                }, customer_id),
+                getDevicePath(deviceId, tbToken, customer_id)
+              ]);
+              if (deviceResponse?.ok) {
                 const deviceData = await deviceResponse.json();
-                return {
-                  ...alarm,
-                  device: {
-                    id: deviceData.id?.id || alarm.originator.id.id,
-                    name: deviceData.name || 'Unbekanntes Gerät',
-                    type: deviceData.type || 'Unknown'
-                  }
+                device = {
+                  id: deviceData.id?.id || deviceId,
+                  name: deviceData.name || 'Unbekanntes Gerät',
+                  type: deviceData.type || 'Unknown'
                 };
               }
+              if (path) devicePath = path;
             } catch (deviceError) {
               console.error('Error fetching device info:', deviceError);
             }
           }
-          
-          // Fallback wenn Device-Info nicht geladen werden kann
+
           return {
             ...alarm,
-            device: {
-              id: alarm.originator?.id?.id || 'Unknown',
-              name: alarm.originator?.name || 'Unbekanntes Gerät',
-              type: 'Unknown'
-            }
+            device,
+            devicePath
           };
         }));
-        
+
         alarms = enrichedAlarms;
       } catch (error) {
         console.error('Error enriching alarms with device info:', error);
-        // Fallback: Alarme ohne Device-Info zurückgeben
       }
     }
     
