@@ -107,6 +107,7 @@ export default function HeatingControl() {
   const treeRef = useRef(null);
   const treeScrollContainerRef = useRef(null); 
   const lastLoadedCustomerIdRef = useRef(null); // Track last loaded customer ID to prevent unnecessary reloads
+  const selectedNodeIdRef = useRef(null); // Current selected node id for sync effect (avoids dependency loop)
 
   // Temperature state (API only)
   const [deviceTemperatures, setDeviceTemperatures] = useState({});
@@ -333,30 +334,31 @@ export default function HeatingControl() {
     calculatePlannedTargetTemperature();
   }, [calculatePlannedTargetTemperature]);
 
-  // Debug: Log runStatus changes
+  // Keep ref in sync with selectedNode so sync effect can read without depending on selectedNode (avoids update loop)
   useEffect(() => {
-    const currentRunStatus = pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus;
-    console.log('🟣 [DEBUG] runStatus changed - pendingRunStatus:', pendingRunStatus, 'nodeDetails?.attributes?.runStatus:', nodeDetails?.attributes?.runStatus, 'currentRunStatus:', currentRunStatus);
-  }, [pendingRunStatus, nodeDetails?.attributes?.runStatus]);
+    selectedNodeIdRef.current = selectedNode?.id ?? null;
+  }, [selectedNode?.id]);
 
-  // Update selectedNode.data when nodeDetails changes to keep them in sync
+  // Update selectedNode.data when nodeDetails changes to keep them in sync (depends only on nodeDetails to avoid loop)
   useEffect(() => {
-    if (nodeDetails && selectedNode && selectedNode.id === nodeDetails.id) {
-      console.log('🟠 [DEBUG] Syncing selectedNode.data with nodeDetails - runStatus:', nodeDetails?.attributes?.runStatus);
-      setSelectedNode(prev => {
-        if (!prev || prev.id !== nodeDetails.id) return prev;
-        return {
-          ...prev,
-          data: {
-            ...prev.data,
-            runStatus: nodeDetails?.attributes?.runStatus,
-            fixValue: nodeDetails?.attributes?.fixValue,
-            schedulerPlan: nodeDetails?.attributes?.schedulerPlan
-          }
-        };
-      });
-    }
-  }, [nodeDetails, selectedNode]);
+    if (!nodeDetails || selectedNodeIdRef.current !== nodeDetails.id) return;
+    setSelectedNode(prev => {
+      if (!prev || prev.id !== nodeDetails.id) return prev;
+      const nextRunStatus = nodeDetails?.attributes?.runStatus;
+      const nextFixValue = nodeDetails?.attributes?.fixValue;
+      const nextSchedulerPlan = nodeDetails?.attributes?.schedulerPlan;
+      if (prev.data?.runStatus === nextRunStatus && prev.data?.fixValue === nextFixValue && prev.data?.schedulerPlan === nextSchedulerPlan) return prev;
+      return {
+        ...prev,
+        data: {
+          ...prev.data,
+          runStatus: nextRunStatus,
+          fixValue: nextFixValue,
+          schedulerPlan: nextSchedulerPlan
+        }
+      };
+    });
+  }, [nodeDetails]);
 
   const saveChanges = async () => {
     if (!selectedNode) return;
@@ -2588,8 +2590,6 @@ export default function HeatingControl() {
     const minTimestamp = Math.min(...allTimestamps);
     const maxTimestamp = Math.max(...allTimestamps);
     
-    console.log('Synchronizing data from', new Date(minTimestamp), 'to', new Date(maxTimestamp));
-    
     // Erstelle 10-Minuten-Zeitscheiben
     const timeSlices = [];
     const intervalMs = 10 * 60 * 1000; // 10 Minuten in Millisekunden
@@ -2597,8 +2597,6 @@ export default function HeatingControl() {
     for (let timestamp = minTimestamp; timestamp <= maxTimestamp; timestamp += intervalMs) {
       timeSlices.push(timestamp);
     }
-    
-    console.log('Created', timeSlices.length, 'time slices (10-minute intervals)');
     
     // Hilfsfunktion: Finde den nächstgelegenen Wert zu einem Zeitpunkt
     const findNearestValue = (dataArray, targetTimestamp, maxDistanceMs = 30 * 60 * 1000) => {
@@ -2654,12 +2652,6 @@ export default function HeatingControl() {
       }
     });
     
-    console.log('Synchronized data points:', {
-      temperature: synchronizedData.temperatureData.length,
-      targetTemperature: synchronizedData.targetTemperatureData.length,
-      valveOpen: synchronizedData.valveOpenData.length
-    });
-    
     return synchronizedData;
   };
 
@@ -2670,18 +2662,9 @@ export default function HeatingControl() {
     
     const timeRangeToUse = timeRange || selectedTimeRange;
     
-    console.log('Chart data - temperatureData length:', temperatureData.length);
-    console.log('Chart data - targetTemperatureData length:', targetTemperatureData.length);
-    console.log('Chart data - valveOpenData length:', valveOpenData.length);
-    console.log('Chart data - valveOpenData sample:', valveOpenData.slice(0, 3));
-    
     const hasTemperatureData = temperatureData.length > 0;
     const hasTargetTemperatureData = targetTemperatureData.length > 0;
     const hasValveOpenData = valveOpenData.length > 0;
-    
-    console.log('Chart flags - hasTemperatureData:', hasTemperatureData);
-    console.log('Chart flags - hasTargetTemperatureData:', hasTargetTemperatureData);
-    console.log('Chart flags - hasValveOpenData:', hasValveOpenData);
     
     if (!hasTemperatureData && !hasTargetTemperatureData && !hasValveOpenData) {
       return {
@@ -2755,12 +2738,6 @@ export default function HeatingControl() {
         backgroundColor: 'transparent'
       };
     }
-
-    console.log('Synchronized chart data points:', {
-      temperature: temperatureData.length,
-      targetTemperature: targetTemperatureData.length,
-      valveOpen: valveOpenData.length
-    });
     
     return {
       legend: {
@@ -2939,13 +2916,8 @@ export default function HeatingControl() {
           fontSize: 12
         },
         formatter: function(params) {
-          console.log('Tooltip params:', params);
-          
           if (params && params.length > 0) {
-            // Get the timestamp from the first parameter
             const timestamp = params[0].axisValue;
-            console.log('Tooltip timestamp:', timestamp, 'Date:', new Date(timestamp));
-            
             const date = new Date(timestamp).toLocaleString('de-DE', {
               day: '2-digit',
               month: '2-digit',
@@ -2956,15 +2928,11 @@ export default function HeatingControl() {
             let tooltipText = `<div style="font-weight: bold; margin-bottom: 5px;">${date}</div>`;
             
             params.forEach((param, index) => {
-              console.log(`Param ${index}:`, param);
-              
               // For time series data, param.value is an array [timestamp, value]
               const value = Array.isArray(param.value) ? param.value[1] : param.value;
               const seriesName = param.seriesName;
               const color = param.color;
               const displayValue = !isNaN(Number(value)) ? Number(value).toFixed(1) : 'N/A';
-              
-              console.log(`Series ${index}: ${seriesName}, value: ${value}, displayValue: ${displayValue}`);
               
               // Determine unit based on series name
               const unit = seriesName === 'Ventilöffnung' ? '%' : '°C';
@@ -3239,14 +3207,11 @@ export default function HeatingControl() {
   useEffect(() => {
     if (treeData && treeData.length > 0) {
       const firstLevelNodeIds = getFirstLevelNodeIds(treeData);
-      console.log('Tree data loaded, expanding Level 1:', firstLevelNodeIds);
-      console.log('Current openNodes before setting:', openNodes);
       setOpenNodes(firstLevelNodeIds);
       setForceExpand(true);
       
       // Force re-render after a short delay to ensure the tree is ready
       setTimeout(() => {
-        console.log('Setting openNodes after delay:', firstLevelNodeIds);
         setOpenNodes(firstLevelNodeIds);
         setForceExpand(true);
       }, 100);
@@ -3258,8 +3223,6 @@ export default function HeatingControl() {
     if (selectedNode && treeData && treeData.length > 0) {
       const pathToNode = getPathToNode(selectedNode.id);
       if (pathToNode) {
-        console.log('Selected node:', selectedNode.label);
-        console.log('Path to selected node:', pathToNode);
         setOpenNodes(pathToNode);
         setForceExpand(false); // Disable force expand, use specific path
       }
@@ -3705,10 +3668,7 @@ export default function HeatingControl() {
                   ref={treeRef}
                   tree={(() => {
                     const filtered = getFilteredTreeData();
-                    const converted = convertToTreeViewFormat(filtered);
-                    console.log('Filtered tree data:', filtered);
-                    console.log('Converted tree data:', converted);
-                    return converted;
+                    return convertToTreeViewFormat(filtered);
                   })()}
                   initialOpen={openNodes}  
                   rootId={0}
@@ -4245,7 +4205,6 @@ export default function HeatingControl() {
                   
                   <div className="row">
                     <div className="col-12">
-                      {console.log('Rendering devices:', devices, 'Length:', devices?.length)}
                       {devices && devices.length > 0 && (
                         <>
                           <div className="d-flex justify-content-between align-items-center mb-3">
@@ -4255,10 +4214,7 @@ export default function HeatingControl() {
                             </h6>
                           </div>
                           <div className="list-group">
-                            {devices.map((device, index) => {
-                              // Debug: Log device telemetry data
-                              console.log('Device', index, 'telemetry data:', device.telemetry);
-                              return (
+                            {devices.map((device, index) => (
                               <div key={index} className="list-group-item">
                                 <div className="d-flex align-items-center">
                                   <FontAwesomeIcon 
@@ -4415,8 +4371,7 @@ export default function HeatingControl() {
                                   </div>
                                 )}
                               </div>
-                              );
-                            })}
+                            ))}
                           </div>
                         </>
                       )}
