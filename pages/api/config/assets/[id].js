@@ -3,22 +3,42 @@ import { authOptions } from "../../auth/[...nextauth]";
 import { getConnection } from "../../../../lib/db";
 import sql from 'mssql';
 
-// Funktion zum Abrufen der Asset-Attribute mit Timeout
+// Gewünschte Asset-Attribute (SERVER_SCOPE) – für Lesen und keys-Parameter
+const ASSET_ATTRIBUTE_KEYS = [
+  'operationalMode',
+  'operationalDevice',
+  'childLock',
+  'fixValue',
+  'maxTemp',
+  'minTemp',
+  'extTempDevice',
+  'overruleMinutes',
+  'runStatus',
+  'schedulerPlan',
+  'schedulerPlanPIR',
+  'windowSensor',
+  'windowStates',
+  'occupied',
+  'hasPir',
+  'occupiedTemp'
+];
+
+// Funktion zum Abrufen der Asset-Attribute mit Timeout (SERVER_SCOPE + keys)
 async function fetchAssetAttributes(assetId, tbToken) {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 Sekunden Timeout
-    
+
+    const keysParam = ASSET_ATTRIBUTE_KEYS.join(',');
+    const url = `${process.env.THINGSBOARD_URL}/api/plugins/telemetry/ASSET/${assetId}/values/attributes/SERVER_SCOPE?keys=${encodeURIComponent(keysParam)}`;
+
     try {
-      const response = await fetch(
-        `${process.env.THINGSBOARD_URL}/api/plugins/telemetry/ASSET/${assetId}/values/attributes`,
-        {
-          headers: {
-            'X-Authorization': `Bearer ${tbToken}`
-          },
-          signal: controller.signal
-        }
-      );
+      const response = await fetch(url, {
+        headers: {
+          'X-Authorization': `Bearer ${tbToken}`
+        },
+        signal: controller.signal
+      });
 
       clearTimeout(timeoutId);
 
@@ -29,24 +49,8 @@ async function fetchAssetAttributes(assetId, tbToken) {
 
       const attributes = await response.json();
 
-      // Extrahiere die gewünschten Attribute
       const extractedAttributes = {};
-      const attributeKeys = [
-        'operationalMode',
-        'operationalDevice',
-        'childLock', 
-        'fixValue',
-        'maxTemp',
-        'minTemp',
-        'extTempDevice',
-        'overruleMinutes',
-        'runStatus',
-        'schedulerPlan',
-        'windowSensor',
-        'windowStates'
-      ];
-
-      attributeKeys.forEach(key => {
+      ASSET_ATTRIBUTE_KEYS.forEach(key => {
         const attribute = attributes.find(attr => attr.key === key);
         if (attribute) {
           extractedAttributes[key] = attribute.value;
@@ -133,42 +137,49 @@ async function removeAssetFromTree(customerId, assetId) {
 }
 
 // Funktion zum Abrufen der Asset-Details
+// Returns { asset } on success, { asset: null, tbStatus, tbDetail } on ThingsBoard error
 async function fetchAssetDetails(assetId, tbToken) {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 Sekunden Timeout
-    
+    const url = `${process.env.THINGSBOARD_URL}/api/asset/${assetId}`;
+
     try {
-      const response = await fetch(
-        `${process.env.THINGSBOARD_URL}/api/asset/${assetId}`,
-        {
-          headers: {
-            'X-Authorization': `Bearer ${tbToken}`
-          },
-          signal: controller.signal
-        }
-      );
+      const response = await fetch(url, {
+        headers: {
+          'X-Authorization': `Bearer ${tbToken}`
+        },
+        signal: controller.signal
+      });
 
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        console.log(`Failed to fetch asset details for ${assetId}: ${response.status}`);
-        return null;
+        const body = await response.text();
+        let errDetail;
+        try {
+          errDetail = JSON.parse(body);
+        } catch {
+          errDetail = body || response.statusText;
+        }
+        console.warn(`[assets/${assetId}] ThingsBoard asset request failed: status=${response.status}, url=${url}, detail=`, errDetail);
+        return { asset: null, tbStatus: response.status, tbDetail: errDetail };
       }
 
-      return await response.json();
+      const asset = await response.json();
+      return { asset };
     } catch (fetchError) {
       clearTimeout(timeoutId);
       if (fetchError.name !== 'AbortError' && !fetchError.message?.includes('timeout')) {
-        console.warn(`Error fetching asset details for ${assetId}:`, fetchError.message || fetchError);
+        console.warn(`[assets/${assetId}] Error fetching asset details:`, fetchError.message || fetchError);
       }
-      return null;
+      return { asset: null, tbStatus: null, tbDetail: fetchError?.message || 'Request failed' };
     }
   } catch (error) {
     if (!error.message?.includes('timeout') && !error.message?.includes('aborted')) {
-      console.warn(`Error fetching asset details for ${assetId}:`, error.message || error);
+      console.warn(`[assets/${assetId}] Error:`, error.message || error);
     }
-    return null;
+    return { asset: null, tbStatus: null, tbDetail: error?.message || 'Unknown error' };
   }
 }
 
@@ -194,13 +205,19 @@ export default async function handler(req, res) {
 
     if (req.method === 'GET') {
       // Hole Asset-Details und Attribute direkt aus ThingsBoard
-      const [assetDetails, attributes] = await Promise.all([
+      const [detailsResult, attributes] = await Promise.all([
         fetchAssetDetails(id, tbToken),
         fetchAssetAttributes(id, tbToken)
       ]);
 
+      const assetDetails = detailsResult?.asset;
       if (!assetDetails) {
-        return res.status(404).json({ message: 'Asset not found' });
+        return res.status(404).json({
+          message: 'Asset not found',
+          tbStatus: detailsResult?.tbStatus ?? null,
+          tbDetail: detailsResult?.tbDetail ?? null,
+          hint: 'ThingsBoard returned no asset. Check: asset exists, THINGSBOARD_URL, token has access to this tenant.'
+        });
       }
 
       return res.status(200).json({
@@ -211,7 +228,7 @@ export default async function handler(req, res) {
         attributes: attributes
       });
     } else if (req.method === 'PUT') {
-      const { minTemp, maxTemp, overruleMinutes, runStatus, fixValue, schedulerPlan, childLock, windowSensor, operationalMode, operationalDevice, extTempDevice } = req.body;
+      const { minTemp, maxTemp, overruleMinutes, runStatus, fixValue, schedulerPlan, schedulerPlanPIR, childLock, windowSensor, operationalMode, operationalDevice, extTempDevice, hasPir, occupiedTemp } = req.body;
 
       // Wenn es ein Tree-Only-Update ist, überspringe ThingsBoard Update
       if (isTreeOnlyUpdate) {
@@ -227,6 +244,7 @@ export default async function handler(req, res) {
       if (runStatus !== undefined) attributesToUpdate.runStatus = runStatus;
       if (fixValue !== undefined) attributesToUpdate.fixValue = fixValue;
       if (schedulerPlan !== undefined) attributesToUpdate.schedulerPlan = schedulerPlan;
+      if (schedulerPlanPIR !== undefined) attributesToUpdate.schedulerPlanPIR = schedulerPlanPIR;
       if (childLock !== undefined) attributesToUpdate.childLock = childLock;
       if (windowSensor !== undefined) attributesToUpdate.windowSensor = windowSensor;
       if (operationalMode !== undefined) attributesToUpdate.operationalMode = operationalMode;
@@ -235,6 +253,8 @@ export default async function handler(req, res) {
         // Wenn extTempDevice null ist, entferne das Attribut (setze es auf null)
         attributesToUpdate.extTempDevice = extTempDevice;
       }
+      if (hasPir !== undefined) attributesToUpdate.hasPir = hasPir;
+      if (occupiedTemp !== undefined) attributesToUpdate.occupiedTemp = occupiedTemp;
 
       if (Object.keys(attributesToUpdate).length === 0) {
         return res.status(400).json({ message: 'No attributes to update' });

@@ -313,29 +313,41 @@ export default function Structure() {
     }, []);
   };
 
-  const fetchNodeDetails = (node) => {
+  const fetchNodeDetails = async (node) => {
     if (!node) return;
     
-    // Lade die Daten direkt aus dem Tree-Node statt von der API
-    // Alle benötigten Daten (name, label, type, operationalMode) stehen im Tree
-    const nodeDetails = {
+    const baseDetails = {
       id: node.id,
       name: node.name || node.text,
       label: node.label || node.text,
       type: node.type || node.data?.type || '',
       operationalMode: node.operationalMode || node.data?.operationalMode || '0',
       operationalDevice: node.operationalDevice || node.data?.operationalDevice || '',
-      // Für Kompatibilität mit bestehendem Code
-      extTempDevice: node.operationalDevice || node.data?.operationalDevice || ''
+      extTempDevice: node.operationalDevice || node.data?.operationalDevice || '',
+      hasPir: node.hasPir ?? node.data?.hasPir ?? false
     };
-    
-    setNodeDetails(nodeDetails);
-    
-    // Setze den operationalMode
-    setOperationalMode(nodeDetails.operationalMode.toString());
-    
-    // Setze den operationalDevice
-    setOperationalDevice(nodeDetails.operationalDevice || '');
+
+    // Bei bestehendem Asset (UUID) Attribute von der API holen (z. B. hasPir)
+    const isExistingAsset = node.id && typeof node.id === 'string' && !node.id.startsWith('temp_') && node.id.length > 30;
+    if (isExistingAsset && session?.token) {
+      try {
+        const res = await fetch(`/api/config/assets/${node.id}`, {
+          headers: { 'Authorization': `Bearer ${session.token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.attributes && data.attributes.hasPir !== undefined) {
+            baseDetails.hasPir = data.attributes.hasPir === true || data.attributes.hasPir === 'true';
+          }
+        }
+      } catch (e) {
+        console.warn('Could not fetch asset attributes for hasPir:', e);
+      }
+    }
+
+    setNodeDetails(baseDetails);
+    setOperationalMode(baseDetails.operationalMode.toString());
+    setOperationalDevice(baseDetails.operationalDevice || '');
   };
 
   const handleNodeSelect = (node) => {
@@ -365,7 +377,8 @@ export default function Structure() {
       label: '',
       type: '',
       operationalMode: '0',
-      operationalDevice: ''
+      operationalDevice: '',
+      hasPir: false
     });
     setOperationalMode('0');
     setOperationalDevice('');
@@ -645,22 +658,21 @@ export default function Structure() {
 
         const newAsset = await assetResponse.json();
 
-        // Speichere die Device-ID als Attribut extTempDevice am Asset
+        // Speichere Attribute am neuen Asset (extTempDevice, hasPir)
+        const newAssetAttrs = { hasPir: !!editedDetails?.hasPir };
         if (operationalDevice && (operationalMode === '2' || operationalMode === '10')) {
-          const attributesResponse = await fetch(`/api/config/assets/${newAsset.id.id}`, {
-            method: 'PUT',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${session.token}`
-            },
-            body: JSON.stringify({
-              extTempDevice: operationalDevice
-            })
-          });
-
-          if (!attributesResponse.ok) {
-            console.warn('Failed to save extTempDevice attribute, but asset was created');
-          }
+          newAssetAttrs.extTempDevice = operationalDevice;
+        }
+        const newAttrsRes = await fetch(`/api/config/assets/${newAsset.id.id}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.token}`
+          },
+          body: JSON.stringify(newAssetAttrs)
+        });
+        if (!newAttrsRes.ok) {
+          console.warn('Failed to save asset attributes (extTempDevice/hasPir), but asset was created');
         }
 
         // Create relation to parent node
@@ -1761,6 +1773,21 @@ export default function Structure() {
                           )}
                         </div>
                       )}
+
+                      <div className="mb-3">
+                        <div className="form-check">
+                          <input
+                            className="form-check-input"
+                            type="checkbox"
+                            id="hasPir"
+                            checked={!!editedDetails?.hasPir}
+                            onChange={(e) => setEditedDetails(prev => ({ ...prev, hasPir: e.target.checked }))}
+                          />
+                          <label className="form-check-label fw-bold" htmlFor="hasPir" style={{ color: '#000' }}>
+                            Bewegungssensor
+                          </label>
+                        </div>
+                      </div>
 
                       <div className="d-flex justify-content-end mt-3">
                         <button

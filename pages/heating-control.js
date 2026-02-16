@@ -129,12 +129,15 @@ export default function HeatingControl() {
   const [tempSliderValue, setTempSliderValue] = useState(20.0);
   const [scheduleData, setScheduleData] = useState(null);
   const [selectedDayPlans, setSelectedDayPlans] = useState({});
+  const [selectedDayPlansPIR, setSelectedDayPlansPIR] = useState({});
   const [originalSchedulerPlan, setOriginalSchedulerPlan] = useState([]);
+  const [originalSchedulerPlanPIR, setOriginalSchedulerPlanPIR] = useState([]);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [loadingSchedule, setLoadingSchedule] = useState(false);
   const [pendingRunStatus, setPendingRunStatus] = useState(null);
   const [pendingFixValue, setPendingFixValue] = useState(null);
+  const [pendingOccupiedTemp, setPendingOccupiedTemp] = useState(null);
   const [originalRunStatus, setOriginalRunStatus] = useState(null);
   const [originalFixValue, setOriginalFixValue] = useState(null);
   const [originalChildLock, setOriginalChildLock] = useState(null);
@@ -184,11 +187,14 @@ export default function HeatingControl() {
     setPendingRunStatus(newStatus);
     setHasUnsavedChanges(true);
     
-    // Load schedule data when switching to schedule mode
-    if (newStatus === 'schedule' && customerData?.customerid) {
+    // Load schedule data when switching to schedule or Bewegung (PIR) mode
+    if ((newStatus === 'schedule' || newStatus === 'pir') && customerData?.customerid) {
       fetchScheduleData(customerData.customerid);
     }
   };
+
+  // Bewegungssensor: runStatus wird als 'pir' (lowercase) abgefragt und gespeichert; Anzeige akzeptiert 'pir' und 'PIR'
+  const isPirRunStatus = (s) => s && String(s).toLowerCase() === 'pir';
 
   const updateFixValue = (newValue) => {
     setPendingFixValue(newValue);
@@ -224,6 +230,14 @@ export default function HeatingControl() {
 
   const handlePlanChange = (dayIndex, planIndex) => {
     setSelectedDayPlans(prev => ({
+      ...prev,
+      [dayIndex]: planIndex
+    }));
+    setHasUnsavedChanges(true);
+  };
+
+  const handlePlanChangePIR = (dayIndex, planIndex) => {
+    setSelectedDayPlansPIR(prev => ({
       ...prev,
       [dayIndex]: planIndex
     }));
@@ -379,6 +393,30 @@ export default function HeatingControl() {
         }
       }
 
+      // Handle schedulerPlanPIR (Bewegung) - save when switching to pir or when PIR plan changes
+      if (pendingRunStatus === 'pir' || Object.keys(selectedDayPlansPIR).length > 0) {
+        if (Array.isArray(scheduleData)) {
+          let planArrayPIR = [...originalSchedulerPlanPIR];
+          while (planArrayPIR.length < 7) {
+            planArrayPIR.push(scheduleData[0]?.[0] || '');
+          }
+          Object.entries(selectedDayPlansPIR).forEach(([dayIndex, planIndex]) => {
+            const newPlanName = scheduleData[planIndex]?.[0] || '';
+            planArrayPIR[parseInt(dayIndex)] = newPlanName;
+          });
+          updateData.schedulerPlanPIR = JSON.stringify(planArrayPIR);
+        }
+      }
+
+      // Temperatur bei Belegung (occupiedTemp) – nur bei Bewegung/PIR, Werte 15–30
+      if (pendingRunStatus === 'pir' || pendingOccupiedTemp !== null) {
+        const raw = pendingOccupiedTemp !== null ? Number(pendingOccupiedTemp) : (nodeDetails?.attributes?.occupiedTemp != null ? Number(nodeDetails.attributes.occupiedTemp) : 20);
+        if (raw != null && !Number.isNaN(raw)) {
+          const clamped = Math.min(30, Math.max(15, raw));
+          updateData.occupiedTemp = clamped;
+        }
+      }
+
       console.log('🔵 [DEBUG] Saving heating control data:', updateData);
       console.log('🔵 [DEBUG] pendingRunStatus before save:', pendingRunStatus);
       console.log('🔵 [DEBUG] Selected day plans:', selectedDayPlans);
@@ -411,11 +449,16 @@ export default function HeatingControl() {
       if (updateData.schedulerPlan) {
         setOriginalSchedulerPlan(JSON.parse(updateData.schedulerPlan));
       }
+      if (updateData.schedulerPlanPIR) {
+        setOriginalSchedulerPlanPIR(JSON.parse(updateData.schedulerPlanPIR));
+      }
 
       setHasUnsavedChanges(false);
       setSelectedDayPlans({});
+      setSelectedDayPlansPIR({});
       setPendingRunStatus(null);
       setPendingFixValue(null);
+      setPendingOccupiedTemp(null);
       
       // Update selectedNode.data with the new runStatus immediately
       if (pendingRunStatus !== null && selectedNode) {
@@ -443,8 +486,10 @@ export default function HeatingControl() {
 
   const cancelChanges = () => {
     setSelectedDayPlans({});
+    setSelectedDayPlansPIR({});
     setPendingRunStatus(null);
     setPendingFixValue(null);
+    setPendingOccupiedTemp(null);
     setHasUnsavedChanges(false);
     
     if (originalFixValue !== null) {
@@ -830,7 +875,8 @@ export default function HeatingControl() {
               ...prev.data,
               runStatus: nodeData?.attributes?.runStatus,
               fixValue: nodeData?.attributes?.fixValue,
-              schedulerPlan: nodeData?.attributes?.schedulerPlan
+              schedulerPlan: nodeData?.attributes?.schedulerPlan,
+              schedulerPlanPIR: nodeData?.attributes?.schedulerPlanPIR
             }
           };
         });
@@ -856,6 +902,18 @@ export default function HeatingControl() {
         }
       } else {
         setOriginalSchedulerPlan([]);
+      }
+      const schedulerPlanPIRValue = nodeData?.attributes?.schedulerPlanPIR;
+      if (schedulerPlanPIRValue) {
+        try {
+          const planArrayPIR = JSON.parse(schedulerPlanPIRValue);
+          setOriginalSchedulerPlanPIR(Array.isArray(planArrayPIR) ? planArrayPIR : []);
+        } catch (error) {
+          console.error('Error parsing schedulerPlanPIR in fetchNodeDetails:', error);
+          setOriginalSchedulerPlanPIR([]);
+        }
+      } else {
+        setOriginalSchedulerPlanPIR([]);
       }
       
       // Update original settings values from node details (direkt aus ThingsBoard)
@@ -1847,8 +1905,8 @@ export default function HeatingControl() {
 
       console.log('Fetching telemetry for device IDs:', deviceIds);
 
-      // Define the attributes we want to fetch
-      const attributes = ['sensorTemperature', 'targetTemperature', 'PercentValveOpen', 'batteryVoltage', 'signalQuality', 'hall_sensor_state'];
+      // Define the attributes we want to fetch (pir, light für ws202)
+      const attributes = ['sensorTemperature', 'targetTemperature', 'PercentValveOpen', 'batteryVoltage', 'signalQuality', 'hall_sensor_state', 'pir', 'light'];
       
       // Fetch telemetry data for each device individually
       const devicesWithTelemetry = await Promise.all(
@@ -2064,7 +2122,10 @@ export default function HeatingControl() {
       'batteryVoltage': 'Batteriespannung',
       'PercentValveOpen': 'Ventilöffnung',
       'signalQuality': 'Signalqualität',
-      'hall_sensor_state': 'Hall Sensor'
+      'hall_sensor_state': 'Hall Sensor',
+      'pir': 'pir, light',
+      'light': 'pir, light',
+      'v_str': 'pir, light'
     };
     return displayNames[attribute] || attribute;
   };
@@ -3775,8 +3836,8 @@ export default function HeatingControl() {
                                 setTempSliderValue((minTemp + maxTemp) / 2);
                               }
                               
-                              // Load schedule data if customer data is available AND current status is 'schedule'
-                              if (customerData?.customerid && runStatus === 'schedule') {
+                              // Load schedule data if customer data is available AND current status is 'schedule' or 'pir'
+                              if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runStatus))) {
                                 fetchScheduleData(customerData.customerid);
                               }
                               
@@ -3792,6 +3853,18 @@ export default function HeatingControl() {
                                 }
                               } else {
                                 setOriginalSchedulerPlan([]);
+                              }
+                              const schedulerPlanPIRValue = nodeDetails?.attributes?.schedulerPlanPIR || selectedNode.data?.schedulerPlanPIR;
+                              if (schedulerPlanPIRValue) {
+                                try {
+                                  const planArrayPIR = JSON.parse(schedulerPlanPIRValue);
+                                  setOriginalSchedulerPlanPIR(Array.isArray(planArrayPIR) ? planArrayPIR : []);
+                                } catch (error) {
+                                  console.error('Error parsing original schedulerPlanPIR:', error);
+                                  setOriginalSchedulerPlanPIR([]);
+                                }
+                              } else {
+                                setOriginalSchedulerPlanPIR([]);
                               }
                               
                               // Reset pending changes
@@ -3915,8 +3988,8 @@ export default function HeatingControl() {
                                   setTempSliderValue((minTemp + maxTemp) / 2);
                                 }
                                 
-                                // Load schedule data if customer data is available AND current status is 'schedule'
-                                if (customerData?.customerid && runStatus === 'schedule') {
+                                // Load schedule data if customer data is available AND current status is 'schedule' or 'pir'
+                                if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runStatus))) {
                                   fetchScheduleData(customerData.customerid);
                                 }
                                 
@@ -3932,6 +4005,18 @@ export default function HeatingControl() {
                                   }
                                 } else {
                                   setOriginalSchedulerPlan([]);
+                                }
+                                const schedulerPlanPIRValue = nodeDetails?.attributes?.schedulerPlanPIR || selectedNode.data?.schedulerPlanPIR;
+                                if (schedulerPlanPIRValue) {
+                                  try {
+                                    const planArrayPIR = JSON.parse(schedulerPlanPIRValue);
+                                    setOriginalSchedulerPlanPIR(Array.isArray(planArrayPIR) ? planArrayPIR : []);
+                                  } catch (error) {
+                                    console.error('Error parsing original schedulerPlanPIR:', error);
+                                    setOriginalSchedulerPlanPIR([]);
+                                  }
+                                } else {
+                                  setOriginalSchedulerPlanPIR([]);
                                 }
                                 
                                 // Reset pending changes
@@ -4063,17 +4148,30 @@ export default function HeatingControl() {
                             );
                           })()}
                           
-                          <div className="responsive-card disabled-card">
-                            <div className="card">
-                              <div className="card-body text-center">
-                                <FontAwesomeIcon icon={faUser} className="text-success mb-3" size="2x" />
-                                <h4 className="card-title">Anwesenheit</h4>
-                                <div className="text-muted">
-                                  <p>Kein Anwesenheitssensor gefunden</p>
+                          {(() => {
+                            const hasPir = nodeDetails?.attributes?.hasPir === true || nodeDetails?.attributes?.hasPir === 'true' || selectedNode?.data?.hasPir === true || selectedNode?.data?.hasPir === 'true';
+                            const occupied = nodeDetails?.attributes?.occupied ?? selectedNode?.data?.occupied;
+                            const isOccupied = occupied === true || occupied === 'true';
+                            return (
+                              <div className={`responsive-card ${!hasPir ? 'disabled-card' : ''}`}>
+                                <div className="card">
+                                  <div className="card-body text-center">
+                                    <FontAwesomeIcon icon={faUser} className={`${hasPir && isOccupied ? 'text-success' : hasPir && !isOccupied ? 'text-primary' : 'text-muted'} mb-3`} size="2x" />
+                                    <h4 className="card-title">Anwesenheit</h4>
+                                    {hasPir ? (
+                                      <div className={isOccupied ? 'text-success fw-bold' : 'text-muted'}>
+                                        {isOccupied ? 'Belegt' : 'Nicht belegt'}
+                                      </div>
+                                    ) : (
+                                      <div className="text-muted">
+                                        <p>Bewegungssensor nicht aktiviert</p>
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
-                            </div>
-                          </div>
+                            );
+                          })()}
                         </div>
 
                         {/* Temperaturverlauf Chart */}
@@ -4282,6 +4380,37 @@ export default function HeatingControl() {
                                           </div>
                                         </div>
                                       )}
+                                      {String(device.type || '').toLowerCase() === 'ws202' && (() => {
+                                        const t = device.telemetry || {};
+                                        const pirVal = t.pir;
+                                        const lightVal = t.light;
+                                        return (
+                                          <>
+                                            <div 
+                                              className="bg-light border rounded p-2 text-center" 
+                                              style={{ minWidth: '80px', flex: '0 0 auto', cursor: 'pointer' }}
+                                              onClick={() => handleTelemetryValueClick(device, 'pir')}
+                                              title="Klicken für Werteliste"
+                                            >
+                                              <small className="text-muted d-block">pir</small>
+                                              <div className="fw-bold text-primary" style={{ fontSize: '0.9rem' }}>
+                                                {pirVal !== undefined && pirVal !== null ? String(pirVal) : '–'}
+                                              </div>
+                                            </div>
+                                            <div 
+                                              className="bg-light border rounded p-2 text-center" 
+                                              style={{ minWidth: '80px', flex: '0 0 auto', cursor: 'pointer' }}
+                                              onClick={() => handleTelemetryValueClick(device, 'light')}
+                                              title="Klicken für Werteliste"
+                                            >
+                                              <small className="text-muted d-block">light</small>
+                                              <div className="fw-bold text-primary" style={{ fontSize: '0.9rem' }}>
+                                                {lightVal !== undefined && lightVal !== null ? String(lightVal) : '–'}
+                                              </div>
+                                            </div>
+                                          </>
+                                        );
+                                      })()}
                                     </div>
                                   </div>
                                 )}
@@ -4353,17 +4482,19 @@ export default function HeatingControl() {
                                     <small className="text-muted">Fix</small>
                                   </div>
                                 </div>
-                                <div className="text-center">
-                                  <img 
-                                    src={(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) === 'PIR' ? "/assets/img/hm_pir_active.svg" : "/assets/img/hm_pir_inactive.svg"}
-                                    alt="Bewegung"
-                                    style={{ width: '60px', height: '60px', cursor: 'pointer' }}
-                                    onClick={() => updateRunStatus('PIR')}
-                                  />
-                                  <div className="mt-2">
-                                    <small className="text-muted">Bewegung</small>
+                                {(nodeDetails?.attributes?.hasPir === true || nodeDetails?.attributes?.hasPir === 'true' || selectedNode?.data?.hasPir === true || selectedNode?.data?.hasPir === 'true') && (
+                                  <div className="text-center">
+                                    <img 
+                                      src={isPirRunStatus(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) ? "/assets/img/hm_pir_active.svg" : "/assets/img/hm_pir_inactive.svg"}
+                                      alt="Bewegung"
+                                      style={{ width: '60px', height: '60px', cursor: 'pointer' }}
+                                      onClick={() => updateRunStatus('pir')}
+                                    />
+                                    <div className="mt-2">
+                                      <small className="text-muted">Bewegung</small>
+                                    </div>
                                   </div>
-                                </div>
+                                )}
                               </div>
                             </div>
 
@@ -4610,10 +4741,174 @@ export default function HeatingControl() {
                               </div>
                             )}
 
-                            {/* Motion Widget - Placeholder for future implementation */}
-                            {(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) === 'PIR' && (
+                            {/* Wochenplan Bewegung (runStatus = pir) – nutzt schedulerPlanPIR */}
+                            {isPirRunStatus(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) && (
                               <div className="mb-4">
-                                {/* Content will be added in future steps */}
+                                <div className="mb-3">
+                                  <label className="form-label fw-bold">Temperatur bei Belegung</label>
+                                  <input
+                                    type="number"
+                                    min={15}
+                                    max={30}
+                                    step={0.5}
+                                    className="form-control"
+                                    style={{ maxWidth: '120px' }}
+                                    value={pendingOccupiedTemp !== null ? pendingOccupiedTemp : (nodeDetails?.attributes?.occupiedTemp != null ? Number(nodeDetails.attributes.occupiedTemp) : 20)}
+                                    onChange={(e) => {
+                                      const v = parseFloat(e.target.value, 10);
+                                      if (!Number.isNaN(v)) {
+                                        const clamped = Math.min(30, Math.max(15, v));
+                                        setPendingOccupiedTemp(clamped);
+                                        setHasUnsavedChanges(true);
+                                      }
+                                    }}
+                                  />
+                                  <small className="text-muted">Nur Werte zwischen 15 und 30 °C</small>
+                                </div>
+                                <div className="d-flex justify-content-between align-items-center mb-3">
+                                  <h5 className="mb-0"><strong>Wochenplan (Vorbelegung):</strong></h5>
+                                  {hasUnsavedChanges && (
+                                    <div className="d-flex gap-2">
+                                      <button
+                                        className="btn btn-outline-secondary btn-sm"
+                                        onClick={cancelChanges}
+                                        disabled={savingSchedule}
+                                      >
+                                        <FontAwesomeIcon icon={faTimes} className="me-1" />
+                                        Abbrechen
+                                      </button>
+                                      <button
+                                        className="btn btn-warning btn-sm"
+                                        onClick={saveChanges}
+                                        disabled={savingSchedule}
+                                      >
+                                        {savingSchedule ? (
+                                          <>
+                                            <span className="spinner-border spinner-border-sm me-1" role="status"></span>
+                                            Speichern...
+                                          </>
+                                        ) : (
+                                          <>
+                                            <FontAwesomeIcon icon={faCheckCircle} className="me-1" />
+                                            Speichern
+                                          </>
+                                        )}
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="card" style={{
+                                  border: '2px solid #0d6efd',
+                                  borderRadius: '15px',
+                                  boxShadow: '0 4px 15px rgba(13, 110, 253, 0.1)'
+                                }}>
+                                  <div className="card-body">
+                                    {loadingSchedule ? (
+                                      <div className="text-center py-5">
+                                        <div className="spinner-border text-primary" role="status">
+                                          <span className="visually-hidden">Loading...</span>
+                                        </div>
+                                        <p className="mt-2 text-muted">Lade Wochenplan...</p>
+                                      </div>
+                                    ) : scheduleData && Array.isArray(scheduleData) && scheduleData.length > 0 ? (
+                                      <div className="table-responsive">
+                                        <table className="table table-sm table-bordered">
+                                          <thead className="table-primary">
+                                            <tr>
+                                              <th style={{ width: '60px' }}>Std</th>
+                                              {['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map((day, dayIndex) => (
+                                                <th key={day} className="text-center" style={{ minWidth: '120px', fontSize: '0.9rem', padding: '0.5rem 0.25rem' }}>
+                                                  <div className="fw-bold">{day}</div>
+                                                  <div style={{ marginTop: '5px' }}>
+                                                    <select
+                                                      className="form-select form-select-sm"
+                                                      value={(() => {
+                                                        if (selectedDayPlansPIR[dayIndex] !== undefined) return selectedDayPlansPIR[dayIndex];
+                                                        const val = nodeDetails?.attributes?.schedulerPlanPIR;
+                                                        if (val && Array.isArray(scheduleData)) {
+                                                          try {
+                                                            const planArray = JSON.parse(val);
+                                                            if (Array.isArray(planArray) && planArray[dayIndex]) {
+                                                              const foundIndex = scheduleData.findIndex(plan => plan[0] === planArray[dayIndex]);
+                                                              return foundIndex !== -1 ? foundIndex : 0;
+                                                            }
+                                                          } catch (e) { /* ignore */ }
+                                                        }
+                                                        return 0;
+                                                      })()}
+                                                      onChange={(e) => handlePlanChangePIR(dayIndex, parseInt(e.target.value))}
+                                                      style={{ fontSize: '0.7rem', border: '1px solid #dee2e6' }}
+                                                    >
+                                                      {Array.isArray(scheduleData) ? scheduleData.map((plan, planIndex) => (
+                                                        <option key={planIndex} value={planIndex}>{plan[0]}</option>
+                                                      )) : null}
+                                                    </select>
+                                                  </div>
+                                                </th>
+                                              ))}
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {Array.from({ length: 24 }, (_, hour) => (
+                                              <tr key={hour}>
+                                                <td className="fw-bold text-muted text-center" style={{ backgroundColor: hour % 2 === 0 ? '#ffffff' : '#e8e8e8', fontSize: '0.8rem' }}>
+                                                  {hour.toString().padStart(2, '0')}
+                                                </td>
+                                                {['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map((day, dayIndex) => {
+                                                  const availablePlans = Array.isArray(scheduleData) ? scheduleData : [];
+                                                  let selectedPlanIndex;
+                                                  if (selectedDayPlansPIR[dayIndex] !== undefined) {
+                                                    selectedPlanIndex = selectedDayPlansPIR[dayIndex];
+                                                  } else {
+                                                    const val = nodeDetails?.attributes?.schedulerPlanPIR;
+                                                    if (val && Array.isArray(scheduleData)) {
+                                                      try {
+                                                        const planArray = JSON.parse(val);
+                                                        if (Array.isArray(planArray) && planArray[dayIndex]) {
+                                                          const foundIndex = scheduleData.findIndex(plan => plan[0] === planArray[dayIndex]);
+                                                          selectedPlanIndex = foundIndex !== -1 ? foundIndex : 0;
+                                                        } else selectedPlanIndex = 0;
+                                                      } catch (e) { selectedPlanIndex = 0; }
+                                                    } else selectedPlanIndex = 0;
+                                                  }
+                                                  const selectedPlanData = availablePlans[selectedPlanIndex];
+                                                  const planSchedule = selectedPlanData?.[1] || [];
+                                                  const temp = planSchedule?.[hour];
+                                                  return (
+                                                    <td key={dayIndex} className="text-center" style={{
+                                                      padding: '0.5rem 0.25rem', fontSize: '0.8rem',
+                                                      backgroundColor: hour % 2 === 0 ? '#ffffff' : '#e8e8e8',
+                                                      color: temp ? '#0d6efd' : '#6c757d',
+                                                      fontWeight: temp ? 'bold' : 'normal'
+                                                    }}>
+                                                      {temp ? `${temp}°` : '-'}
+                                                    </td>
+                                                  );
+                                                })}
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    ) : (
+                                      <div className="alert alert-info">
+                                        <FontAwesomeIcon icon={faInfoCircle} className="me-2" />
+                                        <div>
+                                          <strong>Kein Wochenplan verfügbar.</strong>
+                                          <br />
+                                          <small>
+                                            {scheduleData ? 'Keine gültigen Plan-Daten gefunden.' : 'Plan-Daten werden geladen oder sind nicht verfügbar.'}
+                                          </small>
+                                          {nodeDetails?.attributes?.schedulerPlanPIR && (
+                                            <div className="mt-2">
+                                              <small className="text-muted">Ein PIR-Wochenplan ist gespeichert.</small>
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
                               </div>
                             )}
 
@@ -5116,6 +5411,25 @@ export default function HeatingControl() {
                       <span className="visually-hidden">Laden...</span>
                     </div>
                     <span>Lade Verlaufsdaten...</span>
+                  </div>
+                ) : (selectedTelemetryAttribute === 'pir' || selectedTelemetryAttribute === 'light') && telemetryChartData && telemetryChartData.length > 0 ? (
+                  <div className="table-responsive" style={{ maxHeight: '500px', overflowY: 'auto' }}>
+                    <table className="table table-sm table-striped table-bordered mb-0">
+                      <thead className="table-light sticky-top">
+                        <tr>
+                          <th>Zeit</th>
+                          <th>Wert</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...telemetryChartData].reverse().map((point, idx) => (
+                          <tr key={idx}>
+                            <td>{point.time || new Date(point.timestamp).toLocaleString('de-DE')}</td>
+                            <td>{point.value !== undefined && point.value !== null ? String(point.value) : '–'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 ) : telemetryChartData && telemetryChartData.length > 0 ? (
                   <div>

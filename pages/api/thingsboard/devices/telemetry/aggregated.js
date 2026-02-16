@@ -68,8 +68,8 @@ export default async function handler(req, res) {
         let historicalData = null;
         
         // Method 1: Try with aggregation and limit (only for numeric attributes)
-        // Skip aggregation for text attributes like signalQuality
-        const isTextAttribute = attribute === 'signalQuality' || attribute === 'raw' || attribute === 'hall_sensor_state';
+        // Skip aggregation for text/string attributes (pir, light = ws202)
+        const isTextAttribute = attribute === 'signalQuality' || attribute === 'raw' || attribute === 'hall_sensor_state' || attribute === 'pir' || attribute === 'light';
         if (!isTextAttribute) {
           try {
             response = await fetch(`${process.env.THINGSBOARD_URL}/api/plugins/telemetry/DEVICE/${deviceId}/values/timeseries?keys=${attributeKeys.join(',')}&startTs=${startTime}&endTs=${endTime}&interval=${aggregationInterval}&agg=AVG&limit=${maxDataPoints}`, {
@@ -234,9 +234,14 @@ export default async function handler(req, res) {
               }
             }
 
-            // Group by hour and calculate averages (only if we have aggregation interval)
+            // Group by hour and calculate averages (only if we have aggregation interval); skip for text attributes
             let aggregatedData;
-            if (aggregationInterval >= 3600000) { // 1 hour or more
+            if (isTextAttribute) {
+              aggregatedData = processedData.map(point => ({
+                ts: point.ts,
+                value: point.value
+              }));
+            } else if (aggregationInterval >= 3600000) { // 1 hour or more
               const hourlyData = {};
               processedData.forEach(point => {
                 const date = new Date(point.ts);
