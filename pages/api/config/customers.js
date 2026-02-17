@@ -1,29 +1,26 @@
-import { getSession } from 'next-auth/react'
+import { getServerSession } from 'next-auth/next'
+import { authOptions } from '../auth/[...nextauth]'
 import jwt from 'jsonwebtoken'
+import thingsboardAuth from '../thingsboard/auth'
 
 const JWT_SECRET = process.env.NEXTAUTH_SECRET
 
-const verifyToken = (req) => {
-  const session = getSession({ req })
-  if (session) return session
-
-  const authHeader = req.headers.authorization
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    throw new Error('No token provided')
-  }
-
-  const token = authHeader.split(' ')[1]
-  return jwt.verify(token, JWT_SECRET)
+async function fetchCustomersWithToken(tbToken) {
+  const response = await fetch(`${process.env.THINGSBOARD_URL}/api/customers?pageSize=1000&page=0`, {
+    headers: {
+      'Accept': 'application/json',
+      'X-Authorization': `Bearer ${tbToken}`
+    }
+  })
+  return response
 }
 
 export default async function handler(req, res) {
   try {
-    const session = await getSession({ req })
+    const session = await getServerSession(req, res, authOptions)
     let tbToken
-    
-    
-    
-    if (session) {
+
+    if (session?.tbToken) {
       tbToken = session.tbToken
     } else {
       const authHeader = req.headers.authorization
@@ -34,22 +31,33 @@ export default async function handler(req, res) {
       const decoded = jwt.verify(token, JWT_SECRET)
       tbToken = decoded.tbToken
     }
-    
-   // console.log('tbToken : ', tbToken);
 
     if (req.method === 'GET') {
-      const response = await fetch(`${process.env.THINGSBOARD_URL}/api/customers?pageSize=1000&page=0`, {
-        headers: {
-          'Accept': 'application/json',
-          'X-Authorization': `Bearer ${tbToken}`
+      let response = await fetchCustomersWithToken(tbToken)
+      if (response.status === 401) {
+        const tenantUser = process.env.TENNANT_THINGSBOARD_USERNAME || process.env.THINGSBOARD_USERNAME
+        const tenantPass = process.env.TENNANT_THINGSBOARD_PASSWORD || process.env.THINGSBOARD_PASSWORD
+        const mainUser = process.env.THINGSBOARD_USERNAME
+        const mainPass = process.env.THINGSBOARD_PASSWORD
+        for (const [label, user, pass] of [
+          ['tenant', tenantUser, tenantPass],
+          ['main', mainUser, mainPass]
+        ]) {
+          if (!user || !pass) continue
+          if (response.ok) break
+          try {
+            const freshToken = await thingsboardAuth(user, pass)
+            response = await fetchCustomersWithToken(freshToken)
+            if (response.ok) break
+          } catch (authErr) {
+            console.error(`ThingsBoard ${label} login for customers fallback failed:`, authErr.message)
+          }
         }
-      })
-
+      }
       if (!response.ok) {
-        const errorData = await response.json()
+        const errorData = await response.json().catch(() => ({}))
         throw new Error(`ThingsBoard API Error: ${response.status} - ${errorData.message || 'Unknown error'} (URL: ${process.env.THINGSBOARD_URL}/api/customers)`)
       }
-
       const data = await response.json()
       return res.status(200).json(data)
     }
@@ -63,7 +71,7 @@ export default async function handler(req, res) {
       error: error.message || 'Internal server error',
       details: {
         url: `${process.env.THINGSBOARD_URL}/api/customers`,
-        token: tbToken ? 'Token present' : 'No token',
+        token: typeof tbToken !== 'undefined' ? 'Token present' : 'No token',
         timestamp: new Date().toISOString()
       }
     })

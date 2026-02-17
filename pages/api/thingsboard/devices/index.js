@@ -7,20 +7,10 @@ import sql from 'mssql';
 
 const THINGSBOARD_URL = process.env.THINGSBOARD_URL;
 
-export default async function handler(req, res) {
-  if (req.method !== 'GET') {
-    return res.status(405).json({
-      success: false,
-      error: 'Method not allowed',
-      message: 'Nur GET-Anfragen sind erlaubt'
-    });
-  }
-
-  // Authentifizierung prüfen
+async function getAuthAndCustomer(req, res) {
   let tbToken = null;
   let customerId = null;
 
-  // Versuche zuerst den Bearer Token
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     const token = authHeader.split(' ')[1];
@@ -33,16 +23,14 @@ export default async function handler(req, res) {
     }
   }
 
-  // Wenn kein gültiger Bearer Token, versuche Session
   if (!tbToken) {
-    const session = await getSession({ req });
+    const session = await getServerSession(req, res, authOptions);
     if (session?.tbToken) {
       tbToken = session.tbToken;
       customerId = session.user?.customerid;
     }
   }
 
-  // Wenn keine Authentifizierung gefunden wurde
   if (!tbToken) {
     return res.status(401).json({
       success: false,
@@ -51,23 +39,16 @@ export default async function handler(req, res) {
     });
   }
 
-  // Wenn keine Customer ID gefunden wurde, versuche sie aus der Session zu holen
   if (!customerId) {
     try {
       const session = await getServerSession(req, res, authOptions);
       if (session?.user?.customerid) {
         customerId = session.user.customerid;
-      } else {
-        // Fallback: Hole Customer ID aus der Datenbank
+      } else if (session?.user?.userid) {
         const pool = await getConnection();
         const userResult = await pool.request()
-          .input('userid', sql.Int, session?.user?.userid)
-          .query(`
-            SELECT customerid
-            FROM hm_users
-            WHERE userid = @userid
-          `);
-
+          .input('userid', sql.Int, session.user.userid)
+          .query(`SELECT customerid FROM hm_users WHERE userid = @userid`);
         if (userResult.recordset.length > 0) {
           customerId = userResult.recordset[0].customerid;
         }
@@ -84,6 +65,119 @@ export default async function handler(req, res) {
       message: 'Customer ID konnte nicht ermittelt werden'
     });
   }
+
+  return { tbToken, customerId };
+}
+
+export default async function handler(req, res) {
+  if (req.method === 'POST') {
+    // Create device in ThingsBoard and assign to customer
+    if (!THINGSBOARD_URL) {
+      return res.status(500).json({
+        success: false,
+        error: 'THINGSBOARD_URL not configured'
+      });
+    }
+    const auth = await getAuthAndCustomer(req, res);
+    if (!auth || auth.tbToken === undefined) return;
+    const { tbToken, customerId } = auth;
+
+    const body = req.body || {};
+    const deveui = body.deveui != null ? String(body.deveui).trim() : '';
+    const friendlyName = body.name || body.label || 'Device';
+    const name = deveui ? `Device_${deveui}` : friendlyName;
+    const type = body.type || 'Default';
+    const label = body.label != null ? body.label : friendlyName;
+    const deviceProfileId = body.deviceProfileId || null;
+
+    try {
+      const createPayload = { name, type, label };
+      if (deviceProfileId) createPayload.deviceProfileId = { id: deviceProfileId, entityType: 'DEVICE_PROFILE' };
+
+      const createRes = await fetch(`${THINGSBOARD_URL}/api/device`, {
+        method: 'POST',
+        headers: {
+          'accept': 'application/json',
+          'Content-Type': 'application/json',
+          'X-Authorization': `Bearer ${tbToken}`
+        },
+        body: JSON.stringify(createPayload)
+      });
+
+      if (!createRes.ok) {
+        const errText = await createRes.text();
+        let errJson;
+        try {
+          errJson = JSON.parse(errText);
+        } catch (_) {
+          errJson = {};
+        }
+        const alreadyExists = errJson.message && (
+          errJson.message.includes('already exists') ||
+          errJson.errorCode === 31
+        );
+        if (alreadyExists && (name || friendlyName)) {
+          const searchName = name || friendlyName;
+          const tenantDevicesRes = await fetch(
+            `${THINGSBOARD_URL}/api/tenant/devices?pageSize=100&page=0&textSearch=${encodeURIComponent(searchName)}`,
+            {
+              headers: {
+                'accept': 'application/json',
+                'X-Authorization': `Bearer ${tbToken}`
+              }
+            }
+          );
+          if (tenantDevicesRes.ok) {
+            const tenantData = await tenantDevicesRes.json();
+            const devices = tenantData.data || tenantData || [];
+            const existing = Array.isArray(devices) ? devices.find(d => (d.name || '').toString() === searchName) : null;
+            if (existing && (existing.id?.id || existing.id)) {
+              const deviceId = existing.id?.id || existing.id;
+              return res.status(200).json({
+                success: true,
+                id: deviceId,
+                idObj: existing.id,
+                existing: true
+              });
+            }
+          }
+        }
+        console.error('ThingsBoard create device error:', createRes.status, errText);
+        return res.status(createRes.status).json({
+          success: false,
+          error: errJson.message || 'ThingsBoard device creation failed',
+          details: errText
+        });
+      }
+
+      const created = await createRes.json();
+      const deviceId = created.id?.id || created.id;
+
+      return res.status(201).json({
+        success: true,
+        id: deviceId,
+        idObj: created.id
+      });
+    } catch (error) {
+      console.error('Create device error:', error);
+      return res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+
+  if (req.method !== 'GET') {
+    return res.status(405).json({
+      success: false,
+      error: 'Method not allowed',
+      message: 'Nur GET-Anfragen sind erlaubt'
+    });
+  }
+
+  const auth = await getAuthAndCustomer(req, res);
+  if (auth.tbToken === undefined) return;
+  const { tbToken, customerId } = auth;
 
   try {
     // Hilfsfunktion zum Abrufen aller Geräte mit Pagination

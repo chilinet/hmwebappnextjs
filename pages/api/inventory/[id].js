@@ -1,7 +1,7 @@
 import sql from 'mssql';
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../auth/[...nextauth]";
-import { getConnection } from '../../../lib/db';
+import { getConnection, getMssqlConfig } from '../../../lib/db';
 
 export default async function handler(req, res) {
   // Session-Überprüfung
@@ -38,6 +38,7 @@ export default async function handler(req, res) {
       });
     }
     
+    const db = getMssqlConfig().database;
     const result = await pool.request()
       .input('deviceid', sql.VarChar, id)
       .query(`
@@ -47,8 +48,8 @@ export default async function handler(req, res) {
                i.owner_id, i.group_id, i.distributor_id, i.status_id, i.invoicenbr, i.ordernbr, 
                i.orderdate, i.installed_at, i.tbconnected_at, i.nwconnected_at, i.created_at, 
                i.updated_at, i.status, i.contractId, i.deviceLabel, i.deviceProfileId, i.offerName
-        FROM hmcdev.dbo.inventory i
-        LEFT JOIN hmcdev.dbo.brand b ON i.brand_id = b.id
+        FROM ${db}.dbo.inventory i
+        LEFT JOIN ${db}.dbo.brand b ON i.brand_id = b.id
         WHERE i.deviceid = @deviceid
       `);
     

@@ -1,6 +1,6 @@
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../auth/[...nextauth]";
-import { getConnection } from "../../../../lib/db";
+import { getConnection, getMssqlConfig } from "../../../../lib/db";
 import sql from 'mssql';
 
 async function fetchWithRetry(url, options, retries = 3, delay = 1000) {
@@ -108,6 +108,7 @@ async function getAssetHierarchy(deviceId, tbToken, session) {
 }
 
 async function getSerialNumberFromInventory(deviceId) {
+  const db = getMssqlConfig().database;
   try {
     const pool = await getConnection();
     
@@ -116,7 +117,7 @@ async function getSerialNumberFromInventory(deviceId) {
       .input('deviceId', sql.VarChar, deviceId)
       .query(`
         SELECT serialnbr, deveui, deviceLabel
-        FROM hmcdev.dbo.inventory 
+        FROM ${db}.dbo.inventory 
         WHERE tbconnectionid = @deviceId
       `);
     
@@ -142,7 +143,7 @@ async function getSerialNumberFromInventory(deviceId) {
           .input('deviceId', sql.VarChar, deviceId)
           .query(`
             SELECT serialnbr, deveui, deviceLabel
-            FROM hmcdev.dbo.inventory 
+            FROM ${db}.dbo.inventory 
             WHERE tbconnectionid = @deviceId
           `);
         

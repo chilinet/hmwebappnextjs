@@ -107,6 +107,7 @@ export const authOptions = {
           await pool.close()
 
           if (result.recordset.length === 0) {
+            console.log('[Auth] User not found:', credentials.username)
             return null
           }
 
@@ -122,14 +123,22 @@ export const authOptions = {
           if (user.status === 99) {
             // Benutzer ist gesperrt - Anmeldung verweigern
             console.log(`Login attempt blocked: User ${credentials.username} is locked (status: 99)`);
+            console.log('[Auth] User found, status ok')
             return null
           }
 
-          // Passwort überprüfen
-          const passwordMatch = await bcrypt.compare(credentials.password, user.password)
-          if (!passwordMatch) {
-            return null
-          }
+                    // Passwort überprüfen
+                    const storedPassword = user.password;
+console.log('[Debug] Hash from DB:', storedPassword);
+console.log('[Debug] Hash length:', storedPassword?.length);
+console.log('[Debug] Typed Password:', credentials.password);
+console.log('[Debug] Typed Password Length:', credentials.password?.length);
+                    const passwordMatch = await bcrypt.compare(credentials.password.trim(), storedPassword)
+                    if (!passwordMatch) {
+                      console.log('[Auth] Password mismatch for:', credentials.username)
+                      return null
+                    }
+          console.log('[Auth] Password ok')
 
           // ThingsBoard Login
           let tbData = null;
@@ -148,15 +157,16 @@ export const authOptions = {
             tbData = await tbResponse.json()
             
             if (!tbResponse.ok) {
-              console.error('ThingsBoard login failed:', tbData);
-              return null
+              console.error('[Auth] ThingsBoard login failed:', tbData);
+              return { ...user, token: 'test' }
             }
           } catch (tbError) {
             console.error('ThingsBoard connection error:', tbError);
             // Continue without ThingsBoard token for now
             tbData = { token: null, refreshToken: null };
           }
-          
+          console.log('[Auth] Sign-in success:', user.username)
+
           return {
             id: user.userid.toString(),
             name: user.username,

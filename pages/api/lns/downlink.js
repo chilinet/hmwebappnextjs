@@ -100,15 +100,15 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: `priority must be one of: ${validPriorities.join(', ')}` });
     }
 
-    // ThingsBoard-Authentifizierung
+    // ThingsBoard-Authentifizierung (tenant credentials for server-side operations)
     const THINGSBOARD_URL = process.env.THINGSBOARD_URL;
-    const THINGSBOARD_USERNAME = process.env.THINGSBOARD_USERNAME;
-    const THINGSBOARD_PASSWORD = process.env.THINGSBOARD_PASSWORD;
+    const tbUser = process.env.TENNANT_THINGSBOARD_USERNAME || process.env.THINGSBOARD_USERNAME;
+    const tbPass = process.env.TENNANT_THINGSBOARD_PASSWORD || process.env.THINGSBOARD_PASSWORD;
 
-    if (!THINGSBOARD_URL || !THINGSBOARD_USERNAME || !THINGSBOARD_PASSWORD) {
+    if (!THINGSBOARD_URL || !tbUser || !tbPass) {
       return res.status(500).json({
         error: 'ThingsBoard configuration incomplete',
-        details: 'Missing THINGSBOARD_URL, THINGSBOARD_USERNAME, or THINGSBOARD_PASSWORD in environment variables'
+        details: 'Missing THINGSBOARD_URL and TENNANT_THINGSBOARD_USERNAME/PASSWORD (or THINGSBOARD_USERNAME/PASSWORD) in environment variables'
       });
     }
 
@@ -121,8 +121,8 @@ export default async function handler(req, res) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          username: THINGSBOARD_USERNAME,
-          password: THINGSBOARD_PASSWORD
+          username: tbUser,
+          password: tbPass
         }),
       });
 

@@ -1,105 +1,105 @@
-# E-Mail API Tests für HeatManager
+# E-Mail API Tests for HeatManager
 
-## 📋 **Übersicht**
+## 📋 **Overview**
 
-Diese Test-Skripte ermöglichen es Ihnen, alle E-Mail-APIs von HeatManager zu testen, ohne die Web-Oberfläche zu verwenden.
+These test scripts let you test all HeatManager e-mail APIs without using the web interface.
 
-## 🚀 **Schnellstart**
+## 🚀 **Quick Start**
 
-### **Option 1: Einfacher Test (Empfohlen)**
+### **Option 1: Simple Test (Recommended)**
 
 ```bash
-# 1. Session Token setzen
-# Öffnen Sie simple-email-test.js und setzen Sie SESSION_TOKEN
+# 1. Set session token
+# Open simple-email-test.js and set SESSION_TOKEN
 
-# 2. Test ausführen
+# 2. Run test
 node simple-email-test.js
 ```
 
-### **Option 2: Vollständiger Test**
+### **Option 2: Full Test**
 
 ```bash
-# 1. Abhängigkeiten installieren
+# 1. Install dependencies
 npm install node-fetch
 
-# 2. Session Token setzen
-# Öffnen Sie test-email-api.js und setzen Sie SESSION_TOKEN
+# 2. Set session token
+# Open test-email-api.js and set SESSION_TOKEN
 
-# 3. Test ausführen
+# 3. Run test
 node test-email-api.js
 ```
 
-## 🔑 **Session Token erhalten**
+## 🔑 **Getting a Session Token**
 
-### **Methode 1: Browser Developer Tools**
+### **Method 1: Browser Developer Tools**
 
-1. **Gehen Sie zu `/admin/email-test`**
-2. **Öffnen Sie die Developer Tools (F12)**
-3. **Gehen Sie zu "Application" → "Cookies"**
-4. **Suchen Sie nach `next-auth.session-token`**
-5. **Kopieren Sie den Wert**
+1. **Go to `/admin/email-test`**
+2. **Open Developer Tools (F12)**
+3. **Go to "Application" → "Cookies"**
+4. **Look for `next-auth.session-token`**
+5. **Copy the value**
 
-### **Methode 2: Browser Console**
+### **Method 2: Browser Console**
 
 ```javascript
-// In der Browser-Konsole ausführen
+// Run in the browser console
 document.cookie.split(';').find(c => c.trim().startsWith('next-auth.session-token=')).split('=')[1]
 ```
 
-### **Methode 3: Network Tab**
+### **Method 3: Network Tab**
 
-1. **Öffnen Sie die Developer Tools (F12)**
-2. **Gehen Sie zu "Network"**
-3. **Laden Sie die Seite neu**
-4. **Suchen Sie nach einem Request**
-5. **Kopieren Sie den Cookie-Wert**
+1. **Open Developer Tools (F12)**
+2. **Go to "Network"**
+3. **Reload the page**
+4. **Find a request**
+5. **Copy the cookie value**
 
-## 📝 **Konfiguration**
+## 📝 **Configuration**
 
-### **Session Token setzen**
+### **Setting the Session Token**
 
 **In `simple-email-test.js`:**
 ```javascript
-const SESSION_TOKEN = 'ihr_echter_session_token_hier';
+const SESSION_TOKEN = 'your_actual_session_token_here';
 ```
 
 **In `test-email-api.js`:**
 ```javascript
-const SESSION_TOKEN = 'ihr_echter_session_token_hier';
+const SESSION_TOKEN = 'your_actual_session_token_here';
 ```
 
-### **E-Mail-Adresse ändern**
+### **Changing the E-Mail Address**
 
-**In beiden Dateien:**
+**In both files:**
 ```javascript
 const testEmail = {
-  to: 'ihre_echte_email@ihre-domain.com', // Hier ändern
+  to: 'your_actual_email@your-domain.com', // Change here
   subject: 'Test E-Mail - HeatManager',
-  text: 'Dies ist eine Test-E-Mail von HeatManager.',
-  html: '<h1>Test E-Mail</h1><p>Dies ist eine <strong>Test-E-Mail</strong> von HeatManager.</p>'
+  text: 'This is a test e-mail from HeatManager.',
+  html: '<h1>Test E-Mail</h1><p>This is a <strong>test e-mail</strong> from HeatManager.</p>'
 };
 ```
 
-## 🧪 **Verfügbare Tests**
+## 🧪 **Available Tests**
 
 ### **1. OAuth2 Helper**
 - **Endpoint**: `/api/email/send-oauth2`
-- **Beschreibung**: Verwendet den verbesserten OAuth2-Helper
-- **Anforderungen**: Alle OAuth2-Umgebungsvariablen gesetzt
+- **Description**: Uses the improved OAuth2 helper
+- **Requirements**: All OAuth2 environment variables set
 
 ### **2. Simple OAuth2**
 - **Endpoint**: `/api/email/send-simple-oauth2`
-- **Beschreibung**: Neue einfache OAuth2-API
-- **Anforderungen**: Alle OAuth2-Umgebungsvariablen gesetzt
+- **Description**: New simple OAuth2 API
+- **Requirements**: All OAuth2 environment variables set
 
 ### **3. App Password**
 - **Endpoint**: `/api/email/send-app-password`
-- **Beschreibung**: Einfache SMTP-Authentifizierung
-- **Anforderungen**: `SMTP_USER` und `SMTP_PASS` gesetzt
+- **Description**: Simple SMTP authentication
+- **Requirements**: `SMTP_USER` and `SMTP_PASS` set
 
-## 📊 **Test-Ergebnisse interpretieren**
+## 📊 **Interpreting Test Results**
 
-### **Erfolgreicher Test:**
+### **Successful test:**
 ```json
 {
   "success": true,
@@ -113,7 +113,7 @@ const testEmail = {
 }
 ```
 
-### **Fehlgeschlagener Test:**
+### **Failed test:**
 ```json
 {
   "success": false,
@@ -125,68 +125,68 @@ const testEmail = {
 }
 ```
 
-## 🔧 **Fehlerbehebung**
+## 🔧 **Troubleshooting**
 
-### **Fehler: "Session Token fehlt"**
-- Überprüfen Sie, ob Sie eingeloggt sind
-- Kopieren Sie den Token aus den Browser-Cookies
-- Stellen Sie sicher, dass der Token gültig ist
+### **Error: "Session token missing"**
+- Check that you are logged in
+- Copy the token from the browser cookies
+- Make sure the token is valid
 
-### **Fehler: "Unauthorized"**
-- Session Token ist abgelaufen
-- Loggen Sie sich neu ein
-- Kopieren Sie den neuen Token
+### **Error: "Unauthorized"**
+- Session token has expired
+- Log in again
+- Copy the new token
 
-### **Fehler: "Missing environment variables"**
-- Überprüfen Sie Ihre `.env` Datei
-- Stellen Sie sicher, dass alle erforderlichen Variablen gesetzt sind
-- Starten Sie die Anwendung neu nach Änderungen
+### **Error: "Missing environment variables"**
+- Check your `.env` file
+- Make sure all required variables are set
+- Restart the application after making changes
 
-### **Fehler: "OAuth2 token request failed"**
-- Authorization Code ist abgelaufen
-- Holen Sie einen neuen Authorization Code
-- Aktualisieren Sie `OAUTH_AUTHORIZATION_CODE` in `.env`
+### **Error: "OAuth2 token request failed"**
+- Authorization code has expired
+- Obtain a new authorization code
+- Update `OAUTH_AUTHORIZATION_CODE` in `.env`
 
-## 📱 **Alternative: cURL-Tests**
+## 📱 **Alternative: cURL Tests**
 
-### **OAuth2-Test:**
+### **OAuth2 test:**
 ```bash
 curl -X POST http://localhost:3000/api/email/send-simple-oauth2 \
   -H "Content-Type: application/json" \
-  -H "Cookie: next-auth.session-token=ihr_token" \
+  -H "Cookie: next-auth.session-token=your_token" \
   -d '{
     "to": "test@example.com",
     "subject": "Test E-Mail",
-    "text": "Dies ist eine Test-E-Mail"
+    "text": "This is a test e-mail"
   }'
 ```
 
-### **App Password-Test:**
+### **App Password test:**
 ```bash
 curl -X POST http://localhost:3000/api/email/send-app-password \
   -H "Content-Type: application/json" \
-  -H "Cookie: next-auth.session-token=ihr_token" \
+  -H "Cookie: next-auth.session-token=your_token" \
   -d '{
     "to": "test@example.com",
     "subject": "Test E-Mail",
-    "text": "Dies ist eine Test-E-Mail"
+    "text": "This is a test e-mail"
   }'
 ```
 
-## 🎯 **Empfehlungen**
+## 🎯 **Recommendations**
 
-1. **Starten Sie mit App Password** - einfacher zu konfigurieren
-2. **Testen Sie OAuth2** nur nach vollständiger Konfiguration
-3. **Verwenden Sie echte E-Mail-Adressen** für Tests
-4. **Überprüfen Sie die Server-Logs** bei Problemen
-5. **Testen Sie regelmäßig** nach Konfigurationsänderungen
+1. **Start with App Password** – easier to configure
+2. **Test OAuth2** only after full configuration
+3. **Use real e-mail addresses** for testing
+4. **Check server logs** when you have issues
+5. **Test regularly** after configuration changes
 
 ## 📞 **Support**
 
-Bei Problemen:
-1. Überprüfen Sie die Server-Logs
-2. Testen Sie die Verbindung über die Web-Oberfläche
-3. Überprüfen Sie alle Umgebungsvariablen
-4. Stellen Sie sicher, dass die Anwendung läuft
+If you run into problems:
+1. Check the server logs
+2. Test the connection via the web interface
+3. Verify all environment variables
+4. Make sure the application is running
 
-**Viel Erfolg beim Testen!** 🚀✨
+**Good luck with testing!** 🚀✨

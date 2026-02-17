@@ -1,29 +1,29 @@
 # Chart Timestamp Fix
 
 ## Problem
-Die Temperatur-Charts zeigten nur Werte am rechten Ende und die X-Achse zeigte "Invalid Date" an.
+The temperature charts only showed values at the right end and the X-axis displayed "Invalid Date".
 
-## Ursache
-1. **Falsche Zeitstempel-Verarbeitung**: Die PostgreSQL API gab Zeitstempel zurück, aber die Charts erwarteten ein anderes Format
-2. **Falsche Chart-Konfiguration**: Die Charts verwendeten `type: 'category'` anstatt `type: 'time'`
-3. **String-Formatierung**: Zeitstempel wurden als formatierte Strings anstatt als Zahlen übergeben
+## Cause
+1. **Incorrect timestamp handling**: The PostgreSQL API returned timestamps, but the charts expected a different format
+2. **Incorrect chart configuration**: The charts used `type: 'category'` instead of `type: 'time'`
+3. **String formatting**: Timestamps were passed as formatted strings instead of numbers
 
-## Lösung
+## Solution
 
-### 1. Zeitstempel-Parsing korrigiert
+### 1. Timestamp parsing corrected
 ```javascript
-// Vorher
+// Before
 ts: point.ts,
 value: point.value
 
-// Nachher
+// After
 ts: parseInt(point.ts), // Ensure ts is a number
 value: parseFloat(point.value) // Ensure value is a number
 ```
 
-### 2. Chart-Konfiguration geändert
+### 2. Chart configuration changed
 ```javascript
-// Vorher
+// Before
 xAxis: {
   type: 'category',
   boundaryGap: false,
@@ -31,18 +31,18 @@ xAxis: {
   // ...
 }
 
-// Nachher
+// After
 xAxis: {
   type: 'time',
   boundaryGap: false,
-  // data property entfernt für time axis
+  // data property removed for time axis
   // ...
 }
 ```
 
-### 3. Datenformat für Charts angepasst
+### 3. Data format for charts adjusted
 ```javascript
-// Vorher
+// Before
 const data = deviceData.data.map(point => [
   new Date(point.ts).toLocaleString('de-DE', {
     day: '2-digit',
@@ -53,19 +53,19 @@ const data = deviceData.data.map(point => [
   point.value
 ]);
 
-// Nachher
+// After
 const data = deviceData.data.map(point => [
   parseInt(point.ts), // Use timestamp directly for time axis
   parseFloat(point.value)
 ]);
 ```
 
-### 4. Tooltip-Formatierung angepasst
+### 4. Tooltip formatting adjusted
 ```javascript
-// Vorher
+// Before
 let result = `<div style="font-weight: bold; margin-bottom: 5px; color: #333;">${params[0].axisValue}</div>`;
 
-// Nachher
+// After
 const timestamp = params[0].axisValue;
 const formattedTime = new Date(timestamp).toLocaleString('de-DE', {
   day: '2-digit',
@@ -77,27 +77,27 @@ const formattedTime = new Date(timestamp).toLocaleString('de-DE', {
 let result = `<div style="font-weight: bold; margin-bottom: 5px; color: #333;">${formattedTime}</div>`;
 ```
 
-## Betroffene Funktionen
-- `fetchTelemetryData()` - Temperatur-Chart
-- `fetchTargetTelemetryData()` - Zieltemperatur-Chart
-- `fetchValveTelemetryData()` - Ventilposition-Chart
-- `getTelemetryChartOption()` - Chart-Konfiguration
-- `getTargetTelemetryChartOption()` - Chart-Konfiguration
-- `getValveTelemetryChartOption()` - Chart-Konfiguration
+## Affected functions
+- `fetchTelemetryData()` - Temperature chart
+- `fetchTargetTelemetryData()` - Target temperature chart
+- `fetchValveTelemetryData()` - Valve position chart
+- `getTelemetryChartOption()` - Chart configuration
+- `getTargetTelemetryChartOption()` - Chart configuration
+- `getValveTelemetryChartOption()` - Chart configuration
 
-## Ergebnis
-- ✅ Zeitstempel werden korrekt als Zahlen verarbeitet
-- ✅ Charts verwenden `type: 'time'` für korrekte Zeitachse
-- ✅ X-Achse zeigt korrekte Zeitstempel an
-- ✅ Daten werden über den gesamten Zeitbereich angezeigt
-- ✅ Tooltips zeigen formatierte Zeitstempel
+## Result
+- ✅ Timestamps are correctly processed as numbers
+- ✅ Charts use `type: 'time'` for correct time axis
+- ✅ X-axis displays correct timestamps
+- ✅ Data is shown across the full time range
+- ✅ Tooltips show formatted timestamps
 
 ## Debugging
-Debug-Logs wurden hinzugefügt, um die API-Antworten zu überwachen:
+Debug logs were added to monitor API responses:
 ```javascript
 console.log('Telemetry data received:', telemetryResult);
 console.log('Target telemetry data received:', telemetryResult);
 console.log('Valve telemetry data received:', telemetryResult);
 ```
 
-Diese können nach dem Test entfernt werden.
+These can be removed after testing.
