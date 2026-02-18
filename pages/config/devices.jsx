@@ -12,6 +12,9 @@ const DEVICES_CACHE_KEY = 'hm_devices_cache';
 const DEVICES_LAST_UPDATE_KEY = 'hm_devices_last_update';
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
 
+const SHOW_ACTIONS = false; // Aktionen-Spalte (Reset, Rekalibrierung, etc.) ein-/ausblenden
+const SHOW_AUTO_REFRESH_AND_CACHE = false; // Auto-Refresh und Cache löschen ein-/ausblenden
+
 function Devices() {
   const { data: session } = useSession();
   const { tbToken, isLoading } = useThingsboard();
@@ -31,6 +34,11 @@ function Devices() {
   const [selectedType, setSelectedType] = useState('all');
   const [selectedStatus, setSelectedStatus] = useState('all');
   const [selectedGateway, setSelectedGateway] = useState('all');
+  const [selectedPathLevel1, setSelectedPathLevel1] = useState('');
+  const [selectedPathLevel2, setSelectedPathLevel2] = useState('');
+  const [selectedPathLevel3, setSelectedPathLevel3] = useState('');
+  const [selectedPathLevel4, setSelectedPathLevel4] = useState('');
+  const [selectedPathLevel5, setSelectedPathLevel5] = useState('');
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [refreshInterval, setRefreshInterval] = useState(null);
   const [showScrollToTop, setShowScrollToTop] = useState(false);
@@ -57,6 +65,24 @@ function Devices() {
     const path = findAssetPath(assetId, treeData);
     return path && path.length > 0 ? path.join(' → ') : null;
   }, [treeData, findAssetPath]);
+
+  /** Pfad-Segmente pro Ebene (max 5). z.B. ["HEATMANGER Test", "Himmelauer Mühle 9 / Gelnhausen", "2. OG rechts", "", ""]. */
+  const getPathSegments = useCallback((device) => {
+    const empty = ['', '', '', '', ''];
+    if (!device) return empty;
+    let segments = [];
+    const pathFromTree = device.asset?.id && getAssetPathString(device.asset.id);
+    if (pathFromTree) {
+      segments = pathFromTree.split(' → ').map(s => s.trim()).filter(Boolean);
+    } else if (device.asset?.fullPath?.labels?.length) {
+      segments = device.asset.fullPath.labels.slice(0, 5);
+    } else if (device.asset?.pathString && !device.asset.pathString.startsWith('Asset ')) {
+      segments = device.asset.pathString.split(/\s*→\s*|\s*\/\s*/).map(s => s.trim()).filter(Boolean);
+    }
+    const padded = [...segments.slice(0, 5)];
+    while (padded.length < 5) padded.push('');
+    return padded;
+  }, [getAssetPathString]);
 
   // Load cached data on component mount
   useEffect(() => {
@@ -465,12 +491,34 @@ function Devices() {
     return '-';
   };
 
-  // Filter devices based on search term
+  // Kaskadierte Optionen für Pfad-Level 1–5 (Level 2 nur unter gewähltem Level 1, etc.)
+  const pathLevelOptions = useMemo(() => {
+    if (!displayDevices) return { level1: [], level2: [], level3: [], level4: [], level5: [] };
+    const level1 = [...new Set(displayDevices.map(d => getPathSegments(d)[0]).filter(Boolean))].sort();
+    let devL1 = displayDevices;
+    if (selectedPathLevel1) devL1 = displayDevices.filter(d => getPathSegments(d)[0] === selectedPathLevel1);
+    const level2 = [...new Set(devL1.map(d => getPathSegments(d)[1]).filter(Boolean))].sort();
+    let devL2 = devL1;
+    if (selectedPathLevel2) devL2 = devL1.filter(d => getPathSegments(d)[1] === selectedPathLevel2);
+    const level3 = [...new Set(devL2.map(d => getPathSegments(d)[2]).filter(Boolean))].sort();
+    let devL3 = devL2;
+    if (selectedPathLevel3) devL3 = devL2.filter(d => getPathSegments(d)[2] === selectedPathLevel3);
+    const level4 = [...new Set(devL3.map(d => getPathSegments(d)[3]).filter(Boolean))].sort();
+    let devL4 = devL3;
+    if (selectedPathLevel4) devL4 = devL3.filter(d => getPathSegments(d)[3] === selectedPathLevel4);
+    const level5 = [...new Set(devL4.map(d => getPathSegments(d)[4]).filter(Boolean))].sort();
+    return { level1, level2, level3, level4, level5 };
+  }, [displayDevices, selectedPathLevel1, selectedPathLevel2, selectedPathLevel3, selectedPathLevel4, getPathSegments]);
+
+  const pathLevelFiltersActive = selectedPathLevel1 || selectedPathLevel2 || selectedPathLevel3 || selectedPathLevel4 || selectedPathLevel5;
+
+  // Filter devices based on search term and filters (incl. Pfad Level 1–5)
   const filteredDevices = useMemo(() => {
     if (!displayDevices) return [];
-    if (!searchTerm && selectedType === 'all' && selectedStatus === 'all' && selectedGateway === 'all') return displayDevices;
+    if (!searchTerm && selectedType === 'all' && selectedStatus === 'all' && selectedGateway === 'all' && !pathLevelFiltersActive) return displayDevices;
 
     const searchLower = (searchTerm || '').toLowerCase();
+    const pathFilters = [selectedPathLevel1, selectedPathLevel2, selectedPathLevel3, selectedPathLevel4, selectedPathLevel5];
     return displayDevices.filter(device => {
       if (!device) return false;
       const serialNumber = getSerialNumber(device).toLowerCase();
@@ -484,20 +532,21 @@ function Devices() {
         (device.telemetry?.gatewayId || '').toLowerCase().includes(searchLower);
 
       const matchesType = selectedType === 'all' || device.type === selectedType;
-      
       const matchesStatus = selectedStatus === 'all' || 
         (selectedStatus === 'active' && device.active) ||
         (selectedStatus === 'inactive' && !device.active);
-      
       const matchesGateway = selectedGateway === 'all' || 
         (selectedGateway === 'withGateway' && device.telemetry?.gatewayId) ||
         (selectedGateway === 'withoutGateway' && !device.telemetry?.gatewayId) ||
         (selectedGateway !== 'all' && selectedGateway !== 'withGateway' && selectedGateway !== 'withoutGateway' && 
          device.telemetry?.gatewayId === selectedGateway);
 
-      return matchesSearch && matchesType && matchesStatus && matchesGateway;
+      const seg = getPathSegments(device);
+      const matchesPath = pathFilters.every((sel, i) => !sel || seg[i] === sel);
+
+      return matchesSearch && matchesType && matchesStatus && matchesGateway && matchesPath;
     });
-  }, [displayDevices, searchTerm, selectedType, selectedStatus, selectedGateway, getAssetPathString]);
+  }, [displayDevices, searchTerm, selectedType, selectedStatus, selectedGateway, selectedPathLevel1, selectedPathLevel2, selectedPathLevel3, selectedPathLevel4, selectedPathLevel5, pathLevelFiltersActive, getAssetPathString, getPathSegments]);
 
   const handleClose = () => {
     setShowModal(false);
@@ -718,6 +767,7 @@ function Devices() {
             <FontAwesomeIcon icon={faSync} spin={isRefreshing} className="me-2" />
             {isRefreshing ? 'Aktualisiere...' : 'Aktualisieren'}
           </Button>
+          {SHOW_AUTO_REFRESH_AND_CACHE && (
           <Button
             variant={autoRefresh ? "success" : "outline-success"}
             size="sm"
@@ -725,6 +775,7 @@ function Devices() {
           >
             Auto-Refresh
           </Button>
+          )}
           <Button
             variant="outline-info"
             size="sm"
@@ -734,13 +785,15 @@ function Devices() {
             <FontAwesomeIcon icon={faDownload} className="me-2" />
             Export
           </Button>
-                    <Button
+          {SHOW_AUTO_REFRESH_AND_CACHE && (
+          <Button
             variant="outline-warning"
             size="sm"
             onClick={clearCache}
           >
             Cache löschen
           </Button>
+          )}
         </div>
       </div>
 
@@ -828,7 +881,83 @@ function Devices() {
               ))}
           </Form.Select>
         </div>
-        <div className="col-md-3">
+        <div className="col-12 col-lg">
+          <Form.Select
+            value={selectedPathLevel1}
+            onChange={(e) => {
+              const v = e.target.value;
+              setSelectedPathLevel1(v);
+              if (!v) { setSelectedPathLevel2(''); setSelectedPathLevel3(''); setSelectedPathLevel4(''); setSelectedPathLevel5(''); }
+            }}
+            className="form-select-sm"
+          >
+            <option value="">Level 1</option>
+            {pathLevelOptions.level1.map(s => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </Form.Select>
+        </div>
+        <div className="col-12 col-lg">
+          <Form.Select
+            value={selectedPathLevel2}
+            onChange={(e) => {
+              const v = e.target.value;
+              setSelectedPathLevel2(v);
+              if (!v) { setSelectedPathLevel3(''); setSelectedPathLevel4(''); setSelectedPathLevel5(''); }
+            }}
+            className="form-select-sm"
+          >
+            <option value="">Level 2</option>
+            {pathLevelOptions.level2.map(s => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </Form.Select>
+        </div>
+        <div className="col-12 col-lg">
+          <Form.Select
+            value={selectedPathLevel3}
+            onChange={(e) => {
+              const v = e.target.value;
+              setSelectedPathLevel3(v);
+              if (!v) { setSelectedPathLevel4(''); setSelectedPathLevel5(''); }
+            }}
+            className="form-select-sm"
+          >
+            <option value="">Level 3</option>
+            {pathLevelOptions.level3.map(s => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </Form.Select>
+        </div>
+        <div className="col-12 col-lg">
+          <Form.Select
+            value={selectedPathLevel4}
+            onChange={(e) => {
+              const v = e.target.value;
+              setSelectedPathLevel4(v);
+              if (!v) setSelectedPathLevel5('');
+            }}
+            className="form-select-sm"
+          >
+            <option value="">Level 4</option>
+            {pathLevelOptions.level4.map(s => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </Form.Select>
+        </div>
+        <div className="col-12 col-lg">
+          <Form.Select
+            value={selectedPathLevel5}
+            onChange={(e) => setSelectedPathLevel5(e.target.value)}
+            className="form-select-sm"
+          >
+            <option value="">Level 5</option>
+            {pathLevelOptions.level5.map(s => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </Form.Select>
+        </div>
+        <div className="col-12 col-lg-2">
           <Button
             variant="outline-secondary"
             size="sm"
@@ -837,8 +966,14 @@ function Devices() {
               setSelectedType('all');
               setSelectedStatus('all');
               setSelectedGateway('all');
+              setSelectedPathLevel1('');
+              setSelectedPathLevel2('');
+              setSelectedPathLevel3('');
+              setSelectedPathLevel4('');
+              setSelectedPathLevel5('');
             }}
-            className="w-100"
+            className="w-100 mt-4 mt-lg-0"
+            style={{ minHeight: '31px' }}
           >
             Filter zurücksetzen
           </Button>
@@ -885,7 +1020,9 @@ function Devices() {
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Signal Quality</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Status</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Letzte Aktivität</th>
+                {SHOW_ACTIONS && (
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Aktionen</th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -903,7 +1040,7 @@ function Devices() {
                   <td>
                     {(() => {
                       const pathFromTree = device.asset?.id && getAssetPathString(device.asset.id);
-                      if (pathFromTree) return <div><small className="text-info">{pathFromTree}</small></div>;
+                      if (pathFromTree) return <div><small style={{ color: '#000' }}>{pathFromTree}</small></div>;
                       if (device.asset && typeof device.asset === 'object') {
                         if (device.asset.fullPath?.labels?.length > 0) return <div>{device.asset.fullPath.labels.join(' / ')}</div>;
                         if (device.asset.pathString && !device.asset.pathString.startsWith('Asset ')) return <div>{device.asset.pathString}</div>;
@@ -977,6 +1114,7 @@ function Devices() {
                         'Nie'
                     }
                   </td>
+                  {SHOW_ACTIONS && (
                   <td>
                     <div className="dropdown position-relative">
                       <Button
@@ -1049,6 +1187,7 @@ function Devices() {
                       )}
                     </div>
                   </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -1127,7 +1266,7 @@ function Devices() {
                   <div className="mb-3">
                     <strong>Pfad:</strong>{' '}
                     {selectedDevice?.asset?.id && getAssetPathString(selectedDevice.asset.id) ? (
-                      <span className="text-info">{getAssetPathString(selectedDevice.asset.id)}</span>
+                      <span style={{ color: '#000' }}>{getAssetPathString(selectedDevice.asset.id)}</span>
                     ) : selectedDevice?.asset?.fullPath?.labels?.length > 0 ? (
                       selectedDevice.asset.fullPath.labels.join(' → ')
                     ) : selectedDevice?.asset?.pathString && !selectedDevice.asset.pathString.startsWith('Asset ') ? (

@@ -65,6 +65,7 @@ export default function HeatingControl() {
   const [error, setError] = useState(null);
   const [treeData, setTreeData] = useState([]);
   const [customerData, setCustomerData] = useState(null);
+  const [usePresenceSensor, setUsePresenceSensor] = useState(false);
   const [openNodes, setOpenNodes] = useState([]);
   const [forceExpand, setForceExpand] = useState(false);
   const [windowHeight, setWindowHeight] = useState(0);
@@ -3125,6 +3126,21 @@ export default function HeatingControl() {
   }, [customerData?.customerid, fetchTreeData]);
 
   useEffect(() => {
+    if (!customerData?.customerid || !session?.token) {
+      setUsePresenceSensor(false);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/config/customers/${customerData.customerid}/attributes`, {
+      headers: { 'Authorization': `Bearer ${session.token}` }
+    })
+      .then(res => res.ok ? res.json() : { usePresenceSensor: false })
+      .then(data => { if (!cancelled) setUsePresenceSensor(!!data?.usePresenceSensor); })
+      .catch(() => { if (!cancelled) setUsePresenceSensor(false); });
+    return () => { cancelled = true; };
+  }, [customerData?.customerid, session?.token]);
+
+  useEffect(() => {
     const handleResize = () => {
       setWindowHeight(window.innerHeight);
       const mobile = window.innerWidth < 800;
@@ -4108,7 +4124,7 @@ export default function HeatingControl() {
                             );
                           })()}
                           
-                          {(() => {
+                          {usePresenceSensor && (() => {
                             const hasPir = nodeDetails?.attributes?.hasPir === true || nodeDetails?.attributes?.hasPir === 'true' || selectedNode?.data?.hasPir === true || selectedNode?.data?.hasPir === 'true';
                             const occupied = nodeDetails?.attributes?.occupied ?? selectedNode?.data?.occupied;
                             const isOccupied = occupied === true || occupied === 'true';
@@ -4437,7 +4453,7 @@ export default function HeatingControl() {
                                     <small className="text-muted">Fix</small>
                                   </div>
                                 </div>
-                                {(nodeDetails?.attributes?.hasPir === true || nodeDetails?.attributes?.hasPir === 'true' || selectedNode?.data?.hasPir === true || selectedNode?.data?.hasPir === 'true') && (
+                                {usePresenceSensor && (nodeDetails?.attributes?.hasPir === true || nodeDetails?.attributes?.hasPir === 'true' || selectedNode?.data?.hasPir === true || selectedNode?.data?.hasPir === 'true') && (
                                   <div className="text-center">
                                     <img 
                                       src={isPirRunStatus(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) ? "/assets/img/hm_pir_active.svg" : "/assets/img/hm_pir_inactive.svg"}
@@ -4696,8 +4712,8 @@ export default function HeatingControl() {
                               </div>
                             )}
 
-                            {/* Wochenplan Bewegung (runStatus = pir) – nutzt schedulerPlanPIR */}
-                            {isPirRunStatus(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) && (
+                            {/* Wochenplan Bewegung (runStatus = pir) – nutzt schedulerPlanPIR; nur bei usePresenceSensor */}
+                            {usePresenceSensor && isPirRunStatus(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) && (
                               <div className="mb-4">
                                 <div className="mb-3">
                                   <label className="form-label fw-bold">Temperatur bei Belegung</label>
