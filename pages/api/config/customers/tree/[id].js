@@ -859,7 +859,8 @@ async function fetchAssetTree(customerId, tbToken, providedSessionId = null) {
             id: deviceId,
             name: deviceDetails?.name || 'Unbekannt',
             type: deviceDetails?.type || 'Unbekannt',
-            label: deviceDetails?.label || 'Unbekannt'
+            label: deviceDetails?.label || 'Unbekannt',
+            active: deviceDetails?.active
           };
         });
         

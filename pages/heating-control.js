@@ -156,6 +156,8 @@ export default function HeatingControl() {
   // Telemetry data for subordinate nodes
   const [subordinateTelemetry, setSubordinateTelemetry] = useState({});
   const [loadingSubordinateTelemetry, setLoadingSubordinateTelemetry] = useState(false);
+  const [allDevicesForStatus, setAllDevicesForStatus] = useState([]); // Wie config/devices für Gerätestatus (active)
+  const [lastDevicesStatusUpdate, setLastDevicesStatusUpdate] = useState(null); // Timestamp letzte Aktualisierung Gerätestatus
 
   const timeRangeOptions = [
     { value: '1d', label: '1 Tag' },
@@ -3175,6 +3177,25 @@ export default function HeatingControl() {
     }
   }, [activeTab, selectedNode, getAllSubordinateNodes, fetchSubordinateTelemetry]);
 
+  // Gerätestatus (active) wie config/devices: gleiche API laden für korrekte Aktiv/Inaktiv-Anzeige (Tab Übersicht, Verlauf, Details, Zimmer-Kacheln)
+  useEffect(() => {
+    const needStatus = (activeTab === 'empty' || activeTab === 'overview' || activeTab === 'details') && selectedNode && session?.token;
+    if (!needStatus) return;
+    let cancelled = false;
+    fetch('/api/config/devices', {
+      headers: { 'Authorization': `Bearer ${session.token}` }
+    })
+      .then(res => res.ok ? res.json() : [])
+      .then(list => {
+        if (!cancelled) {
+          setAllDevicesForStatus(Array.isArray(list) ? list : []);
+          setLastDevicesStatusUpdate(Date.now());
+        }
+      })
+      .catch(() => { if (!cancelled) setAllDevicesForStatus([]); });
+    return () => { cancelled = true; };
+  }, [activeTab, selectedNode, session?.token]);
+
   // Update settings values from nodeDetails when they are loaded (direkt aus ThingsBoard)
   // Diese Werte werden immer direkt aus ThingsBoard geholt, nicht aus dem tree Feld
   useEffect(() => {
@@ -4148,6 +4169,43 @@ export default function HeatingControl() {
                               </div>
                             );
                           })()}
+                          {/* Gerätestatus (wie Übersicht: x / y davon inaktiv, Rahmen grün/gelb/rot) */}
+                          <div className="responsive-card">
+                            <div className="card">
+                              <div className="card-body text-center">
+                                <FontAwesomeIcon icon={faMicrochip} className="text-primary mb-3" size="2x" />
+                                <h4 className="card-title">Gerätestatus</h4>
+                                {devices && devices.length > 0 ? (() => {
+                                  const getActive = (d) => {
+                                    const id = typeof d?.id === 'string' ? d.id : d?.id?.id;
+                                    if (id && allDevicesForStatus.length > 0) {
+                                      const found = allDevicesForStatus.find(x => x.id === id);
+                                      return found?.active;
+                                    }
+                                    return d?.active;
+                                  };
+                                  const total = devices.length;
+                                  const inactive = devices.filter(d => getActive(d) === false).length;
+                                  let borderColor = '#28a745';
+                                  if (total > 0 && inactive === total) borderColor = '#dc3545';
+                                  else if (inactive > 0) borderColor = '#ffc107';
+                                  return (
+                                    <div
+                                      className="d-inline-block px-3 py-2 rounded small"
+                                      style={{
+                                        border: `2px solid ${borderColor}`,
+                                        backgroundColor: `${borderColor}15`
+                                      }}
+                                    >
+                                      Geräte: {total} / {inactive} davon inaktiv
+                                    </div>
+                                  );
+                                })() : (
+                                  <div className="text-muted small">Keine Geräte zugeordnet</div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
                         </div>
 
                         {/* Temperaturverlauf Chart */}
@@ -4243,11 +4301,58 @@ export default function HeatingControl() {
                                       {device.name || device.id} • {device.type || 'Unbekannt'}
                                     </small>
                                   </div>
-                                  {device.active !== undefined && (
-                                    <span className={`badge ${device.active ? 'bg-success' : 'bg-warning'}`}>
-                                      {device.active ? 'Aktiv' : 'Inaktiv'}
-                                    </span>
-                                  )}
+                                  <div className="text-end">
+                                    {(() => {
+                                      const rawId = device?.id;
+                                      const id = typeof rawId === 'string' ? rawId : (rawId?.id ?? rawId);
+                                      const idStr = id != null ? String(id).trim() : '';
+                                      const byId = (x) => {
+                                        if (x?.id == null) return false;
+                                        const xi = typeof x.id === 'object' ? x.id?.id : x.id;
+                                        return xi != null && String(xi).trim() === idStr;
+                                      };
+                                      let statusDevice = idStr && allDevicesForStatus.length > 0
+                                        ? allDevicesForStatus.find(byId)
+                                        : null;
+                                      if (!statusDevice && allDevicesForStatus.length > 0 && (device?.name || device?.label)) {
+                                        statusDevice = allDevicesForStatus.find(x =>
+                                          (x?.name && device?.name && String(x.name).trim() === String(device.name).trim()) ||
+                                          (x?.label && device?.label && String(x.label).trim() === String(device.label).trim())
+                                        ) || null;
+                                      }
+                                      const active = statusDevice?.active ?? device?.active;
+                                      const ts = statusDevice?.lastActivityTime ?? device?.lastActivityTime ?? device?.telemetry?.lastActivityTime;
+                                      let ms = NaN;
+                                      if (ts != null && ts !== '') {
+                                        if (typeof ts === 'number' && !Number.isNaN(ts)) {
+                                          ms = ts;
+                                        } else if (typeof ts === 'string') {
+                                          const parsed = /^\d+$/.test(ts) ? parseInt(ts, 10) : new Date(ts).getTime();
+                                          if (!Number.isNaN(parsed)) ms = parsed;
+                                        }
+                                        if (!Number.isNaN(ms) && ms > 0 && ms < 1e12) ms *= 1000;
+                                      }
+                                      const hasTime = !Number.isNaN(ms) && ms > 0;
+                                      return (
+                                        <>
+                                          <span className={`badge ${active ? 'bg-success' : 'bg-danger'}`}>
+                                            {active ? 'Aktiv' : 'Inaktiv'}
+                                          </span>
+                                          <div className="small text-muted mt-1" style={{ fontSize: '0.75rem' }}>
+                                            {hasTime
+                                              ? new Date(ms).toLocaleString('de-DE', {
+                                                  day: '2-digit',
+                                                  month: '2-digit',
+                                                  year: 'numeric',
+                                                  hour: '2-digit',
+                                                  minute: '2-digit'
+                                                })
+                                              : '–'}
+                                          </div>
+                                        </>
+                                      );
+                                    })()}
+                                  </div>
                                 </div>
                                 {(device.telemetry || deviceTemperatures[device.id]) && (
                                   <div className="mt-2">
@@ -4392,10 +4497,10 @@ export default function HeatingControl() {
                         </>
                       )}
                       {(!devices || devices.length === 0) && (
-                        <div className="text-center text-muted py-3">
-                          <FontAwesomeIcon icon={faMicrochip} size="2x" className="mb-2" />
-                          <p className="mb-0">Keine Geräte zugeordnet</p>
-                        </div>
+                          <div className="text-center text-muted py-3">
+                            <FontAwesomeIcon icon={faMicrochip} size="2x" className="mb-2" />
+                            <p className="mb-0">Keine Geräte zugeordnet</p>
+                          </div>
                       )}
                     </div>
                   </div>
@@ -4994,21 +5099,51 @@ export default function HeatingControl() {
                                       <div key={node.id} className="col-md-6 col-lg-4 mb-3">
                                         <div className="card h-100">
                                           <div className="card-body">
-                                            <div className="d-flex align-items-center mb-2">
-                                              <FontAwesomeIcon 
-                                                icon={getIconForType(node.type)} 
-                                                className="me-2 text-primary"
-                                              />
-                                              <h6 className="card-title mb-0" style={{ fontSize: '0.875rem' }}>
-                                                {node.label || node.name || node.text}
-                                              </h6>
-                                              {node.hasDevices && (
+                                            <div className="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-1">
+                                              <div className="d-flex align-items-center">
                                                 <FontAwesomeIcon 
-                                                  icon={faThermometerHalf} 
-                                                  className="ms-2 text-success"
-                                                  title="Hat Geräte"
+                                                  icon={getIconForType(node.type)} 
+                                                  className="me-2 text-primary"
                                                 />
-                                              )}
+                                                <h6 className="card-title mb-0" style={{ fontSize: '0.875rem' }}>
+                                                  {node.label || node.name || node.text}
+                                                </h6>
+                                                {node.hasDevices && (
+                                                  <FontAwesomeIcon 
+                                                    icon={faThermometerHalf} 
+                                                    className="ms-2 text-success"
+                                                    title="Hat Geräte"
+                                                  />
+                                                )}
+                                              </div>
+                                              {(() => {
+                                                const devs = node.relatedDevices || node.data?.relatedDevices || [];
+                                                const total = devs.length;
+                                                const getActive = (d) => {
+                                                  const id = typeof d?.id === 'string' ? d.id : d?.id?.id;
+                                                  if (id && allDevicesForStatus.length > 0) {
+                                                    const found = allDevicesForStatus.find(x => x.id === id);
+                                                    return found?.active;
+                                                  }
+                                                  return d?.active;
+                                                };
+                                                const inactive = devs.filter(d => getActive(d) === false).length;
+                                                let borderColor = '#28a745';
+                                                if (total > 0 && inactive === total) borderColor = '#dc3545';
+                                                else if (inactive > 0) borderColor = '#ffc107';
+                                                return (
+                                                  <span
+                                                    className="small px-2 py-1 rounded"
+                                                    style={{
+                                                      border: `2px solid ${borderColor}`,
+                                                      backgroundColor: `${borderColor}10`,
+                                                      whiteSpace: 'nowrap'
+                                                    }}
+                                                  >
+                                                    Geräte: {total} / {inactive} davon inaktiv
+                                                  </span>
+                                                );
+                                              })()}
                                             </div>
                                             
                                             {/* Breadcrumb Path */}

@@ -323,7 +323,7 @@ export default async function handler(req, res) {
           name: device.name,
           type: device.type,
           active: device.active,
-          lastActivityTime: device.lastActivityTime,
+          lastActivityTime: device.lastActivityTime ?? telemetry?.lastActivityTime, // Device-Server-Attribut lastActivityTime (Entity oder SERVER_SCOPE)
           label: device.label || '',
           additionalInfo: device.additionalInfo || {},
           asset: asset,
