@@ -14,7 +14,9 @@ import thingsboardAuth from "./auth";
  * 3. GET device (3a), then POST /api/device/{deviceId} with device + ownerId: { id }, customerId: { id } (3b). If OK, stop.
  * 4–7. If 3 fails: POST owner, then POST assign, then POST relation CUSTOMER→DEVICE Manages, then POST relation DEVICE→CUSTOMER Manages; stop on first OK.
  *
- * Unassign: DELETE /api/customer/device/{deviceId}
+ * Unassign (type=TENANT): DELETE /api/customer/device/{deviceId}. If that returns 404
+ * (e.g. endpoint not exposed by proxy), fallback: GET device, then POST device with
+ * customerId: null and ownerId: tenantId to assign back to tenant.
  * @see https://demo.thingsboard.io/swagger-ui/index.html (Device Controller)
  */
 export default async function handler(req, res) {
@@ -257,14 +259,104 @@ export default async function handler(req, res) {
         response = { status: 404, ok: false };
       }
     } else {
-      // Unassign device from customer (back to tenant): DELETE /api/customer/device/{deviceId}
-      const url = `${baseUrl}/api/customer/device/${deviceId}`;
-      console.log(`ThingsBoard unassign device: DELETE ${url}`);
-      response = await fetchWithRetry(url, { method: 'DELETE' });
+      // Unassign device from customer (back to tenant): try DELETE first, then fallback to device update
+      const tbHeaders = { 'Accept': 'application/json', 'Content-Type': 'application/json', ...headers };
+      const deleteUrl = `${baseUrl}/api/customer/device/${deviceId}`;
+      console.log(`ThingsBoard unassign device: DELETE ${deleteUrl}`);
+      response = await fetchWithRetry(deleteUrl, { method: 'DELETE' });
+
+      // If DELETE returns 404 or 405, use same flow as reassign: remove relations, then update device to tenant.
+      if (!response.ok && (response.status === 404 || response.status === 405)) {
+        const deviceRes = await fetchWithRetry(`${baseUrl}/api/device/${deviceId}`, { method: 'GET' });
+        if (!deviceRes.ok) {
+          const errText = await deviceRes.text();
+          console.error('ThingsBoard get device for unassign fallback:', deviceRes.status, errText);
+          response = deviceRes;
+        } else {
+          const deviceBody = await deviceRes.json();
+          const tenantId = deviceBody.tenantId?.id ?? deviceBody.tenantId ?? null;
+          const oldCustomerId = deviceBody.customerId?.id ?? deviceBody.customerId ?? null;
+          if (!tenantId) {
+            console.error('ThingsBoard device has no tenantId:', deviceBody);
+            response = { status: 400, ok: false, details: 'Device has no tenantId; cannot unassign.' };
+          } else {
+            // Mirror assign flow: remove relations first, then update device (like reassign steps 1–3b).
+            const getDeviceRelations = async () => {
+              const res = await fetchWithRetry(`${baseUrl}/api/device/${deviceId}/relations`, {
+                method: 'GET',
+                headers: tbHeaders
+              });
+              if (!res.ok) return [];
+              try {
+                const data = await res.json();
+                return Array.isArray(data) ? data : (data?.relations ? data.relations : []);
+              } catch (_) {
+                return [];
+              }
+            };
+            const deleteRelationById = async (relationId) => {
+              const id = relationId?.id ?? relationId;
+              if (id == null || id === '') return { ok: false };
+              return fetchWithRetry(`${baseUrl}/api/relation/${String(id)}`, {
+                method: 'DELETE',
+                headers: tbHeaders
+              });
+            };
+
+            if (oldCustomerId) {
+              const relations1 = await getDeviceRelations();
+              for (const rel of relations1) {
+                const fromId = rel.from?.id ?? rel.from;
+                const toId = rel.to?.id ?? rel.to;
+                if (fromId === oldCustomerId || toId === oldCustomerId) {
+                  const del = await deleteRelationById(rel.id);
+                  if (!del.ok) console.warn('ThingsBoard unassign: delete old-customer relation:', rel.id, del.status, await del.text());
+                }
+              }
+            }
+            const relations2 = await getDeviceRelations();
+            for (const rel of relations2) {
+              const del = await deleteRelationById(rel.id);
+              if (!del.ok) console.warn('ThingsBoard unassign: delete device relation:', rel.id, del.status, await del.text());
+            }
+
+            let unassignSuccess = false;
+            const unassignPayload = {
+              ...deviceBody,
+              id: deviceBody.id || { id: deviceId, entityType: 'DEVICE' },
+              ownerId: { id: tenantId, entityType: 'TENANT' },
+              customerId: null
+            };
+            const updateRes = await fetchWithRetry(`${baseUrl}/api/device/${deviceId}`, {
+              method: 'POST',
+              headers: tbHeaders,
+              body: JSON.stringify(unassignPayload)
+            });
+            if (updateRes.ok) {
+              response = updateRes;
+              unassignSuccess = true;
+              console.log(`ThingsBoard unassign fallback: device ${deviceId} reassigned to tenant ${tenantId} (POST device)`);
+            }
+            // If POST device returns 405 or fails, try owner API: POST /api/owner/TENANT/{tenantId}/DEVICE/{deviceId}
+            if (!unassignSuccess) {
+              const ownerRes = await fetchWithRetry(
+                `${baseUrl}/api/owner/TENANT/${tenantId}/DEVICE/${deviceId}`,
+                { method: 'POST', headers: tbHeaders }
+              );
+              if (ownerRes.ok) {
+                response = ownerRes;
+                console.log(`ThingsBoard unassign fallback: device ${deviceId} reassigned to tenant ${tenantId} (owner API)`);
+              } else {
+                response = updateRes; // surface device POST error (e.g. 405)
+              }
+            }
+          }
+        }
+      }
     }
 
     if (!response.ok) {
-      const errorText = await response.text();
+      const errorText = typeof response.text === 'function' ? await response.text() : (response.details || `HTTP ${response.status}`);
       console.error(`ThingsBoard API error: ${response.status} - ${errorText}`);
       let parsed;
       try {
@@ -279,14 +371,7 @@ export default async function handler(req, res) {
           hint: 'Assign is done via POST /api/customer/{customerId}/device/{deviceId}. That endpoint returns 404 on your server—your reverse proxy or ThingsBoard deployment may not expose it. Ask your admin to ensure this path is available at ' + baseUrl + ' (check Swagger at ' + baseUrl + '/swagger-ui.html).'
         });
       }
-      // Unassign (DELETE) returns 404 when device is not assigned to any customer (already tenant-level) — treat as success
-      if (response.status === 404 && type === 'TENANT') {
-        return res.status(200).json({
-          success: true,
-          message: `Device ${deviceId} was already unassigned (tenant-level)`,
-          data: {}
-        });
-      }
+      // For TENANT unassign we already tried fallback (device update) on DELETE 404, so 404 here is a real error (e.g. device not found).
       if (response.status === 404 && type === 'CUSTOMER') {
         return res.status(404).json({
           error: 'ThingsBoard assign failed',

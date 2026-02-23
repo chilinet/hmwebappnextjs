@@ -557,14 +557,17 @@ function Inventory() {
           body: JSON.stringify({ ...device, customerid: null })
         });
         if (!localResponse.ok) throw new Error(`Fehler beim Aktualisieren von Gerät ${device.id}`);
-        if (device.tbconnectionid && device.customerid) {
-          const currentCustomer = devices.find(d => d.customerid === device.customerid);
-          if (currentCustomer?.customerid) {
-            await fetch(`/api/thingsboard/owner?type=TENANT&customerId=${currentCustomer.customerid}&deviceId=${device.tbconnectionid}`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify([])
-            });
+        // Always unassign in ThingsBoard when device has a connection (API only needs deviceId for type=TENANT)
+        const validTbId = device.tbconnectionid && String(device.tbconnectionid).trim() !== '' && String(device.tbconnectionid) !== '0' && String(device.tbconnectionid).length > 10;
+        if (validTbId) {
+          const unassignRes = await fetch(`/api/thingsboard/owner?type=TENANT&deviceId=${encodeURIComponent(device.tbconnectionid)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify([])
+          });
+          if (!unassignRes.ok) {
+            const err = await unassignRes.json().catch(() => ({}));
+            throw new Error(err?.details || err?.error || `ThingsBoard Unassign: ${unassignRes.status}`);
           }
         }
       }
@@ -618,10 +621,9 @@ function Inventory() {
         if (validTbId && (newCustomerId === '__REMOVE__' || newCustomerId)) {
           anyDeviceHadTbConnection = true;
           try {
-            // Only unassign if device is currently assigned to a customer (not tenant-only)
-            const currentCustomer = device.customerid ? devices.find(d => d.customerid === device.customerid) : null;
-            if (currentCustomer?.customerid && validTbId) {
-              const unassignRes = await fetch(`/api/thingsboard/owner?type=TENANT&customerId=${currentCustomer.customerid}&deviceId=${encodeURIComponent(device.tbconnectionid)}`, {
+            // When removing assignment, always unassign in ThingsBoard (API only needs deviceId for type=TENANT)
+            if (newCustomerId === '__REMOVE__') {
+              const unassignRes = await fetch(`/api/thingsboard/owner?type=TENANT&deviceId=${encodeURIComponent(device.tbconnectionid)}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify([])
@@ -657,17 +659,22 @@ function Inventory() {
       }
       const newCustomerName = customerList.find(c => (c.id?.id ?? c.id) === newCustomerId)?.name ?? devices.find(d => d.customerid === newCustomerId)?.customer_name;
       const tbSkipped = !anyDeviceHadTbConnection && devicesToUpdate.some(d => !d.tbconnectionid);
+      const isBulkRemove = isBulk && newCustomerId === '__REMOVE__';
       setUpdateStatus({
         type: tbSkipped ? 'warning' : 'success',
         message: tbSkipped
-          ? (isBulk
-            ? `Geräte nur lokal zu "${newCustomerName}" zugeordnet. Keine ThingsBoard-Aktualisierung: ausgewählte Geräte haben keine ThingsBoard-Verbindung (tbconnectionid). Bitte zuerst "In ThingsBoard anlegen" ausführen.`
-            : `Customer nur lokal geändert. Gerät "${selectedCustomerForChange?.deviceLabel || selectedCustomerForChange?.id}" ist nicht in ThingsBoard angelegt (keine tbconnectionid). Bitte zuerst über "In ThingsBoard anlegen" das Gerät in ThingsBoard erstellen, dann erneut die Customer-Zuordnung ändern.`)
-          : (isBulk
-            ? `${devicesToUpdate.length} Geräte erfolgreich zu "${newCustomerName}" zugewiesen (lokal und ThingsBoard).`
-            : (newCustomerId === '__REMOVE__'
-              ? `Customer-Zuordnung erfolgreich entfernt! Device "${selectedCustomerForChange.deviceLabel || selectedCustomerForChange.id}" ist jetzt dem Tenant zugeordnet.`
-              : `Customer erfolgreich zu "${newCustomerName}" geändert (lokal und ThingsBoard).`))
+          ? (isBulkRemove
+            ? `Geräte nur lokal: Customer-Zuordnung entfernt. Keine ThingsBoard-Aktualisierung: ausgewählte Geräte haben keine ThingsBoard-Verbindung (tbconnectionid).`
+            : isBulk
+              ? `Geräte nur lokal zu "${newCustomerName}" zugeordnet. Keine ThingsBoard-Aktualisierung: ausgewählte Geräte haben keine ThingsBoard-Verbindung (tbconnectionid). Bitte zuerst "In ThingsBoard anlegen" ausführen.`
+              : `Customer nur lokal geändert. Gerät "${selectedCustomerForChange?.deviceLabel || selectedCustomerForChange?.id}" ist nicht in ThingsBoard angelegt (keine tbconnectionid). Bitte zuerst über "In ThingsBoard anlegen" das Gerät in ThingsBoard erstellen, dann erneut die Customer-Zuordnung ändern.`)
+          : (isBulkRemove
+            ? `Customer-Zuordnung für ${devicesToUpdate.length} Gerät(e) erfolgreich entfernt (lokal und ThingsBoard).`
+            : isBulk
+              ? `${devicesToUpdate.length} Geräte erfolgreich zu "${newCustomerName}" zugewiesen (lokal und ThingsBoard).`
+              : (newCustomerId === '__REMOVE__'
+                ? `Customer-Zuordnung erfolgreich entfernt! Device "${selectedCustomerForChange.deviceLabel || selectedCustomerForChange.id}" ist jetzt dem Tenant zugeordnet.`
+                : `Customer erfolgreich zu "${newCustomerName}" geändert (lokal und ThingsBoard).`))
       });
       setTimeout(() => {
         setShowChangeCustomerModal(false);
@@ -1142,12 +1149,18 @@ function Inventory() {
                     type="button"
                     className="dropdown-item"
                     onClick={() => {
+                      setBulkDeviceIdsForCustomerChange([...selectedDeviceIds]);
+                      setSelectedCustomerForChange({
+                        customer_name: `${selectedDeviceIds.length} Geräte ausgewählt`,
+                        customerid: null
+                      });
+                      setNewCustomerId('__REMOVE__');
+                      setShowChangeCustomerModal(true);
                       setBulkActionDropdownOpen(false);
-                      handleBulkRemoveCustomerAssignment();
                     }}
                   >
                     <FontAwesomeIcon icon={faUserEdit} className="me-2" />
-                    Remove Device
+                    Remove Assignment
                   </button>
                   <button
                     type="button"
@@ -1603,9 +1616,11 @@ function Inventory() {
       >
         <Modal.Header closeButton>
           <Modal.Title>
-            {bulkDeviceIdsForCustomerChange?.length
-              ? `Assign Device (${bulkDeviceIdsForCustomerChange.length} Geräte)`
-              : (newCustomerId ? 'Change Customer' : 'Remove Customer Assignment')}
+            {bulkDeviceIdsForCustomerChange?.length && newCustomerId === '__REMOVE__'
+              ? `Customer-Zuordnung entfernen (${bulkDeviceIdsForCustomerChange.length} Geräte)`
+              : bulkDeviceIdsForCustomerChange?.length
+                ? `Assign Device (${bulkDeviceIdsForCustomerChange.length} Geräte)`
+                : (newCustomerId && newCustomerId !== '__REMOVE__' ? 'Change Customer' : 'Remove Customer Assignment')}
           </Modal.Title>
         </Modal.Header>
         <Modal.Body>
@@ -1626,9 +1641,7 @@ function Inventory() {
                 onChange={(e) => setNewCustomerId(e.target.value)}
               >
                 <option value="">Customer auswählen...</option>
-                {!bulkDeviceIdsForCustomerChange?.length && (
-                  <option value="__REMOVE__">-- Customer-Zuordnung entfernen --</option>
-                )}
+                <option value="__REMOVE__">-- Customer-Zuordnung entfernen --</option>
                 {customerList.map((customer) => {
                   const id = customer.id?.id ?? customer.id;
                   const name = customer.name || '';
@@ -1640,7 +1653,9 @@ function Inventory() {
               </Form.Select>
               {newCustomerId === '__REMOVE__' && (
                 <Form.Text className="text-warning">
-                  <strong>Warnung:</strong> Das Gerät wird dem Tenant zugeordnet und die Customer-ID wird aus der lokalen Datenbank entfernt.
+                  <strong>Warnung:</strong> {bulkDeviceIdsForCustomerChange?.length
+                    ? 'Die Geräte werden dem Tenant zugeordnet und die Customer-ID wird aus der lokalen Datenbank entfernt.'
+                    : 'Das Gerät wird dem Tenant zugeordnet und die Customer-ID wird aus der lokalen Datenbank entfernt.'}
                 </Form.Text>
               )}
             </Form.Group>
@@ -1671,7 +1686,9 @@ function Inventory() {
             )}
             {bulkDeviceIdsForCustomerChange?.length > 0 && (
               <Form.Text className="text-muted">
-                Verbundene Geräte werden auch in ThingsBoard aktualisiert.
+                {newCustomerId === '__REMOVE__'
+                  ? 'Die ausgewählten Geräte werden dem Tenant zugeordnet und die Customer-ID wird entfernt.'
+                  : 'Verbundene Geräte werden auch in ThingsBoard aktualisiert.'}
               </Form.Text>
             )}
           </Form>
@@ -1691,7 +1708,7 @@ function Inventory() {
                 Wird aktualisiert...
               </>
             ) : (
-              bulkDeviceIdsForCustomerChange?.length
+              bulkDeviceIdsForCustomerChange?.length && newCustomerId !== '__REMOVE__'
                 ? 'Geräte zuweisen'
                 : (newCustomerId === '__REMOVE__' ? 'Customer-Zuordnung entfernen' : 'Customer ändern')
             )}
