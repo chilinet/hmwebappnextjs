@@ -2,7 +2,7 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/router";
 import { Table, Spinner, Button, Modal, Nav, Tab, Form, InputGroup, Alert, ProgressBar } from "react-bootstrap";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faEdit, faTrash, faPlus, faSearch, faEllipsisV, faUserEdit, faExclamationTriangle, faArrowUp, faFileExcel, faUpload, faCheck, faTimes, faCloudUpload } from "@fortawesome/free-solid-svg-icons";
+import { faEdit, faTrash, faPlus, faSearch, faEllipsisV, faUserEdit, faExclamationTriangle, faArrowUp, faFileExcel, faUpload, faCheck, faTimes, faCloudUpload, faCircleNodes } from "@fortawesome/free-solid-svg-icons";
 import Layout from "@/components/Layout";
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import * as XLSX from 'xlsx';
@@ -37,6 +37,15 @@ function Inventory() {
   const [bulkDeviceIdsForCustomerChange, setBulkDeviceIdsForCustomerChange] = useState(null);
   const [bulkActionDropdownOpen, setBulkActionDropdownOpen] = useState(false);
 
+  // Assign LNS modal
+  const [showAssignLnsModal, setShowAssignLnsModal] = useState(false);
+  const [assignLnsSelectedLns, setAssignLnsSelectedLns] = useState('');
+  const [assignLnsSelectedOffer, setAssignLnsSelectedOffer] = useState('');
+  const [melitaOffers, setMelitaOffers] = useState([]);
+  const [melitaOffersLoading, setMelitaOffersLoading] = useState(false);
+  const [melitaOffersError, setMelitaOffersError] = useState(null);
+  const LNS_OPTIONS = [{ value: 'melita', label: 'Melita' }, { value: 'tti', label: 'TTI' }, { value: 'thingsstack', label: 'Thingsstack' }];
+
   // Excel Import States
   const [showImportModal, setShowImportModal] = useState(false);
   const [importFile, setImportFile] = useState(null);
@@ -70,6 +79,44 @@ function Inventory() {
     };
     loadCustomers();
   }, [session?.token]);
+
+  // Fetch Melita offers when Assign LNS modal is open and Melita is selected
+  useEffect(() => {
+    if (!showAssignLnsModal || assignLnsSelectedLns !== 'melita' || !session?.token) {
+      if (assignLnsSelectedLns !== 'melita') {
+        setMelitaOffers([]);
+        setMelitaOffersError(null);
+      }
+      return;
+    }
+    let cancelled = false;
+    setMelitaOffersLoading(true);
+    setMelitaOffersError(null);
+    fetch('/api/lns/melita/offers', {
+      headers: { 'Authorization': `Bearer ${session.token}` },
+    })
+      .then((res) => {
+        if (cancelled) return res;
+        if (!res.ok) return res.json().then((body) => { throw new Error(body?.error || body?.details?.message || res.statusText); });
+        return res.json();
+      })
+      .then((data) => {
+        if (!cancelled) {
+          setMelitaOffers(data?.offers ?? []);
+          setMelitaOffersError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setMelitaOffers([]);
+          setMelitaOffersError(err.message || 'Fehler beim Laden der Offers');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setMelitaOffersLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [showAssignLnsModal, assignLnsSelectedLns, session?.token]);
 
   // Fetch devices with retry mechanism
   const fetchDevices = useCallback(async (retryCount = 0) => {
@@ -1165,6 +1212,30 @@ function Inventory() {
                   <button
                     type="button"
                     className="dropdown-item"
+                    onClick={() => {
+                      setBulkActionDropdownOpen(false);
+                      setAssignLnsSelectedLns('');
+                      setAssignLnsSelectedOffer('');
+                      setShowAssignLnsModal(true);
+                    }}
+                  >
+                    <FontAwesomeIcon icon={faCircleNodes} className="me-2" />
+                    Assign LNS
+                  </button>
+                  <button
+                    type="button"
+                    className="dropdown-item"
+                    onClick={() => {
+                      setBulkActionDropdownOpen(false);
+                      // TODO: Remove LNS functionality
+                    }}
+                  >
+                    <FontAwesomeIcon icon={faCircleNodes} className="me-2" />
+                    Remove LNS
+                  </button>
+                  <button
+                    type="button"
+                    className="dropdown-item"
                     onClick={() => handleBulkAddToThingsBoard()}
                   >
                     <FontAwesomeIcon icon={faCloudUpload} className="me-2" />
@@ -1237,6 +1308,7 @@ function Inventory() {
               <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Seriennummer</th>
               <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Status</th>
               <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Has Relation</th>
+              <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>LNS Assignment</th>
               <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Aktionen</th>
             </tr>
           </thead>
@@ -1282,6 +1354,7 @@ function Inventory() {
                     {device.hasrelation ? 'True' : 'False'}
                   </span>
                 </td>
+                <td>{device.lns_assignment_name ?? '—'}</td>
                 <td>
                   <Button
                     variant="info"
@@ -1712,6 +1785,101 @@ function Inventory() {
                 ? 'Geräte zuweisen'
                 : (newCustomerId === '__REMOVE__' ? 'Customer-Zuordnung entfernen' : 'Customer ändern')
             )}
+          </Button>
+        </Modal.Footer>
+      </Modal>
+
+      {/* Assign LNS Modal */}
+      <Modal
+        show={showAssignLnsModal}
+        onHide={() => {
+          setShowAssignLnsModal(false);
+          setAssignLnsSelectedLns('');
+          setAssignLnsSelectedOffer('');
+        }}
+        size="md"
+        centered
+      >
+        <Modal.Header closeButton>
+          <Modal.Title>
+            Assign LNS {selectedDeviceIds.length > 0 && `(${selectedDeviceIds.length} Geräte)`}
+          </Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <Form>
+            <Form.Group className="mb-3">
+              <Form.Label>LNS</Form.Label>
+              <Form.Select
+                value={assignLnsSelectedLns}
+                onChange={(e) => {
+                  setAssignLnsSelectedLns(e.target.value);
+                  setAssignLnsSelectedOffer('');
+                }}
+              >
+                <option value="">LNS auswählen...</option>
+                {LNS_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </Form.Select>
+            </Form.Group>
+            <Form.Group className="mb-3">
+              <Form.Label>Offer / Contract</Form.Label>
+              <Form.Select
+                value={assignLnsSelectedOffer}
+                onChange={(e) => setAssignLnsSelectedOffer(e.target.value)}
+                disabled={!assignLnsSelectedLns || (assignLnsSelectedLns === 'melita' && melitaOffersLoading)}
+              >
+                <option value="">
+                  {!assignLnsSelectedLns
+                    ? 'Zuerst LNS auswählen'
+                    : assignLnsSelectedLns === 'melita' && melitaOffersLoading
+                      ? 'Lade Offers...'
+                      : assignLnsSelectedLns === 'melita'
+                        ? 'Offer/Contract auswählen...'
+                        : 'Offer/Contract auswählen...'}
+                </option>
+                {assignLnsSelectedLns === 'melita' && melitaOffers.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </Form.Select>
+              {assignLnsSelectedLns === 'melita' && melitaOffersError && (
+                <Form.Text className="text-danger">{melitaOffersError}</Form.Text>
+              )}
+              {assignLnsSelectedLns === 'melita' && !melitaOffersError && (
+                <Form.Text className="text-muted">
+                  Offers werden aus dem Melita LNS geladen.
+                </Form.Text>
+              )}
+              {assignLnsSelectedLns && assignLnsSelectedLns !== 'melita' && (
+                <Form.Text className="text-muted">
+                  Offer/Contract für dieses LNS wird später implementiert.
+                </Form.Text>
+              )}
+            </Form.Group>
+          </Form>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setShowAssignLnsModal(false);
+              setAssignLnsSelectedLns('');
+              setAssignLnsSelectedOffer('');
+            }}
+          >
+            Abbrechen
+          </Button>
+          <Button
+            variant="primary"
+            onClick={() => {
+              // TODO: Call API to assign LNS + offer for selected devices
+              setShowAssignLnsModal(false);
+              setAssignLnsSelectedLns('');
+              setAssignLnsSelectedOffer('');
+            }}
+            disabled={!assignLnsSelectedLns}
+          >
+            Assign LNS
           </Button>
         </Modal.Footer>
       </Modal>

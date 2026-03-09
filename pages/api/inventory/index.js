@@ -74,6 +74,7 @@ export default async function handler(req, res) {
                  i.owner_id, i.group_id, i.distributor_id, d.name as distributor_name, i.status_id, i.invoicenbr, i.ordernbr, 
                  i.orderdate, i.installed_at, i.tbconnected_at, i.nwconnected_at, i.created_at, 
                  i.updated_at, i.status, i.contractId, i.deviceLabel, i.deviceProfileId, i.offerName,
+                 i.lns_id,
                  c.name as customer_name, c.title as customer_title,
                  CASE WHEN i.hasrelation = 1 THEN 1 ELSE 0 END as hasrelation
           FROM ${db}.dbo.inventory i
@@ -90,7 +91,8 @@ export default async function handler(req, res) {
         const devicesWithCustomers = devicesWithCustomersResult.recordset.map(device => ({
           ...device,
           customer_name: device.customer_name || 'Keine Zuordnung',
-          customer_title: device.customer_title || ''
+          customer_title: device.customer_title || '',
+          lns_assignment_name: device.lns_id || null
         }));
         
         res.status(200).json(devicesWithCustomers);
@@ -216,6 +218,7 @@ export default async function handler(req, res) {
           .input('deviceLabel', sql.VarChar(100), str(data, 'deviceLabel'))
           .input('deviceProfileId', sql.VarChar(100), str(data, 'deviceProfileId'))
           .input('offerName', sql.VarChar(100), str(data, 'offerName'))
+          .input('lns_id', sql.VarChar(100), str(data, 'lns_id'))
           .input('created_at', sql.DateTime, now)
           .input('updated_at', sql.DateTime, now)
           .query(`
@@ -225,7 +228,7 @@ export default async function handler(req, res) {
               brand_id, model_id, hardwareversion, firmwareversion, owner_id, group_id,
               distributor_id, status_id, invoicenbr, ordernbr, orderdate, installed_at,
               tbconnected_at, nwconnected_at, status, contractId, deviceLabel, deviceProfileId,
-              offerName, created_at, updated_at
+              offerName, lns_id, created_at, updated_at
             )
             VALUES (
               @devicenbr, @devicename, @deveui, @joineui, @serialnbr, @appkey,
@@ -233,7 +236,7 @@ export default async function handler(req, res) {
               @brand_id, @model_id, @hardwareversion, @firmwareversion, @owner_id, @group_id,
               @distributor_id, @status_id, @invoicenbr, @ordernbr, @orderdate, @installed_at,
               @tbconnected_at, @nwconnected_at, @status, @contractId, @deviceLabel, @deviceProfileId,
-              @offerName, @created_at, @updated_at
+              @offerName, @lns_id, @created_at, @updated_at
             )
           `);
         
@@ -344,6 +347,7 @@ export default async function handler(req, res) {
           .input('deviceLabel', sql.VarChar(100), str(data, 'deviceLabel'))
           .input('deviceProfileId', sql.VarChar(100), str(data, 'deviceProfileId'))
           .input('offerName', sql.VarChar(100), str(data, 'offerName'))
+          .input('lns_id', sql.VarChar(100), str(data, 'lns_id'))
           .input('updated_at', sql.DateTime, now)
           .query(`
             UPDATE ${db}.dbo.inventory
@@ -377,6 +381,7 @@ export default async function handler(req, res) {
                 deviceLabel = @deviceLabel,
                 deviceProfileId = @deviceProfileId,
                 offerName = @offerName,
+                lns_id = @lns_id,
                 updated_at = @updated_at
             WHERE id = @id
           `);

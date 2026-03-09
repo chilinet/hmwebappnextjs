@@ -41,7 +41,8 @@ BEGIN
         deviceLabel NVARCHAR(100),
         deviceProfileId NVARCHAR(100),
         offerName NVARCHAR(100),
-        hasrelation BIT DEFAULT 0
+        hasrelation BIT DEFAULT 0,
+        lns_id NVARCHAR(100) NULL
     );
 
     CREATE INDEX IX_inventory_customerid ON dbo.inventory(customerid);
