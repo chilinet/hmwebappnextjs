@@ -44,6 +44,13 @@ function Inventory() {
   const [melitaOffers, setMelitaOffers] = useState([]);
   const [melitaOffersLoading, setMelitaOffersLoading] = useState(false);
   const [melitaOffersError, setMelitaOffersError] = useState(null);
+  const [melitaProfiles, setMelitaProfiles] = useState([]);
+  const [melitaProfilesLoading, setMelitaProfilesLoading] = useState(false);
+  const [melitaProfilesError, setMelitaProfilesError] = useState(null);
+  const [assignLnsSelectedProfile, setAssignLnsSelectedProfile] = useState('');
+  const [isAssigningLns, setIsAssigningLns] = useState(false);
+  const [assignLnsError, setAssignLnsError] = useState(null);
+  const [isRemovingLns, setIsRemovingLns] = useState(false);
   const LNS_OPTIONS = [{ value: 'melita', label: 'Melita' }, { value: 'tti', label: 'TTI' }, { value: 'thingsstack', label: 'Thingsstack' }];
 
   // Excel Import States
@@ -117,6 +124,46 @@ function Inventory() {
       });
     return () => { cancelled = true; };
   }, [showAssignLnsModal, assignLnsSelectedLns, session?.token]);
+
+  // Fetch Melita device profiles when contract is selected (for Assign LNS)
+  useEffect(() => {
+    if (!showAssignLnsModal || assignLnsSelectedLns !== 'melita' || !assignLnsSelectedOffer || !session?.token) {
+      if (!assignLnsSelectedOffer) {
+        setMelitaProfiles([]);
+        setAssignLnsSelectedProfile('');
+        setMelitaProfilesError(null);
+      }
+      return;
+    }
+    let cancelled = false;
+    setMelitaProfilesLoading(true);
+    setMelitaProfilesError(null);
+    setAssignLnsSelectedProfile('');
+    fetch('/api/lns/melita/device-profiles', {
+      headers: { 'Authorization': `Bearer ${session.token}` },
+    })
+      .then((res) => {
+        if (cancelled) return res;
+        if (!res.ok) return res.json().then((body) => { throw new Error(body?.error || body?.details?.message || res.statusText); });
+        return res.json();
+      })
+      .then((data) => {
+        if (!cancelled) {
+          setMelitaProfiles(data?.profiles ?? []);
+          setMelitaProfilesError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setMelitaProfiles([]);
+          setMelitaProfilesError(err.message || 'Fehler beim Laden der Device Profiles');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setMelitaProfilesLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [showAssignLnsModal, assignLnsSelectedLns, assignLnsSelectedOffer, session?.token]);
 
   // Fetch devices with retry mechanism
   const fetchDevices = useCallback(async (retryCount = 0) => {
@@ -623,6 +670,90 @@ function Inventory() {
       setError(null);
     } catch (err) {
       setError(err.message);
+    }
+  };
+
+  const handleAssignLns = async () => {
+    if (assignLnsSelectedLns !== 'melita' || !assignLnsSelectedOffer || selectedDeviceIds.length === 0) {
+      setAssignLnsError(assignLnsSelectedLns !== 'melita' ? 'Nur Melita LNS wird derzeit unterstützt.' : 'Bitte Offer/Contract auswählen.');
+      return;
+    }
+    if (!assignLnsSelectedProfile || assignLnsSelectedProfile.trim() === '') {
+      setAssignLnsError('Bitte Device Profile auswählen.');
+      return;
+    }
+    setAssignLnsError(null);
+    setIsAssigningLns(true);
+    try {
+      const lnsName = LNS_OPTIONS.find((o) => o.value === assignLnsSelectedLns)?.label || assignLnsSelectedLns || 'Melita';
+      const res = await fetch('/api/lns/melita/assign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deviceIds: selectedDeviceIds,
+          contractId: assignLnsSelectedOffer.trim(),
+          deviceProfileId: assignLnsSelectedProfile.trim(),
+          lnsAssignmentName: lnsName,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || data?.details || res.statusText);
+      }
+      const { success, failed, errors } = data;
+      const contractId = assignLnsSelectedOffer;
+      await fetchDevices();
+      setShowAssignLnsModal(false);
+      setAssignLnsSelectedLns('');
+      setAssignLnsSelectedOffer('');
+      setAssignLnsSelectedProfile('');
+      setSelectedDeviceIds([]);
+      if (failed > 0 && errors?.length) {
+        setError(`${success} zugewiesen, ${failed} fehlgeschlagen: ${errors.slice(0, 2).join('; ')}`);
+      } else if (success > 0) {
+        setError(null);
+        alert(`${success} Gerät(e) erfolgreich zu Melita LNS (Contract ${contractId}) zugewiesen.`);
+      }
+    } catch (err) {
+      setAssignLnsError(err.message);
+    } finally {
+      setIsAssigningLns(false);
+    }
+  };
+
+  const handleRemoveLns = async () => {
+    if (selectedDeviceIds.length === 0) {
+      setError('Bitte mindestens ein Gerät auswählen.');
+      return;
+    }
+    if (!window.confirm(`LNS-Zuordnung für ${selectedDeviceIds.length} Gerät(e) entfernen? Die Geräte werden bei Melita entfernt und die Zuordnung in der Inventarliste gelöscht.`)) {
+      return;
+    }
+    setError(null);
+    setIsRemovingLns(true);
+    try {
+      const res = await fetch('/api/lns/melita/remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceIds: selectedDeviceIds }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || data?.details || res.statusText);
+      }
+      const { success, melitaRemoved, errors } = data;
+      await fetchDevices();
+      setSelectedDeviceIds([]);
+      if (errors?.length) {
+        setError(`${success} Geräte aktualisiert, ${errors.length} Melita-Fehler: ${errors.slice(0, 2).join('; ')}`);
+      } else {
+        setError(null);
+        alert(`${melitaRemoved ?? success} Gerät(e) erfolgreich von LNS entfernt.`);
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsRemovingLns(false);
     }
   };
 
@@ -1225,9 +1356,10 @@ function Inventory() {
                   <button
                     type="button"
                     className="dropdown-item"
+                    disabled={isRemovingLns || selectedDeviceIds.length === 0}
                     onClick={() => {
                       setBulkActionDropdownOpen(false);
-                      // TODO: Remove LNS functionality
+                      handleRemoveLns();
                     }}
                   >
                     <FontAwesomeIcon icon={faCircleNodes} className="me-2" />
@@ -1796,6 +1928,7 @@ function Inventory() {
           setShowAssignLnsModal(false);
           setAssignLnsSelectedLns('');
           setAssignLnsSelectedOffer('');
+          setAssignLnsSelectedProfile('');
         }}
         size="md"
         centered
@@ -1826,7 +1959,10 @@ function Inventory() {
               <Form.Label>Offer / Contract</Form.Label>
               <Form.Select
                 value={assignLnsSelectedOffer}
-                onChange={(e) => setAssignLnsSelectedOffer(e.target.value)}
+                onChange={(e) => {
+                  setAssignLnsSelectedOffer(e.target.value);
+                  setAssignLnsSelectedProfile('');
+                }}
                 disabled={!assignLnsSelectedLns || (assignLnsSelectedLns === 'melita' && melitaOffersLoading)}
               >
                 <option value="">
@@ -1856,6 +1992,31 @@ function Inventory() {
                 </Form.Text>
               )}
             </Form.Group>
+            {assignLnsSelectedLns === 'melita' && assignLnsSelectedOffer && (
+              <Form.Group className="mb-3">
+                <Form.Label>Device Profile</Form.Label>
+                <Form.Select
+                  value={assignLnsSelectedProfile}
+                  onChange={(e) => setAssignLnsSelectedProfile(e.target.value)}
+                  disabled={melitaProfilesLoading}
+                >
+                  <option value="">
+                    {melitaProfilesLoading ? 'Lade Device Profiles...' : 'Device Profile auswählen...'}
+                  </option>
+                  {melitaProfiles.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </Form.Select>
+                {melitaProfilesError && (
+                  <Form.Text className="text-danger">{melitaProfilesError}</Form.Text>
+                )}
+              </Form.Group>
+            )}
+            {assignLnsError && (
+              <Alert variant="danger" onClose={() => setAssignLnsError(null)} dismissible>
+                {assignLnsError}
+              </Alert>
+            )}
           </Form>
         </Modal.Body>
         <Modal.Footer>
@@ -1865,21 +2026,30 @@ function Inventory() {
               setShowAssignLnsModal(false);
               setAssignLnsSelectedLns('');
               setAssignLnsSelectedOffer('');
+              setAssignLnsSelectedProfile('');
+              setAssignLnsError(null);
             }}
+            disabled={isAssigningLns}
           >
             Abbrechen
           </Button>
           <Button
             variant="primary"
-            onClick={() => {
-              // TODO: Call API to assign LNS + offer for selected devices
-              setShowAssignLnsModal(false);
-              setAssignLnsSelectedLns('');
-              setAssignLnsSelectedOffer('');
-            }}
-            disabled={!assignLnsSelectedLns}
+            onClick={handleAssignLns}
+            disabled={
+              !assignLnsSelectedLns ||
+              (assignLnsSelectedLns === 'melita' && (!assignLnsSelectedOffer || !assignLnsSelectedProfile)) ||
+              isAssigningLns
+            }
           >
-            Assign LNS
+            {isAssigningLns ? (
+              <>
+                <Spinner animation="border" size="sm" className="me-2" />
+                Wird zugewiesen...
+              </>
+            ) : (
+              'Assign LNS'
+            )}
           </Button>
         </Modal.Footer>
       </Modal>

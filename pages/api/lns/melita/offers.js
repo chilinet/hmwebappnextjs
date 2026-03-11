@@ -57,37 +57,25 @@ export default async function handler(req, res) {
 
     const data = await response.json();
 
-    // Normalize: accept array or { contracts: [...] } (contract-controller) or { data: [...] } or { offers: [...] }
+    // Melita API returns contracts with subscriptions[]; friendly name is subscriptionLabel inside each subscription
     let list = Array.isArray(data) ? data : data?.contracts ?? data?.offers ?? data?.data ?? [];
     if (!Array.isArray(list)) list = [];
 
-    if (list.length > 0) {
-      console.log('Melita contracts API – sample item keys:', Object.keys(list[0]));
-      console.log('Melita contracts API – first item:', JSON.stringify(list[0], null, 2));
+    const offers = [];
+    for (const contract of list) {
+      const contractId = String(contract.contractId ?? contract.id ?? contract.planNumber ?? '');
+      const subs = contract.subscriptions;
+      let name = null;
+      if (Array.isArray(subs) && subs.length > 0) {
+        const first = subs[0];
+        name = first.subscriptionLabel ?? first.friendlyName ?? first.name ?? first.label;
+      }
+      if (name == null) {
+        name = contract.friendlyName ?? contract.offerName ?? contract.name ?? contract.label;
+      }
+      const label = name ? `${name} (${contractId})` : contractId;
+      offers.push({ value: contractId, label });
     }
-
-    const offers = list.map((item) => {
-      const id = item.id ?? item.planNumber ?? item.offerId ?? item.contractId ?? item.planId ?? item.value;
-      const name =
-        item.friendlyName ??
-        item.friendly_name ??
-        item.offerName ??
-        item.name ??
-        item.label ??
-        item.title ??
-        item.contractName ??
-        item.planName ??
-        item.productName ??
-        item.displayName ??
-        item.offer_name ??
-        item.contract_name ??
-        item.contractLabel ??
-        item.offerLabel;
-      const label = name && String(id) !== String(name)
-        ? `${name} (${id})`
-        : (name || String(id));
-      return { value: String(id), label };
-    });
 
     return res.status(200).json({ offers });
   } catch (err) {
