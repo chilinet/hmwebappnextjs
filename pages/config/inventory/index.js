@@ -1162,7 +1162,7 @@ function Inventory() {
   return (
     <div className="container-fluid px-4 mt-4">
       <div className="d-flex justify-content-between align-items-center mb-4">
-        <h2 className="text-white">Inventory</h2>
+        <h2 className="text-black">Inventory</h2>
         <div>
           <Button 
             variant="success" 
@@ -1437,7 +1437,7 @@ function Inventory() {
               <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Lieferdatum</th>
               <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>DevEUI</th>
               <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>JoinEUI</th>
-              <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Seriennummer</th>
+              <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)', maxWidth: 130, width: 130 }}>Seriennummer</th>
               <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Status</th>
               <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Has Relation</th>
               <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>LNS Assignment</th>
@@ -1479,7 +1479,7 @@ function Inventory() {
                 <td>{device.orderdate ? new Date(device.orderdate).toLocaleDateString('de-DE') : '-'}</td>
                 <td>{device.deveui}</td>
                 <td>{device.joineui}</td>
-                <td>{device.serialnbr}</td>
+                <td style={{ maxWidth: 130 }}>{device.serialnbr}</td>
                 <td>{device.status}</td>
                 <td>
                   <span className={`badge ${device.hasrelation ? 'bg-success' : 'bg-secondary'}`}>
