@@ -5,30 +5,44 @@ import { makeThingsBoardRequest } from "../../../lib/utils/thingsboardRequest";
 /** Holt den Asset-Pfad für ein Gerät (wie config/devices getAssetHierarchy). */
 async function getDevicePath(deviceId, tbToken, customer_id) {
   if (!deviceId || !tbToken) return null;
+  const resolvedDeviceId = typeof deviceId === 'object' && deviceId?.id != null ? deviceId.id : String(deviceId);
   try {
     const relationsResponse = await makeThingsBoardRequest(
-      `${process.env.THINGSBOARD_URL}/api/relations?toId=${deviceId}&toType=DEVICE&relationTypeGroup=COMMON`,
+      `${process.env.THINGSBOARD_URL}/api/relations?toId=${resolvedDeviceId}&toType=DEVICE&relationTypeGroup=COMMON`,
       { method: 'GET', headers: { 'accept': 'application/json' } },
       customer_id
     );
-    if (!relationsResponse.ok) return null;
+    if (!relationsResponse.ok) {
+      console.warn('[alarms getDevicePath] relations not ok:', relationsResponse.status, 'for device', resolvedDeviceId);
+      return null;
+    }
     const relations = await relationsResponse.json();
-    const assetRelation = relations.find((r) => r.from?.entityType === 'ASSET');
-    if (!assetRelation?.from?.id) return null;
+    const assetRelation = Array.isArray(relations) ? relations.find((r) => r.from?.entityType === 'ASSET') : null;
+    if (!assetRelation?.from) {
+      console.warn('[alarms getDevicePath] no ASSET relation for device', resolvedDeviceId);
+      return null;
+    }
+    const assetId = typeof assetRelation.from.id === 'object' && assetRelation.from.id != null
+      ? assetRelation.from.id.id
+      : assetRelation.from.id;
+    if (!assetId) return null;
     const baseUrl = process.env.NEXTAUTH_URL || 'http://localhost:3000';
     const treepathRes = await fetch(
-      `${baseUrl}/api/treepath/${assetRelation.from.id}?customerId=${encodeURIComponent(customer_id)}`,
+      `${baseUrl}/api/treepath/${assetId}?customerId=${encodeURIComponent(customer_id)}`,
       { headers: { 'x-api-source': 'backend' } }
     );
-    if (!treepathRes.ok) return null;
-    const treepathData = await treepathRes.json();
-    if (treepathData.fullPath?.labels?.length) {
-      return treepathData.fullPath.labels.join(' → ');
+    if (treepathRes.ok) {
+      const treepathData = await treepathRes.json();
+      if (treepathData.fullPath?.labels?.length) {
+        return treepathData.fullPath.labels.join(' → ');
+      }
+      if (treepathData.pathString && !treepathData.pathString.startsWith('Asset ')) {
+        return treepathData.pathString;
+      }
+    } else {
+      console.warn('[alarms getDevicePath] treepath failed:', treepathRes.status, 'for asset', assetId);
     }
-    if (treepathData.pathString && !treepathData.pathString.startsWith('Asset ')) {
-      return treepathData.pathString;
-    }
-    return null;
+    return `Asset ${assetId}`;
   } catch (e) {
     console.warn('getDevicePath error:', e?.message);
     return null;
@@ -159,27 +173,34 @@ export default async function handler(req, res) {
     if (alarms.length > 0) {
       try {
         const enrichedAlarms = await Promise.all(alarms.map(async (alarm) => {
-          const deviceId = alarm.originator?.id?.entityType === 'DEVICE' ? alarm.originator?.id?.id : null;
+          const o = alarm.originator;
+          const rawId = o?.id;
+          const deviceId = (rawId && typeof rawId === 'object' && rawId.entityType === 'DEVICE' ? rawId.id : null)
+            || (o?.entityType === 'DEVICE' && typeof o?.id === 'string' ? o.id : null)
+            || o?.entityId?.id
+            || null;
+          const deviceIdStr = deviceId && typeof deviceId === 'object' ? deviceId.id : deviceId;
           let device = {
-            id: alarm.originator?.id?.id || 'Unknown',
-            name: alarm.originator?.name || 'Unbekanntes Gerät',
+            id: deviceIdStr || rawId?.id || o?.id || 'Unknown',
+            name: o?.name || 'Unbekanntes Gerät',
             type: 'Unknown'
           };
           let devicePath = null;
 
-          if (deviceId) {
+          if (deviceIdStr) {
             try {
               const [deviceResponse, path] = await Promise.all([
-                makeThingsBoardRequest(`${thingsboardUrl}/api/device/${deviceId}`, {
+                makeThingsBoardRequest(`${thingsboardUrl}/api/device/${deviceIdStr}`, {
                   method: 'GET',
                   headers: { 'Content-Type': 'application/json' }
                 }, customer_id),
-                getDevicePath(deviceId, tbToken, customer_id)
+                getDevicePath(deviceIdStr, tbToken, customer_id)
               ]);
               if (deviceResponse?.ok) {
                 const deviceData = await deviceResponse.json();
+                const devId = deviceData.id?.id ?? deviceData.id;
                 device = {
-                  id: deviceData.id?.id || deviceId,
+                  id: devId || deviceIdStr,
                   name: deviceData.name || 'Unbekanntes Gerät',
                   type: deviceData.type || 'Unknown'
                 };

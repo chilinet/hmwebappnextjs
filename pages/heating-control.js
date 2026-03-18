@@ -52,6 +52,10 @@ import { HTML5Backend } from 'react-dnd-html5-backend';
 import ReactECharts from 'echarts-for-react';
 import TelemetryModal from '../components/TelemetryModal';
 
+const DEBUG_HEATING_CONTROL = process.env.NEXT_PUBLIC_HEATING_CONTROL_DEBUG === 'true';
+const debugLog = (...args) => { if (DEBUG_HEATING_CONTROL) console.log(...args); };
+const debugWarn = (...args) => { if (DEBUG_HEATING_CONTROL) console.warn(...args); };
+
 export default function HeatingControl() {
   const router = useRouter();
   const { data: session, status } = useSession({
@@ -65,7 +69,6 @@ export default function HeatingControl() {
   const [error, setError] = useState(null);
   const [treeData, setTreeData] = useState([]);
   const [customerData, setCustomerData] = useState(null);
-  const [usePresenceSensor, setUsePresenceSensor] = useState(false);
   const [openNodes, setOpenNodes] = useState([]);
   const [forceExpand, setForceExpand] = useState(false);
   const [windowHeight, setWindowHeight] = useState(0);
@@ -108,7 +111,6 @@ export default function HeatingControl() {
   const treeRef = useRef(null);
   const treeScrollContainerRef = useRef(null); 
   const lastLoadedCustomerIdRef = useRef(null); // Track last loaded customer ID to prevent unnecessary reloads
-  const selectedNodeIdRef = useRef(null); // Current selected node id for sync effect (avoids dependency loop)
 
   // Temperature state (API only)
   const [deviceTemperatures, setDeviceTemperatures] = useState({});
@@ -131,15 +133,12 @@ export default function HeatingControl() {
   const [tempSliderValue, setTempSliderValue] = useState(20.0);
   const [scheduleData, setScheduleData] = useState(null);
   const [selectedDayPlans, setSelectedDayPlans] = useState({});
-  const [selectedDayPlansPIR, setSelectedDayPlansPIR] = useState({});
   const [originalSchedulerPlan, setOriginalSchedulerPlan] = useState([]);
-  const [originalSchedulerPlanPIR, setOriginalSchedulerPlanPIR] = useState([]);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [loadingSchedule, setLoadingSchedule] = useState(false);
   const [pendingRunStatus, setPendingRunStatus] = useState(null);
   const [pendingFixValue, setPendingFixValue] = useState(null);
-  const [pendingOccupiedTemp, setPendingOccupiedTemp] = useState(null);
   const [originalRunStatus, setOriginalRunStatus] = useState(null);
   const [originalFixValue, setOriginalFixValue] = useState(null);
   const [originalChildLock, setOriginalChildLock] = useState(null);
@@ -156,8 +155,6 @@ export default function HeatingControl() {
   // Telemetry data for subordinate nodes
   const [subordinateTelemetry, setSubordinateTelemetry] = useState({});
   const [loadingSubordinateTelemetry, setLoadingSubordinateTelemetry] = useState(false);
-  const [allDevicesForStatus, setAllDevicesForStatus] = useState([]); // Wie config/devices für Gerätestatus (active)
-  const [lastDevicesStatusUpdate, setLastDevicesStatusUpdate] = useState(null); // Timestamp letzte Aktualisierung Gerätestatus
 
   const timeRangeOptions = [
     { value: '1d', label: '1 Tag' },
@@ -191,14 +188,11 @@ export default function HeatingControl() {
     setPendingRunStatus(newStatus);
     setHasUnsavedChanges(true);
     
-    // Load schedule data when switching to schedule or Bewegung (PIR) mode
-    if ((newStatus === 'schedule' || newStatus === 'pir') && customerData?.customerid) {
+    // Load schedule data when switching to schedule mode
+    if (newStatus === 'schedule' && customerData?.customerid) {
       fetchScheduleData(customerData.customerid);
     }
   };
-
-  // Bewegungssensor: runStatus wird als 'pir' (lowercase) abgefragt und gespeichert; Anzeige akzeptiert 'pir' und 'PIR'
-  const isPirRunStatus = (s) => s && String(s).toLowerCase() === 'pir';
 
   const updateFixValue = (newValue) => {
     setPendingFixValue(newValue);
@@ -221,8 +215,8 @@ export default function HeatingControl() {
       }
 
       const data = await response.json();
-      console.log('Schedule data received:', data);
-      console.log('Plans array:', data.plans);
+      debugLog('Schedule data received:', data);
+      debugLog('Plans array:', data.plans);
       setScheduleData(data.plans || null);
     } catch (error) {
       console.error('Error fetching schedule data:', error);
@@ -234,14 +228,6 @@ export default function HeatingControl() {
 
   const handlePlanChange = (dayIndex, planIndex) => {
     setSelectedDayPlans(prev => ({
-      ...prev,
-      [dayIndex]: planIndex
-    }));
-    setHasUnsavedChanges(true);
-  };
-
-  const handlePlanChangePIR = (dayIndex, planIndex) => {
-    setSelectedDayPlansPIR(prev => ({
       ...prev,
       [dayIndex]: planIndex
     }));
@@ -337,31 +323,32 @@ export default function HeatingControl() {
     calculatePlannedTargetTemperature();
   }, [calculatePlannedTargetTemperature]);
 
-  // Keep ref in sync with selectedNode so sync effect can read without depending on selectedNode (avoids update loop)
+  // Debug: Log runStatus changes
   useEffect(() => {
-    selectedNodeIdRef.current = selectedNode?.id ?? null;
-  }, [selectedNode?.id]);
+    const currentRunStatus = pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus;
+    debugLog('🟣 [DEBUG] runStatus changed - pendingRunStatus:', pendingRunStatus, 'nodeDetails?.attributes?.runStatus:', nodeDetails?.attributes?.runStatus, 'currentRunStatus:', currentRunStatus);
+  }, [pendingRunStatus, nodeDetails?.attributes?.runStatus]);
 
-  // Update selectedNode.data when nodeDetails changes to keep them in sync (depends only on nodeDetails to avoid loop)
+  // Update selectedNode.data when nodeDetails changes to keep them in sync.
+  // Only depend on nodeDetails and selectedNode.id (not selectedNode) to avoid infinite loop:
+  // setSelectedNode creates a new object → selectedNode reference changes → effect re-runs.
+  const selectedNodeId = selectedNode?.id;
   useEffect(() => {
-    if (!nodeDetails || selectedNodeIdRef.current !== nodeDetails.id) return;
+    if (!nodeDetails || !selectedNodeId || selectedNodeId !== nodeDetails.id) return;
+    debugLog('🟠 [DEBUG] Syncing selectedNode.data with nodeDetails - runStatus:', nodeDetails?.attributes?.runStatus);
     setSelectedNode(prev => {
       if (!prev || prev.id !== nodeDetails.id) return prev;
-      const nextRunStatus = nodeDetails?.attributes?.runStatus;
-      const nextFixValue = nodeDetails?.attributes?.fixValue;
-      const nextSchedulerPlan = nodeDetails?.attributes?.schedulerPlan;
-      if (prev.data?.runStatus === nextRunStatus && prev.data?.fixValue === nextFixValue && prev.data?.schedulerPlan === nextSchedulerPlan) return prev;
       return {
         ...prev,
         data: {
           ...prev.data,
-          runStatus: nextRunStatus,
-          fixValue: nextFixValue,
-          schedulerPlan: nextSchedulerPlan
+          runStatus: nodeDetails?.attributes?.runStatus,
+          fixValue: nodeDetails?.attributes?.fixValue,
+          schedulerPlan: nodeDetails?.attributes?.schedulerPlan
         }
       };
     });
-  }, [nodeDetails]);
+  }, [nodeDetails, selectedNodeId]);
 
   const saveChanges = async () => {
     if (!selectedNode) return;
@@ -398,35 +385,11 @@ export default function HeatingControl() {
         }
       }
 
-      // Handle schedulerPlanPIR (Bewegung) - save when switching to pir or when PIR plan changes
-      if (pendingRunStatus === 'pir' || Object.keys(selectedDayPlansPIR).length > 0) {
-        if (Array.isArray(scheduleData)) {
-          let planArrayPIR = [...originalSchedulerPlanPIR];
-          while (planArrayPIR.length < 7) {
-            planArrayPIR.push(scheduleData[0]?.[0] || '');
-          }
-          Object.entries(selectedDayPlansPIR).forEach(([dayIndex, planIndex]) => {
-            const newPlanName = scheduleData[planIndex]?.[0] || '';
-            planArrayPIR[parseInt(dayIndex)] = newPlanName;
-          });
-          updateData.schedulerPlanPIR = JSON.stringify(planArrayPIR);
-        }
-      }
-
-      // Temperatur bei Belegung (occupiedTemp) – nur bei Bewegung/PIR, Werte 15–30
-      if (pendingRunStatus === 'pir' || pendingOccupiedTemp !== null) {
-        const raw = pendingOccupiedTemp !== null ? Number(pendingOccupiedTemp) : (nodeDetails?.attributes?.occupiedTemp != null ? Number(nodeDetails.attributes.occupiedTemp) : 20);
-        if (raw != null && !Number.isNaN(raw)) {
-          const clamped = Math.min(30, Math.max(15, raw));
-          updateData.occupiedTemp = clamped;
-        }
-      }
-
-      console.log('🔵 [DEBUG] Saving heating control data:', updateData);
-      console.log('🔵 [DEBUG] pendingRunStatus before save:', pendingRunStatus);
-      console.log('🔵 [DEBUG] Selected day plans:', selectedDayPlans);
-      console.log('🔵 [DEBUG] Original scheduler plan:', originalSchedulerPlan);
-      console.log('🔵 [DEBUG] Schedule data:', scheduleData);
+      debugLog('🔵 [DEBUG] Saving heating control data:', updateData);
+      debugLog('🔵 [DEBUG] pendingRunStatus before save:', pendingRunStatus);
+      debugLog('🔵 [DEBUG] Selected day plans:', selectedDayPlans);
+      debugLog('🔵 [DEBUG] Original scheduler plan:', originalSchedulerPlan);
+      debugLog('🔵 [DEBUG] Schedule data:', scheduleData);
 
       const response = await fetch(`/api/config/assets/${selectedNode.id}`, {
         method: 'PUT',
@@ -437,37 +400,32 @@ export default function HeatingControl() {
         body: JSON.stringify(updateData)
       });
 
-      console.log('🔵 [DEBUG] Save response status:', response.status, response.statusText);
+      debugLog('🔵 [DEBUG] Save response status:', response.status, response.statusText);
       
       if (!response.ok) {
         throw new Error('Failed to save changes');
       }
       
       const savedData = await response.json();
-      console.log('🔵 [DEBUG] Saved asset data:', savedData);
-      console.log('🔵 [DEBUG] Saved runStatus:', savedData?.attributes?.runStatus);
+      debugLog('🔵 [DEBUG] Saved asset data:', savedData);
+      debugLog('🔵 [DEBUG] Saved runStatus:', savedData?.attributes?.runStatus);
 
       // Save original values BEFORE resetting pending values
-      console.log('🔵 [DEBUG] Setting originalRunStatus to:', pendingRunStatus);
+      debugLog('🔵 [DEBUG] Setting originalRunStatus to:', pendingRunStatus);
       if (pendingRunStatus !== null) setOriginalRunStatus(pendingRunStatus);
       if (pendingFixValue !== null) setOriginalFixValue(pendingFixValue);
       if (updateData.schedulerPlan) {
         setOriginalSchedulerPlan(JSON.parse(updateData.schedulerPlan));
       }
-      if (updateData.schedulerPlanPIR) {
-        setOriginalSchedulerPlanPIR(JSON.parse(updateData.schedulerPlanPIR));
-      }
 
       setHasUnsavedChanges(false);
       setSelectedDayPlans({});
-      setSelectedDayPlansPIR({});
       setPendingRunStatus(null);
       setPendingFixValue(null);
-      setPendingOccupiedTemp(null);
       
       // Update selectedNode.data with the new runStatus immediately
       if (pendingRunStatus !== null && selectedNode) {
-        console.log('🔵 [DEBUG] Updating selectedNode.data.runStatus to:', pendingRunStatus);
+        debugLog('🔵 [DEBUG] Updating selectedNode.data.runStatus to:', pendingRunStatus);
         setSelectedNode(prev => {
           if (!prev) return prev;
           return {
@@ -480,7 +438,7 @@ export default function HeatingControl() {
         });
       }
       
-      console.log('🔵 [DEBUG] Calling fetchNodeDetails after save...');
+      debugLog('🔵 [DEBUG] Calling fetchNodeDetails after save...');
       fetchNodeDetails(selectedNode.id);
     } catch (error) {
       console.error('Error saving changes:', error);
@@ -491,10 +449,8 @@ export default function HeatingControl() {
 
   const cancelChanges = () => {
     setSelectedDayPlans({});
-    setSelectedDayPlansPIR({});
     setPendingRunStatus(null);
     setPendingFixValue(null);
-    setPendingOccupiedTemp(null);
     setHasUnsavedChanges(false);
     
     if (originalFixValue !== null) {
@@ -558,7 +514,7 @@ export default function HeatingControl() {
         return; // Nothing to save
       }
 
-      console.log('Saving settings data:', updateData);
+      debugLog('Saving settings data:', updateData);
 
       // Step 1: Save only the current asset in ThingsBoard (ThingsBoard will distribute to children automatically)
       const response = await fetch(`/api/config/assets/${selectedNode.id}`, {
@@ -576,7 +532,7 @@ export default function HeatingControl() {
 
       // Step 2: Update all subordinate nodes in the tree
       const subordinateNodeIds = getAllSubordinateNodeIds(selectedNode.id);
-      console.log('Updating subordinate nodes in tree:', subordinateNodeIds);
+      debugLog('Updating subordinate nodes in tree:', subordinateNodeIds);
       
       // Update each subordinate node in the tree (but not in ThingsBoard)
       const treeUpdatePromises = subordinateNodeIds.map(async (nodeId) => {
@@ -593,10 +549,10 @@ export default function HeatingControl() {
           });
           
           if (!treeUpdateResponse.ok) {
-            console.warn(`Failed to update tree for node ${nodeId}`);
+            debugWarn(`Failed to update tree for node ${nodeId}`);
           }
         } catch (error) {
-          console.warn(`Error updating tree for node ${nodeId}:`, error);
+          debugWarn(`Error updating tree for node ${nodeId}:`, error);
         }
       });
 
@@ -707,7 +663,7 @@ export default function HeatingControl() {
 
   const fetchUserData = useCallback(async () => {
     try {
-      console.log('🔍 Fetching user data...');
+      debugLog('🔍 Fetching user data...');
       const response = await fetch('/api/config/users/me', {
         headers: {
           'Authorization': `Bearer ${session.token}`
@@ -720,13 +676,13 @@ export default function HeatingControl() {
       }
 
       const userData = await response.json();
-      console.log('✅ User data fetched successfully:', userData);
+      debugLog('✅ User data fetched successfully:', userData);
       setCustomerData(userData);
     } catch (err) {
       console.error('❌ Error fetching user data:', err);
       // Set a fallback customer ID if available in session
       if (session?.user?.customerid) {
-        console.log('🔄 Using fallback customer ID from session:', session.user.customerid);
+        debugLog('🔄 Using fallback customer ID from session:', session.user.customerid);
         setCustomerData({ customerid: session.user.customerid });
       }
     }
@@ -800,14 +756,14 @@ export default function HeatingControl() {
 
   const fetchTreeData = useCallback(async () => {
     if (!customerData?.customerid) {
-      console.log('⏳ No customer ID available for tree data');
+      debugLog('⏳ No customer ID available for tree data');
       return;
     }
     
     try {
       setLoading(true);
       setError(null);
-      console.log('🌳 Fetching tree data for customer:', customerData.customerid);
+      debugLog('🌳 Fetching tree data for customer:', customerData.customerid);
       
       const response = await fetch(`/api/config/customers/${customerData.customerid}/tree`, {
         headers: {
@@ -821,12 +777,12 @@ export default function HeatingControl() {
       }
       
       const data = await response.json();
-      console.log('✅ Tree data received:', data);
+      debugLog('✅ Tree data received:', data);
       setTreeData(data);
       
       // Alle Knoten beim Laden aufklappen
       const allNodeIds = getAllNodeIds(data);
-      console.log('🔓 Opening all nodes:', allNodeIds);
+      debugLog('🔓 Opening all nodes:', allNodeIds);
       setOpenNodes(allNodeIds);
     } catch (err) {
       console.error('❌ Error loading tree data:', err);
@@ -843,7 +799,7 @@ export default function HeatingControl() {
       setLoadingDetails(true);
       setNodeDetails(null);
       
-      console.log('🟢 [DEBUG] fetchNodeDetails - Fetching asset:', nodeId);
+      debugLog('🟢 [DEBUG] fetchNodeDetails - Fetching asset:', nodeId);
       const response = await fetch(`/api/config/assets/${nodeId}`, {
         headers: {
           'Authorization': `Bearer ${session.token}`,
@@ -852,26 +808,26 @@ export default function HeatingControl() {
         cache: 'no-store'
       });
 
-      console.log('🟢 [DEBUG] fetchNodeDetails - Response status:', response.status, response.statusText);
-      console.log('🟢 [DEBUG] fetchNodeDetails - Response headers:', Object.fromEntries(response.headers.entries()));
+      debugLog('🟢 [DEBUG] fetchNodeDetails - Response status:', response.status, response.statusText);
+      debugLog('🟢 [DEBUG] fetchNodeDetails - Response headers:', Object.fromEntries(response.headers.entries()));
 
       if (!response.ok) {
         throw new Error('Failed to fetch node details');
       }
 
       const nodeData = await response.json();
-      console.log('🟢 [DEBUG] fetchNodeDetails - Full nodeData:', nodeData);
-      console.log('🟢 [DEBUG] fetchNodeDetails - nodeData.attributes:', nodeData?.attributes);
-      console.log('🟢 [DEBUG] fetchNodeDetails - runStatus from API:', nodeData?.attributes?.runStatus);
-      console.log('🟢 [DEBUG] fetchNodeDetails - runStatus type:', typeof nodeData?.attributes?.runStatus);
-      console.log('🟢 [DEBUG] fetchNodeDetails - runStatus === "PIR":', nodeData?.attributes?.runStatus === 'PIR');
-      console.log('🟢 [DEBUG] fetchNodeDetails - runStatus === "fix":', nodeData?.attributes?.runStatus === 'fix');
+      debugLog('🟢 [DEBUG] fetchNodeDetails - Full nodeData:', nodeData);
+      debugLog('🟢 [DEBUG] fetchNodeDetails - nodeData.attributes:', nodeData?.attributes);
+      debugLog('🟢 [DEBUG] fetchNodeDetails - runStatus from API:', nodeData?.attributes?.runStatus);
+      debugLog('🟢 [DEBUG] fetchNodeDetails - runStatus type:', typeof nodeData?.attributes?.runStatus);
+      debugLog('🟢 [DEBUG] fetchNodeDetails - runStatus === "PIR":', nodeData?.attributes?.runStatus === 'PIR');
+      debugLog('🟢 [DEBUG] fetchNodeDetails - runStatus === "fix":', nodeData?.attributes?.runStatus === 'fix');
       
       setNodeDetails(nodeData);
       
       // Update selectedNode.data to keep it in sync with nodeDetails
       if (selectedNode && selectedNode.id === nodeId) {
-        console.log('🟢 [DEBUG] fetchNodeDetails - Updating selectedNode.data with new runStatus:', nodeData?.attributes?.runStatus);
+        debugLog('🟢 [DEBUG] fetchNodeDetails - Updating selectedNode.data with new runStatus:', nodeData?.attributes?.runStatus);
         setSelectedNode(prev => {
           if (!prev || prev.id !== nodeId) return prev;
           return {
@@ -880,8 +836,7 @@ export default function HeatingControl() {
               ...prev.data,
               runStatus: nodeData?.attributes?.runStatus,
               fixValue: nodeData?.attributes?.fixValue,
-              schedulerPlan: nodeData?.attributes?.schedulerPlan,
-              schedulerPlanPIR: nodeData?.attributes?.schedulerPlanPIR
+              schedulerPlan: nodeData?.attributes?.schedulerPlan
             }
           };
         });
@@ -889,10 +844,10 @@ export default function HeatingControl() {
       
       // Update original runStatus from node details
       if (nodeData?.attributes?.runStatus !== undefined) {
-        console.log('🟢 [DEBUG] fetchNodeDetails - Setting originalRunStatus to:', nodeData.attributes.runStatus);
+        debugLog('🟢 [DEBUG] fetchNodeDetails - Setting originalRunStatus to:', nodeData.attributes.runStatus);
         setOriginalRunStatus(nodeData.attributes.runStatus);
       } else {
-        console.log('🟢 [DEBUG] fetchNodeDetails - runStatus is undefined in nodeData.attributes');
+        debugLog('🟢 [DEBUG] fetchNodeDetails - runStatus is undefined in nodeData.attributes');
       }
       
       // Update original scheduler plan from node details
@@ -907,18 +862,6 @@ export default function HeatingControl() {
         }
       } else {
         setOriginalSchedulerPlan([]);
-      }
-      const schedulerPlanPIRValue = nodeData?.attributes?.schedulerPlanPIR;
-      if (schedulerPlanPIRValue) {
-        try {
-          const planArrayPIR = JSON.parse(schedulerPlanPIRValue);
-          setOriginalSchedulerPlanPIR(Array.isArray(planArrayPIR) ? planArrayPIR : []);
-        } catch (error) {
-          console.error('Error parsing schedulerPlanPIR in fetchNodeDetails:', error);
-          setOriginalSchedulerPlanPIR([]);
-        }
-      } else {
-        setOriginalSchedulerPlanPIR([]);
       }
       
       // Update original settings values from node details (direkt aus ThingsBoard)
@@ -960,7 +903,7 @@ export default function HeatingControl() {
       const operationalMode = node.data?.operationalMode || node.operationalMode;
       const extTempDevice = node.data?.extTempDevice || node.extTempDevice;
       
-      console.log('Fetching temperature for operationalMode:', operationalMode, 'extTempDevice:', extTempDevice);
+      debugLog('Fetching temperature for operationalMode:', operationalMode, 'extTempDevice:', extTempDevice);
       
       if (operationalMode === 2) {
         // Use external temperature device for both temperature and target temperature
@@ -977,21 +920,21 @@ export default function HeatingControl() {
           
           if (response.ok) {
             const data = await response.json();
-            console.log('External temperature API response:', data);
+            debugLog('External temperature API response:', data);
             if (data.success && data.data && data.data.length > 0) {
               const latestData = data.data[0];
-              console.log('External temperature latest data:', latestData);
+              debugLog('External temperature latest data:', latestData);
               const temperature = latestData.sensor_temperature;
               const targetTemperature = latestData.target_temperature;
               const valveOpen = latestData.percent_valve_open;
               
-              console.log('External temperature raw value:', temperature);
-              console.log('External target temperature raw value:', targetTemperature);
-              console.log('External valve open raw value:', valveOpen);
+              debugLog('External temperature raw value:', temperature);
+              debugLog('External target temperature raw value:', targetTemperature);
+              debugLog('External valve open raw value:', valveOpen);
               
               if (temperature !== undefined && temperature !== null) {
                 const numTemp = Number(temperature);
-                console.log('External temperature converted:', numTemp);
+                debugLog('External temperature converted:', numTemp);
                 
                 if (!isNaN(numTemp) && numTemp > -50 && numTemp < 100) {
                   setCurrentTemperature({
@@ -1000,13 +943,13 @@ export default function HeatingControl() {
                     deviceId: extTempDevice
                   });
                 } else {
-                  console.warn('External temperature out of reasonable range:', numTemp);
+                  debugWarn('External temperature out of reasonable range:', numTemp);
                 }
               }
               
               if (targetTemperature !== undefined && targetTemperature !== null) {
                 const numTargetTemp = Number(targetTemperature);
-                console.log('External target temperature converted:', numTargetTemp);
+                debugLog('External target temperature converted:', numTargetTemp);
                 
                 if (!isNaN(numTargetTemp) && numTargetTemp > -50 && numTargetTemp < 100) {
                   setCurrentTargetTemperature({
@@ -1015,17 +958,17 @@ export default function HeatingControl() {
                     deviceId: extTempDevice
                   });
                 } else {
-                  console.warn('External target temperature out of reasonable range:', numTargetTemp);
+                  debugWarn('External target temperature out of reasonable range:', numTargetTemp);
                 }
               }
               
               // For operationalMode 2, calculate average valve open from all devices
               // instead of using external device valve open
               const relatedDevices = node.relatedDevices || node.data?.relatedDevices || [];
-              console.log('DEBUG: relatedDevices for valve open:', relatedDevices);
-              console.log('DEBUG: relatedDevices length:', relatedDevices.length);
+              debugLog('DEBUG: relatedDevices for valve open:', relatedDevices);
+              debugLog('DEBUG: relatedDevices length:', relatedDevices.length);
               if (relatedDevices.length > 0) {
-                console.log('Calculating average valve open from all devices for operationalMode 2');
+                debugLog('Calculating average valve open from all devices for operationalMode 2');
                 // Extract device IDs from relatedDevices objects
                 const deviceIds = relatedDevices.map(device => {
                   if (typeof device === 'string') {
@@ -1038,7 +981,7 @@ export default function HeatingControl() {
                   return null;
                 }).filter(id => id !== null);
                 
-                console.log('DEBUG: extracted device IDs:', deviceIds);
+                debugLog('DEBUG: extracted device IDs:', deviceIds);
                 
                 const valveOpenPromises = deviceIds.map(async (deviceId) => {
                   try {
@@ -1060,7 +1003,7 @@ export default function HeatingControl() {
                     }
                     return 0;
                   } catch (error) {
-                    console.warn(`Error fetching valve open for device ${deviceId}:`, error);
+                    debugWarn(`Error fetching valve open for device ${deviceId}:`, error);
                     return 0;
                   }
                 });
@@ -1071,14 +1014,14 @@ export default function HeatingControl() {
                   ? validValveValues.reduce((sum, val) => sum + val, 0) / validValveValues.length 
                   : 0;
                 
-                console.log('Average valve open from all devices:', averageValveOpen);
+                debugLog('Average valve open from all devices:', averageValveOpen);
                 setCurrentValveOpen({
                   value: averageValveOpen,
                   source: 'average',
                   deviceCount: validValveValues.length
                 });
               } else {
-                console.warn('No related devices found for valve open calculation');
+                debugWarn('No related devices found for valve open calculation');
                 setCurrentValveOpen({
                   value: 0,
                   source: 'average',
@@ -1105,11 +1048,11 @@ export default function HeatingControl() {
             if (data.success && data.data && data.data.length > 0) {
               const latestData = data.data[0];
               const temperature = latestData.sensor_temperature;
-              console.log('External temperature raw value:', temperature);
+              debugLog('External temperature raw value:', temperature);
               
               if (temperature !== undefined && temperature !== null) {
                 const numTemp = Number(temperature);
-                console.log('External temperature converted:', numTemp);
+                debugLog('External temperature converted:', numTemp);
                 
                 if (!isNaN(numTemp) && numTemp > -50 && numTemp < 100) {
                   setCurrentTemperature({
@@ -1118,7 +1061,7 @@ export default function HeatingControl() {
                     deviceId: extTempDevice
                   });
                 } else {
-                  console.warn('External temperature out of reasonable range:', numTemp);
+                  debugWarn('External temperature out of reasonable range:', numTemp);
                 }
               }
             }
@@ -1155,7 +1098,7 @@ export default function HeatingControl() {
                   return null;
                 }
               } catch (error) {
-                console.warn(`Error fetching target temperature for device ${deviceId}:`, error);
+                debugWarn(`Error fetching target temperature for device ${deviceId}:`, error);
               }
               return null;
             });
@@ -1179,7 +1122,7 @@ export default function HeatingControl() {
                   return null;
                 }
               } catch (error) {
-                console.warn(`Error fetching valve open for device ${deviceId}:`, error);
+                debugWarn(`Error fetching valve open for device ${deviceId}:`, error);
               }
               return null;
             });
@@ -1249,7 +1192,7 @@ export default function HeatingControl() {
                   }
                 }
               } catch (error) {
-                console.warn(`Error fetching temperature for device ${deviceId}:`, error);
+                debugWarn(`Error fetching temperature for device ${deviceId}:`, error);
               }
               return { temperature: null };
             });
@@ -1275,7 +1218,7 @@ export default function HeatingControl() {
                   }
                 }
               } catch (error) {
-                console.warn(`Error fetching target temperature for device ${deviceId}:`, error);
+                debugWarn(`Error fetching target temperature for device ${deviceId}:`, error);
               }
               return { targetTemperature: null };
             });
@@ -1301,7 +1244,7 @@ export default function HeatingControl() {
                   }
                 }
               } catch (error) {
-                console.warn(`Error fetching valve open for device ${deviceId}:`, error);
+                debugWarn(`Error fetching valve open for device ${deviceId}:`, error);
               }
               return { valveOpen: null };
             });
@@ -1309,15 +1252,15 @@ export default function HeatingControl() {
             const sensorResults = await Promise.all(sensorTemperaturePromises);
             const targetResults = await Promise.all(targetTemperaturePromises);
             const valveOpenResults = await Promise.all(valveOpenPromises);
-            console.log('Raw sensor temperature data from API:', sensorResults);
-            console.log('Raw target temperature data from API:', targetResults);
-            console.log('Raw valve open data from API:', valveOpenResults);
+            debugLog('Raw sensor temperature data from API:', sensorResults);
+            debugLog('Raw target temperature data from API:', targetResults);
+            debugLog('Raw valve open data from API:', valveOpenResults);
             
             const validTemperatures = sensorResults
               .filter(data => data.temperature !== null && data.temperature !== undefined)
               .map(data => {
                 const numTemp = Number(data.temperature);
-                console.log('Converting temperature:', data.temperature, 'to number:', numTemp);
+                debugLog('Converting temperature:', data.temperature, 'to number:', numTemp);
                 return numTemp;
               })
               .filter(temp => !isNaN(temp) && temp > -50 && temp < 100); // Reasonable temperature range
@@ -1326,7 +1269,7 @@ export default function HeatingControl() {
               .filter(data => data.targetTemperature !== null && data.targetTemperature !== undefined)
               .map(data => {
                 const numTemp = Number(data.targetTemperature);
-                console.log('Converting target temperature:', data.targetTemperature, 'to number:', numTemp);
+                debugLog('Converting target temperature:', data.targetTemperature, 'to number:', numTemp);
                 return numTemp;
               })
               .filter(temp => !isNaN(temp) && temp > -50 && temp < 100); // Reasonable temperature range
@@ -1335,29 +1278,29 @@ export default function HeatingControl() {
               .filter(data => data.valveOpen !== null && data.valveOpen !== undefined)
               .map(data => {
                 const numValveOpen = Number(data.valveOpen);
-                console.log('Converting valve open:', data.valveOpen, 'to number:', numValveOpen);
+                debugLog('Converting valve open:', data.valveOpen, 'to number:', numValveOpen);
                 return numValveOpen;
               })
               .filter(valve => !isNaN(valve) && valve >= 0 && valve <= 100); // Reasonable valve range
 
-            console.log('Valid temperatures after filtering:', validTemperatures);
-            console.log('Valid target temperatures after filtering:', validTargetTemperatures);
-            console.log('Valid valve open after filtering:', validValveOpen);
+            debugLog('Valid temperatures after filtering:', validTemperatures);
+            debugLog('Valid target temperatures after filtering:', validTargetTemperatures);
+            debugLog('Valid valve open after filtering:', validValveOpen);
             
             if (validTemperatures.length > 0) {
               const averageTemp = validTemperatures.reduce((sum, temp) => sum + temp, 0) / validTemperatures.length;
-              console.log('Calculated average temperature:', averageTemp);
+              debugLog('Calculated average temperature:', averageTemp);
               
               let avgTargetTemp = null;
               if (validTargetTemperatures.length > 0) {
                 avgTargetTemp = validTargetTemperatures.reduce((sum, temp) => sum + temp, 0) / validTargetTemperatures.length;
-                console.log('Calculated AVG target temperature:', avgTargetTemp);
+                debugLog('Calculated AVG target temperature:', avgTargetTemp);
               }
               
               let avgValveOpen = null;
               if (validValveOpen.length > 0) {
                 avgValveOpen = validValveOpen.reduce((sum, valve) => sum + valve, 0) / validValveOpen.length;
-                console.log('Calculated AVG valve open:', avgValveOpen);
+                debugLog('Calculated AVG valve open:', avgValveOpen);
               }
               
               setCurrentTemperature({
@@ -1403,24 +1346,24 @@ export default function HeatingControl() {
       const operationalMode = node.data?.operationalMode || node.operationalMode;
       const extTempDevice = node.data?.extTempDevice || node.extTempDevice;
       
-      console.log('Fetching temperature history for operationalMode:', operationalMode, 'extTempDevice:', extTempDevice);
+      debugLog('Fetching temperature history for operationalMode:', operationalMode, 'extTempDevice:', extTempDevice);
       
       // Calculate time range based on selected time range or provided timeRange parameter
       const endTime = Date.now();
       const timeRangeToUse = timeRange || selectedTimeRange;
       const startTime = getTimeRangeInMs(timeRangeToUse);
       
-      console.log('Fetching temperature history for operationalMode:', operationalMode, 'extTempDevice:', extTempDevice);
-      console.log('Time range - Start:', new Date(startTime).toISOString(), 'End:', new Date(endTime).toISOString());
-      console.log('Time range in days:', (endTime - startTime) / (24 * 60 * 60 * 1000));
-      console.log('Using time range:', timeRangeToUse);
+      debugLog('Fetching temperature history for operationalMode:', operationalMode, 'extTempDevice:', extTempDevice);
+      debugLog('Time range - Start:', new Date(startTime).toISOString(), 'End:', new Date(endTime).toISOString());
+      debugLog('Time range in days:', (endTime - startTime) / (24 * 60 * 60 * 1000));
+      debugLog('Using time range:', timeRangeToUse);
       
       // Convert timestamps to ISO date strings for the reporting API
       const startDate = new Date(startTime).toISOString().split('T')[0];
       // Use current date as endDate to ensure we get data up to today
       const endDate = new Date().toISOString().split('T')[0];
       
-      console.log('API query parameters:', {
+      debugLog('API query parameters:', {
         startDate,
         endDate,
         currentTime: new Date().toISOString(),
@@ -1443,16 +1386,16 @@ export default function HeatingControl() {
           
           if (response.ok) {
             const data = await response.json();
-            console.log('External temperature history API response:', data);
+            debugLog('External temperature history API response:', data);
             if (data.success && data.data && data.data.length > 0) {
-              console.log('External temperature history raw data sample:', data.data.slice(0, 3));
-              console.log('External temperature history raw data sample (last 3):', data.data.slice(-3));
-              console.log('Total data points received:', data.data.length);
+              debugLog('External temperature history raw data sample:', data.data.slice(0, 3));
+              debugLog('External temperature history raw data sample (last 3):', data.data.slice(-3));
+              debugLog('Total data points received:', data.data.length);
               
               // Process temperature history
               // First sort the raw data by bucket_10m to ensure chronological order
               const sortedData = data.data.sort((a, b) => new Date(a.bucket_10m) - new Date(b.bucket_10m));
-              console.log('Raw data time range:', {
+              debugLog('Raw data time range:', {
                 first: sortedData[0]?.bucket_10m,
                 last: sortedData[sortedData.length - 1]?.bucket_10m
               });
@@ -1463,7 +1406,7 @@ export default function HeatingControl() {
                 const itemTime = new Date(item.bucket_10m);
                 return itemTime <= currentTime;
               });
-              console.log('Filtered data time range:', {
+              debugLog('Filtered data time range:', {
                 first: filteredData[0]?.bucket_10m,
                 last: filteredData[filteredData.length - 1]?.bucket_10m,
                 currentTime: currentTime.toISOString()
@@ -1493,10 +1436,10 @@ export default function HeatingControl() {
               const relatedDevices = node.relatedDevices || node.data?.relatedDevices || [];
               let valveOpenHistoryData = [];
               
-              console.log('DEBUG: relatedDevices for valve open history:', relatedDevices);
-              console.log('DEBUG: relatedDevices length for history:', relatedDevices.length);
+              debugLog('DEBUG: relatedDevices for valve open history:', relatedDevices);
+              debugLog('DEBUG: relatedDevices length for history:', relatedDevices.length);
               if (relatedDevices.length > 0) {
-                console.log('Calculating average valve open history from all devices for operationalMode 2');
+                debugLog('Calculating average valve open history from all devices for operationalMode 2');
                 
                 // Extract device IDs from relatedDevices objects
                 const deviceIds = relatedDevices.map(device => {
@@ -1510,7 +1453,7 @@ export default function HeatingControl() {
                   return null;
                 }).filter(id => id !== null);
                 
-                console.log('DEBUG: extracted device IDs for history:', deviceIds);
+                debugLog('DEBUG: extracted device IDs for history:', deviceIds);
                 
                 // Fetch valve open data from all devices
                 const allDeviceValveData = await Promise.all(
@@ -1538,7 +1481,7 @@ export default function HeatingControl() {
                       }
                       return [];
                     } catch (error) {
-                      console.warn(`Error fetching valve open history for device ${deviceId}:`, error);
+                      debugWarn(`Error fetching valve open history for device ${deviceId}:`, error);
                       return [];
                     }
                   })
@@ -1568,20 +1511,20 @@ export default function HeatingControl() {
                   }))
                   .sort((a, b) => a.timestamp - b.timestamp);
               } else {
-                console.warn('No related devices found for valve open history calculation');
+                debugWarn('No related devices found for valve open history calculation');
                 valveOpenHistoryData = [];
               }
               
-              console.log('External temperature history:', historyData);
-              console.log('External target temperature history:', targetHistoryData);
-              console.log('External valve open history:', valveOpenHistoryData);
-              console.log('Temperature data points count:', historyData.length);
-              console.log('Target temperature data points count:', targetHistoryData.length);
-              console.log('Valve open data points count:', valveOpenHistoryData.length);
+              debugLog('External temperature history:', historyData);
+              debugLog('External target temperature history:', targetHistoryData);
+              debugLog('External valve open history:', valveOpenHistoryData);
+              debugLog('Temperature data points count:', historyData.length);
+              debugLog('Target temperature data points count:', targetHistoryData.length);
+              debugLog('Valve open data points count:', valveOpenHistoryData.length);
               
               // Debug: Show time range of processed data
               if (historyData.length > 0) {
-                console.log('Processed temperature data time range:', {
+                debugLog('Processed temperature data time range:', {
                   first: new Date(historyData[0].timestamp).toLocaleString('de-DE'),
                   last: new Date(historyData[historyData.length - 1].timestamp).toLocaleString('de-DE'),
                   current: new Date().toLocaleString('de-DE')
@@ -1630,8 +1573,8 @@ export default function HeatingControl() {
                 }))
                 .filter(item => !isNaN(item.temperature) && item.temperature > -50 && item.temperature < 100);
               
-              console.log('External temperature history:', historyData);
-              console.log('Temperature data points count:', historyData.length);
+              debugLog('External temperature history:', historyData);
+              debugLog('Temperature data points count:', historyData.length);
               setTemperatureHistory(historyData);
             }
           }
@@ -1648,7 +1591,7 @@ export default function HeatingControl() {
           }).filter(id => id);
           
           if (deviceIds.length > 0) {
-            console.log('Fetching target temperature and valve open data for', deviceIds.length, 'devices');
+            debugLog('Fetching target temperature and valve open data for', deviceIds.length, 'devices');
             
             const allTargetTemperatureData = [];
             const allValveOpenData = [];
@@ -1672,7 +1615,7 @@ export default function HeatingControl() {
                   }
                 }
               } catch (error) {
-                console.warn(`Error fetching data for device ${deviceId}:`, error);
+                debugWarn(`Error fetching data for device ${deviceId}:`, error);
               }
               return [];
             });
@@ -1710,8 +1653,8 @@ export default function HeatingControl() {
               .filter(item => !isNaN(item.valveOpen) && item.valveOpen >= 0 && item.valveOpen <= 100)
               .sort((a, b) => a.timestamp - b.timestamp);
             
-            console.log('AVG target temperature history:', targetHistoryData);
-            console.log('AVG valve open history:', valveOpenHistoryData);
+            debugLog('AVG target temperature history:', targetHistoryData);
+            debugLog('AVG valve open history:', valveOpenHistoryData);
             setTargetTemperatureHistory(targetHistoryData);
             setValveOpenHistory(valveOpenHistoryData);
           }
@@ -1728,7 +1671,7 @@ export default function HeatingControl() {
           }).filter(id => id);
           
           if (deviceIds.length > 0) {
-            console.log('Fetching temperature, target temperature and valve open data for', deviceIds.length, 'devices');
+            debugLog('Fetching temperature, target temperature and valve open data for', deviceIds.length, 'devices');
             
             // Fetch data for all related devices
             const devicePromises = deviceIds.map(async (deviceId) => {
@@ -1749,7 +1692,7 @@ export default function HeatingControl() {
                   }
                 }
               } catch (error) {
-                console.warn(`Error fetching data for device ${deviceId}:`, error);
+                debugWarn(`Error fetching data for device ${deviceId}:`, error);
               }
               return [];
             });
@@ -1833,14 +1776,14 @@ export default function HeatingControl() {
               .filter(item => item.valveOpen !== null)
               .sort((a, b) => a.timestamp - b.timestamp);
             
-            console.log('Average temperature history:', historyData);
-            console.log('AVG target temperature history:', targetHistoryData);
-            console.log('AVG valve open history:', valveOpenHistoryData);
-            console.log('Temperature data points count:', historyData.length);
-            console.log('Target temperature data points count:', targetHistoryData.length);
-            console.log('Valve open data points count:', valveOpenHistoryData.length);
-            console.log('First temperature data point:', historyData[0]);
-            console.log('Last temperature data point:', historyData[historyData.length - 1]);
+            debugLog('Average temperature history:', historyData);
+            debugLog('AVG target temperature history:', targetHistoryData);
+            debugLog('AVG valve open history:', valveOpenHistoryData);
+            debugLog('Temperature data points count:', historyData.length);
+            debugLog('Target temperature data points count:', targetHistoryData.length);
+            debugLog('Valve open data points count:', valveOpenHistoryData.length);
+            debugLog('First temperature data point:', historyData[0]);
+            debugLog('Last temperature data point:', historyData[historyData.length - 1]);
             setTemperatureHistory(historyData);
             setTargetTemperatureHistory(targetHistoryData);
             setValveOpenHistory(valveOpenHistoryData);
@@ -1908,10 +1851,10 @@ export default function HeatingControl() {
         return devices;
       }
 
-      console.log('Fetching telemetry for device IDs:', deviceIds);
+      debugLog('Fetching telemetry for device IDs:', deviceIds);
 
-      // Define the attributes we want to fetch (pir, light für ws202)
-      const attributes = ['sensorTemperature', 'targetTemperature', 'PercentValveOpen', 'batteryVoltage', 'signalQuality', 'hall_sensor_state', 'pir', 'light'];
+      // Define the attributes we want to fetch
+      const attributes = ['sensorTemperature', 'targetTemperature', 'PercentValveOpen', 'batteryVoltage', 'signalQuality', 'hall_sensor_state'];
       
       // Fetch telemetry data for each device individually
       const devicesWithTelemetry = await Promise.all(
@@ -1941,14 +1884,14 @@ export default function HeatingControl() {
                   const detailsData = await detailsResponse.json();
                   if (detailsData.success && detailsData.data?.telemetry?.current?.hall_sensor_state !== undefined) {
                     telemetry.hall_sensor_state = detailsData.data.telemetry.current.hall_sensor_state;
-                    console.log(`hall_sensor_state from details API for device ${deviceId}:`, {
+                    debugLog(`hall_sensor_state from details API for device ${deviceId}:`, {
                       rawValue: telemetry.hall_sensor_state,
                       type: typeof telemetry.hall_sensor_state
                     });
                   }
                 }
               } catch (error) {
-                console.warn(`Error fetching hall_sensor_state from details API for device ${deviceId}:`, error);
+                debugWarn(`Error fetching hall_sensor_state from details API for device ${deviceId}:`, error);
               }
             }
             
@@ -1980,7 +1923,7 @@ export default function HeatingControl() {
                       
                       // Debug logging for signalQuality
                       if (attribute === 'signalQuality') {
-                        console.log(`SignalQuality for device ${deviceId}:`, {
+                        debugLog(`SignalQuality for device ${deviceId}:`, {
                           rawValue: latestValue.value,
                           type: typeof latestValue.value,
                           fullData: latestValue
@@ -1988,17 +1931,17 @@ export default function HeatingControl() {
                       }
                     }
                   } else {
-                    console.log(`No data found for ${attribute} on device ${deviceId}`);
+                    debugLog(`No data found for ${attribute} on device ${deviceId}`);
                   }
                 } else {
-                  console.log(`API error for ${attribute} on device ${deviceId}:`, response.status, response.statusText);
+                  debugLog(`API error for ${attribute} on device ${deviceId}:`, response.status, response.statusText);
                 }
               } catch (error) {
-                console.warn(`Error fetching ${attribute} for device ${deviceId}:`, error);
+                debugWarn(`Error fetching ${attribute} for device ${deviceId}:`, error);
               }
             }
             
-            console.log('Telemetry data for device', deviceId, ':', telemetry);
+            debugLog('Telemetry data for device', deviceId, ':', telemetry);
 
             // Update device active status based on telemetry data
             let updatedActive = device.active;
@@ -2012,13 +1955,13 @@ export default function HeatingControl() {
               active: updatedActive
             };
           } catch (error) {
-            console.warn(`Error fetching telemetry for device ${deviceId}:`, error);
+            debugWarn(`Error fetching telemetry for device ${deviceId}:`, error);
             return device;
           }
         })
       );
 
-      console.log('Devices with telemetry:', devicesWithTelemetry);
+      debugLog('Devices with telemetry:', devicesWithTelemetry);
       return devicesWithTelemetry;
     } catch (error) {
       console.error('Error fetching telemetry data:', error);
@@ -2060,7 +2003,7 @@ export default function HeatingControl() {
               
               // Debug logging for first few values
               if (debugCount < 3) {
-                console.log('hall_sensor_state conversion:', {
+                debugLog('hall_sensor_state conversion:', {
                   originalValue: originalValue,
                   type: typeof originalValue,
                   valueStr: valueStr,
@@ -2097,8 +2040,8 @@ export default function HeatingControl() {
           
           // Debug: Log first few converted values
           if (attribute === 'hall_sensor_state' && chartData.length > 0) {
-            console.log('hall_sensor_state converted data sample:', chartData.slice(0, 5));
-            console.log('hall_sensor_state value range:', {
+            debugLog('hall_sensor_state converted data sample:', chartData.slice(0, 5));
+            debugLog('hall_sensor_state value range:', {
               min: Math.min(...chartData.map(d => d.value)),
               max: Math.max(...chartData.map(d => d.value)),
               uniqueValues: [...new Set(chartData.map(d => d.value))]
@@ -2127,10 +2070,7 @@ export default function HeatingControl() {
       'batteryVoltage': 'Batteriespannung',
       'PercentValveOpen': 'Ventilöffnung',
       'signalQuality': 'Signalqualität',
-      'hall_sensor_state': 'Hall Sensor',
-      'pir': 'pir, light',
-      'light': 'pir, light',
-      'v_str': 'pir, light'
+      'hall_sensor_state': 'Hall Sensor'
     };
     return displayNames[attribute] || attribute;
   };
@@ -2160,13 +2100,13 @@ export default function HeatingControl() {
 
   const fetchDevices = useCallback(async (nodeId) => {
     if (!nodeId) {
-      console.log('fetchDevices: Missing nodeId');
+      debugLog('fetchDevices: Missing nodeId');
       return { assigned: [] };
     }
     
     try {
       setLoadingDevices(true);
-      console.log('fetchDevices: Starting to fetch devices for node:', nodeId);
+      debugLog('fetchDevices: Starting to fetch devices for node:', nodeId);
       
       // Get devices from the selected node's relatedDevices
       const findNodeInTree = (nodes, targetId) => {
@@ -2185,26 +2125,26 @@ export default function HeatingControl() {
       };
       
       const node = findNodeInTree(treeData, nodeId);
-      console.log('Found node:', node);
-      console.log('Node relatedDevices:', node?.relatedDevices);
+      debugLog('Found node:', node);
+      debugLog('Node relatedDevices:', node?.relatedDevices);
       
       let devices = [];
       if (node && node.relatedDevices) {
         devices = node.relatedDevices;
-        console.log('Related devices from node:', devices);
+        debugLog('Related devices from node:', devices);
       } else {
-        console.log('No relatedDevices found in node');
+        debugLog('No relatedDevices found in node');
       }
       
       // Also try to get additional device info from reporting API if we have devices
       if (devices.length > 0) {
-        console.log('Fetching additional telemetry data for devices...');
+        debugLog('Fetching additional telemetry data for devices...');
         const devicesWithTelemetry = await fetchTelemetryForDevices(devices);
-        console.log('Devices with telemetry:', devicesWithTelemetry);
+        debugLog('Devices with telemetry:', devicesWithTelemetry);
         return { assigned: devicesWithTelemetry };
       }
       
-      console.log('Returning devices without telemetry:', devices);
+      debugLog('Returning devices without telemetry:', devices);
       return { assigned: devices };
     } catch (err) {
       console.error('Error fetching devices:', err);
@@ -2215,11 +2155,11 @@ export default function HeatingControl() {
   }, [treeData, fetchTelemetryForDevices]);
 
   const handleNodeSelect = (node) => {
-    console.log('Node selected:', node);
-    console.log('Node data:', node.data);
-    console.log('Node operationalMode:', node.operationalMode);
-    console.log('Node hasDevices:', node.hasDevices);
-    console.log('=== hasDevices VALUE ===', node.hasDevices, '=== TYPE ===', typeof node.hasDevices);
+    debugLog('Node selected:', node);
+    debugLog('Node data:', node.data);
+    debugLog('Node operationalMode:', node.operationalMode);
+    debugLog('Node hasDevices:', node.hasDevices);
+    debugLog('=== hasDevices VALUE ===', node.hasDevices, '=== TYPE ===', typeof node.hasDevices);
     
     // Set loading state and clear previous data
     setLoadingNodeData(true);
@@ -2231,13 +2171,13 @@ export default function HeatingControl() {
     
     // Set active tab based on hasDevices - check both node.hasDevices and node.data.hasDevices
     const hasDevices = node.hasDevices !== undefined ? node.hasDevices : (node.data?.hasDevices !== undefined ? node.data.hasDevices : false);
-    console.log('Final hasDevices value:', hasDevices);
+    debugLog('Final hasDevices value:', hasDevices);
     
     if (!hasDevices) {
-      console.log('Setting activeTab to "empty" (Übersicht) for node without devices');
+      debugLog('Setting activeTab to "empty" (Übersicht) for node without devices');
       setActiveTab('empty');  // Übersicht für Nodes ohne Geräte
     } else {
-      console.log('Setting activeTab to "overview" (Verlauf) for node with devices');
+      debugLog('Setting activeTab to "overview" (Verlauf) for node with devices');
       setActiveTab('overview');  // Verlauf für Nodes mit Geräten
     }
     
@@ -2272,14 +2212,14 @@ export default function HeatingControl() {
     const relatedDevices = node.relatedDevices || node.data?.relatedDevices;
     
     if (relatedDevices && relatedDevices.length > 0) {
-      console.log('Loading devices from node.relatedDevices:', relatedDevices);
+      debugLog('Loading devices from node.relatedDevices:', relatedDevices);
       setDevices(relatedDevices);
       // Fetch telemetry data for the devices
       fetchTelemetryForDevices(relatedDevices).then(devicesWithTelemetry => {
         setDevices(devicesWithTelemetry);
       });
     } else {
-      console.log('No relatedDevices in selected node, fetching from API...');
+      debugLog('No relatedDevices in selected node, fetching from API...');
       fetchDevices(node.id).then(result => {
         if (result && result.assigned) {
           setDevices(result.assigned);
@@ -2389,7 +2329,7 @@ export default function HeatingControl() {
             runStatus = assetData.attributes?.runStatus || null;
           }
         } catch (error) {
-          console.warn(`Error fetching runStatus for node ${node.id}:`, error);
+          debugWarn(`Error fetching runStatus for node ${node.id}:`, error);
         }
       }
       return { currentTemp: null, targetTemp: null, valvePosition: null, batteryVoltage: null, rssi: null, runStatus: runStatus || node.runStatus || null };
@@ -2414,7 +2354,7 @@ export default function HeatingControl() {
               runStatus = assetData.attributes?.runStatus || null;
             }
           } catch (error) {
-            console.warn(`Error fetching runStatus for node ${node.id}:`, error);
+            debugWarn(`Error fetching runStatus for node ${node.id}:`, error);
           }
         }
         return { currentTemp: null, targetTemp: null, valvePosition: null, batteryVoltage: null, rssi: null, runStatus: runStatus || node.runStatus || null };
@@ -2430,7 +2370,7 @@ export default function HeatingControl() {
             runStatus = assetData.attributes?.runStatus || null;
           }
         } catch (error) {
-          console.warn(`Error fetching runStatus for node ${node.id}:`, error);
+          debugWarn(`Error fetching runStatus for node ${node.id}:`, error);
         }
       }
 
@@ -2460,7 +2400,7 @@ export default function HeatingControl() {
             }
           }
         } catch (error) {
-          console.warn(`Error fetching telemetry for device ${deviceId}:`, error);
+          debugWarn(`Error fetching telemetry for device ${deviceId}:`, error);
         }
         return { sensorTemperature: null, targetTemperature: null, valvePosition: null, batteryVoltage: null, rssi: null };
       });
@@ -2533,7 +2473,7 @@ export default function HeatingControl() {
             runStatus = assetData.attributes?.runStatus || null;
           }
         } catch (fetchError) {
-          console.warn(`Error fetching runStatus for node ${node.id}:`, fetchError);
+          debugWarn(`Error fetching runStatus for node ${node.id}:`, fetchError);
         }
       }
       return { currentTemp: null, targetTemp: null, valvePosition: null, batteryVoltage: null, rssi: null, runStatus: runStatus || node.runStatus || null };
@@ -2593,6 +2533,8 @@ export default function HeatingControl() {
     const minTimestamp = Math.min(...allTimestamps);
     const maxTimestamp = Math.max(...allTimestamps);
     
+    debugLog('Synchronizing data from', new Date(minTimestamp), 'to', new Date(maxTimestamp));
+    
     // Erstelle 10-Minuten-Zeitscheiben
     const timeSlices = [];
     const intervalMs = 10 * 60 * 1000; // 10 Minuten in Millisekunden
@@ -2600,6 +2542,8 @@ export default function HeatingControl() {
     for (let timestamp = minTimestamp; timestamp <= maxTimestamp; timestamp += intervalMs) {
       timeSlices.push(timestamp);
     }
+    
+    debugLog('Created', timeSlices.length, 'time slices (10-minute intervals)');
     
     // Hilfsfunktion: Finde den nächstgelegenen Wert zu einem Zeitpunkt
     const findNearestValue = (dataArray, targetTimestamp, maxDistanceMs = 30 * 60 * 1000) => {
@@ -2655,6 +2599,12 @@ export default function HeatingControl() {
       }
     });
     
+    debugLog('Synchronized data points:', {
+      temperature: synchronizedData.temperatureData.length,
+      targetTemperature: synchronizedData.targetTemperatureData.length,
+      valveOpen: synchronizedData.valveOpenData.length
+    });
+    
     return synchronizedData;
   };
 
@@ -2665,9 +2615,18 @@ export default function HeatingControl() {
     
     const timeRangeToUse = timeRange || selectedTimeRange;
     
+    debugLog('Chart data - temperatureData length:', temperatureData.length);
+    debugLog('Chart data - targetTemperatureData length:', targetTemperatureData.length);
+    debugLog('Chart data - valveOpenData length:', valveOpenData.length);
+    debugLog('Chart data - valveOpenData sample:', valveOpenData.slice(0, 3));
+    
     const hasTemperatureData = temperatureData.length > 0;
     const hasTargetTemperatureData = targetTemperatureData.length > 0;
     const hasValveOpenData = valveOpenData.length > 0;
+    
+    debugLog('Chart flags - hasTemperatureData:', hasTemperatureData);
+    debugLog('Chart flags - hasTargetTemperatureData:', hasTargetTemperatureData);
+    debugLog('Chart flags - hasValveOpenData:', hasValveOpenData);
     
     if (!hasTemperatureData && !hasTargetTemperatureData && !hasValveOpenData) {
       return {
@@ -2741,6 +2700,12 @@ export default function HeatingControl() {
         backgroundColor: 'transparent'
       };
     }
+
+    debugLog('Synchronized chart data points:', {
+      temperature: temperatureData.length,
+      targetTemperature: targetTemperatureData.length,
+      valveOpen: valveOpenData.length
+    });
     
     return {
       legend: {
@@ -2919,8 +2884,13 @@ export default function HeatingControl() {
           fontSize: 12
         },
         formatter: function(params) {
+          debugLog('Tooltip params:', params);
+          
           if (params && params.length > 0) {
+            // Get the timestamp from the first parameter
             const timestamp = params[0].axisValue;
+            debugLog('Tooltip timestamp:', timestamp, 'Date:', new Date(timestamp));
+            
             const date = new Date(timestamp).toLocaleString('de-DE', {
               day: '2-digit',
               month: '2-digit',
@@ -2931,11 +2901,15 @@ export default function HeatingControl() {
             let tooltipText = `<div style="font-weight: bold; margin-bottom: 5px;">${date}</div>`;
             
             params.forEach((param, index) => {
+              debugLog(`Param ${index}:`, param);
+              
               // For time series data, param.value is an array [timestamp, value]
               const value = Array.isArray(param.value) ? param.value[1] : param.value;
               const seriesName = param.seriesName;
               const color = param.color;
               const displayValue = !isNaN(Number(value)) ? Number(value).toFixed(1) : 'N/A';
+              
+              debugLog(`Series ${index}: ${seriesName}, value: ${value}, displayValue: ${displayValue}`);
               
               // Determine unit based on series name
               const unit = seriesName === 'Ventilöffnung' ? '%' : '°C';
@@ -2947,7 +2921,7 @@ export default function HeatingControl() {
               </div>`;
             });
             
-            console.log('Final tooltip text:', tooltipText);
+            debugLog('Final tooltip text:', tooltipText);
             return tooltipText;
           }
           return '';
@@ -3082,19 +3056,19 @@ export default function HeatingControl() {
       const websocket = new WebSocket(wsUrl);
       
       websocket.onmessage = (event) => {
-        console.log('ws message: ' + event.data);
+        debugLog('ws message: ' + event.data);
       };
       
       websocket.onopen = () => {
-        console.log('ws open');
+        debugLog('ws open');
       };
       
       websocket.onclose = () => {
-        console.log('ws close');
+        debugLog('ws close');
       };
       
       websocket.onerror = (event) => {
-        console.log('ws error: ' + event);
+        debugLog('ws error: ' + event);
       };
 
       setWs(websocket);
@@ -3102,9 +3076,9 @@ export default function HeatingControl() {
       // Check connection status after 1 second
       setTimeout(() => {
         if (websocket.readyState === WebSocket.OPEN) {
-          console.log("WS Verbindung ist stabil 👍");
+          debugLog("WS Verbindung ist stabil 👍");
         } else {
-          console.warn("WS ist NICHT offen, Zustand:", websocket.readyState);
+          debugWarn("WS ist NICHT offen, Zustand:", websocket.readyState);
         }
       }, 1000);
 
@@ -3126,21 +3100,6 @@ export default function HeatingControl() {
       fetchTreeData();
     }
   }, [customerData?.customerid, fetchTreeData]);
-
-  useEffect(() => {
-    if (!customerData?.customerid || !session?.token) {
-      setUsePresenceSensor(false);
-      return;
-    }
-    let cancelled = false;
-    fetch(`/api/config/customers/${customerData.customerid}/attributes`, {
-      headers: { 'Authorization': `Bearer ${session.token}` }
-    })
-      .then(res => res.ok ? res.json() : { usePresenceSensor: false })
-      .then(data => { if (!cancelled) setUsePresenceSensor(!!data?.usePresenceSensor); })
-      .catch(() => { if (!cancelled) setUsePresenceSensor(false); });
-    return () => { cancelled = true; };
-  }, [customerData?.customerid, session?.token]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -3176,25 +3135,6 @@ export default function HeatingControl() {
       }
     }
   }, [activeTab, selectedNode, getAllSubordinateNodes, fetchSubordinateTelemetry]);
-
-  // Gerätestatus (active) wie config/devices: gleiche API laden für korrekte Aktiv/Inaktiv-Anzeige (Tab Übersicht, Verlauf, Details, Zimmer-Kacheln)
-  useEffect(() => {
-    const needStatus = (activeTab === 'empty' || activeTab === 'overview' || activeTab === 'details') && selectedNode && session?.token;
-    if (!needStatus) return;
-    let cancelled = false;
-    fetch('/api/config/devices', {
-      headers: { 'Authorization': `Bearer ${session.token}` }
-    })
-      .then(res => res.ok ? res.json() : [])
-      .then(list => {
-        if (!cancelled) {
-          setAllDevicesForStatus(Array.isArray(list) ? list : []);
-          setLastDevicesStatusUpdate(Date.now());
-        }
-      })
-      .catch(() => { if (!cancelled) setAllDevicesForStatus([]); });
-    return () => { cancelled = true; };
-  }, [activeTab, selectedNode, session?.token]);
 
   // Update settings values from nodeDetails when they are loaded (direkt aus ThingsBoard)
   // Diese Werte werden immer direkt aus ThingsBoard geholt, nicht aus dem tree Feld
@@ -3244,11 +3184,14 @@ export default function HeatingControl() {
   useEffect(() => {
     if (treeData && treeData.length > 0) {
       const firstLevelNodeIds = getFirstLevelNodeIds(treeData);
+      debugLog('Tree data loaded, expanding Level 1:', firstLevelNodeIds);
+      debugLog('Current openNodes before setting:', openNodes);
       setOpenNodes(firstLevelNodeIds);
       setForceExpand(true);
       
       // Force re-render after a short delay to ensure the tree is ready
       setTimeout(() => {
+        debugLog('Setting openNodes after delay:', firstLevelNodeIds);
         setOpenNodes(firstLevelNodeIds);
         setForceExpand(true);
       }, 100);
@@ -3260,6 +3203,8 @@ export default function HeatingControl() {
     if (selectedNode && treeData && treeData.length > 0) {
       const pathToNode = getPathToNode(selectedNode.id);
       if (pathToNode) {
+        debugLog('Selected node:', selectedNode.label);
+        debugLog('Path to selected node:', pathToNode);
         setOpenNodes(pathToNode);
         setForceExpand(false); // Disable force expand, use specific path
       }
@@ -3293,7 +3238,7 @@ export default function HeatingControl() {
     if (!session?.token || !deviceIds.length) return;
 
     try {
-      console.log('🌡️ Fetching temperatures via API for devices:', deviceIds);
+      debugLog('🌡️ Fetching temperatures via API for devices:', deviceIds);
       
       const temperaturePromises = deviceIds.map(async (deviceId) => {
         try {
@@ -3323,7 +3268,7 @@ export default function HeatingControl() {
             }
           }
         } catch (error) {
-          console.warn(`Error fetching temperature for device ${deviceId}:`, error);
+          debugWarn(`Error fetching temperature for device ${deviceId}:`, error);
         }
       });
 
@@ -3344,13 +3289,13 @@ export default function HeatingControl() {
       }).filter(id => id);
 
       if (deviceIds.length > 0) {
-        console.log('🌡️ Fetching temperatures via API...');
+        debugLog('🌡️ Fetching temperatures via API...');
         // Fetch temperatures via API
         fetchTemperaturesViaAPI(deviceIds);
         
         // Set up automatic refresh every 30 seconds
         const interval = setInterval(() => {
-          console.log('🔄 Auto-refreshing temperatures...');
+          debugLog('🔄 Auto-refreshing temperatures...');
           fetchTemperaturesViaAPI(deviceIds);
         }, 30000);
         
@@ -3705,7 +3650,10 @@ export default function HeatingControl() {
                   ref={treeRef}
                   tree={(() => {
                     const filtered = getFilteredTreeData();
-                    return convertToTreeViewFormat(filtered);
+                    const converted = convertToTreeViewFormat(filtered);
+                    debugLog('Filtered tree data:', filtered);
+                    debugLog('Converted tree data:', converted);
+                    return converted;
                   })()}
                   initialOpen={openNodes}  
                   rootId={0}
@@ -3812,13 +3760,13 @@ export default function HeatingControl() {
                               const runStatus = nodeDetails?.attributes?.runStatus ?? selectedNode.data?.runStatus ?? selectedNode.runStatus;
                               const fixValue = nodeDetails?.attributes?.fixValue ?? selectedNode.data?.fixValue ?? selectedNode.fixValue;
                               
-                              console.log('🟡 [DEBUG] Opening settings tab');
-                              console.log('🟡 [DEBUG] nodeDetails?.attributes?.runStatus:', nodeDetails?.attributes?.runStatus);
-                              console.log('🟡 [DEBUG] selectedNode.data?.runStatus:', selectedNode.data?.runStatus);
-                              console.log('🟡 [DEBUG] selectedNode.runStatus:', selectedNode.runStatus);
-                              console.log('🟡 [DEBUG] Final runStatus (preferring nodeDetails):', runStatus);
-                              console.log('🟡 [DEBUG] runStatus === "PIR":', runStatus === 'PIR');
-                              console.log('🟡 [DEBUG] runStatus === "fix":', runStatus === 'fix');
+                              debugLog('🟡 [DEBUG] Opening settings tab');
+                              debugLog('🟡 [DEBUG] nodeDetails?.attributes?.runStatus:', nodeDetails?.attributes?.runStatus);
+                              debugLog('🟡 [DEBUG] selectedNode.data?.runStatus:', selectedNode.data?.runStatus);
+                              debugLog('🟡 [DEBUG] selectedNode.runStatus:', selectedNode.runStatus);
+                              debugLog('🟡 [DEBUG] Final runStatus (preferring nodeDetails):', runStatus);
+                              debugLog('🟡 [DEBUG] runStatus === "PIR":', runStatus === 'PIR');
+                              debugLog('🟡 [DEBUG] runStatus === "fix":', runStatus === 'fix');
                               
                               // Set original values
                               setOriginalRunStatus(runStatus);
@@ -3833,8 +3781,8 @@ export default function HeatingControl() {
                                 setTempSliderValue((minTemp + maxTemp) / 2);
                               }
                               
-                              // Load schedule data if customer data is available AND current status is 'schedule' or 'pir'
-                              if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runStatus))) {
+                              // Load schedule data if customer data is available AND current status is 'schedule'
+                              if (customerData?.customerid && runStatus === 'schedule') {
                                 fetchScheduleData(customerData.customerid);
                               }
                               
@@ -3850,18 +3798,6 @@ export default function HeatingControl() {
                                 }
                               } else {
                                 setOriginalSchedulerPlan([]);
-                              }
-                              const schedulerPlanPIRValue = nodeDetails?.attributes?.schedulerPlanPIR || selectedNode.data?.schedulerPlanPIR;
-                              if (schedulerPlanPIRValue) {
-                                try {
-                                  const planArrayPIR = JSON.parse(schedulerPlanPIRValue);
-                                  setOriginalSchedulerPlanPIR(Array.isArray(planArrayPIR) ? planArrayPIR : []);
-                                } catch (error) {
-                                  console.error('Error parsing original schedulerPlanPIR:', error);
-                                  setOriginalSchedulerPlanPIR([]);
-                                }
-                              } else {
-                                setOriginalSchedulerPlanPIR([]);
                               }
                               
                               // Reset pending changes
@@ -3964,13 +3900,13 @@ export default function HeatingControl() {
                                 const runStatus = nodeDetails?.attributes?.runStatus ?? selectedNode.data?.runStatus ?? selectedNode.runStatus;
                                 const fixValue = nodeDetails?.attributes?.fixValue ?? selectedNode.data?.fixValue ?? selectedNode.fixValue;
                                 
-                                console.log('🟡 [DEBUG] Opening settings tab (from card)');
-                                console.log('🟡 [DEBUG] nodeDetails?.attributes?.runStatus:', nodeDetails?.attributes?.runStatus);
-                                console.log('🟡 [DEBUG] selectedNode.data?.runStatus:', selectedNode.data?.runStatus);
-                                console.log('🟡 [DEBUG] selectedNode.runStatus:', selectedNode.runStatus);
-                                console.log('🟡 [DEBUG] Final runStatus (preferring nodeDetails):', runStatus);
-                                console.log('🟡 [DEBUG] runStatus === "PIR":', runStatus === 'PIR');
-                                console.log('🟡 [DEBUG] runStatus === "fix":', runStatus === 'fix');
+                                debugLog('🟡 [DEBUG] Opening settings tab (from card)');
+                                debugLog('🟡 [DEBUG] nodeDetails?.attributes?.runStatus:', nodeDetails?.attributes?.runStatus);
+                                debugLog('🟡 [DEBUG] selectedNode.data?.runStatus:', selectedNode.data?.runStatus);
+                                debugLog('🟡 [DEBUG] selectedNode.runStatus:', selectedNode.runStatus);
+                                debugLog('🟡 [DEBUG] Final runStatus (preferring nodeDetails):', runStatus);
+                                debugLog('🟡 [DEBUG] runStatus === "PIR":', runStatus === 'PIR');
+                                debugLog('🟡 [DEBUG] runStatus === "fix":', runStatus === 'fix');
                                 
                                 // Set original values
                                 setOriginalRunStatus(runStatus);
@@ -3985,8 +3921,8 @@ export default function HeatingControl() {
                                   setTempSliderValue((minTemp + maxTemp) / 2);
                                 }
                                 
-                                // Load schedule data if customer data is available AND current status is 'schedule' or 'pir'
-                                if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runStatus))) {
+                                // Load schedule data if customer data is available AND current status is 'schedule'
+                                if (customerData?.customerid && runStatus === 'schedule') {
                                   fetchScheduleData(customerData.customerid);
                                 }
                                 
@@ -4002,18 +3938,6 @@ export default function HeatingControl() {
                                   }
                                 } else {
                                   setOriginalSchedulerPlan([]);
-                                }
-                                const schedulerPlanPIRValue = nodeDetails?.attributes?.schedulerPlanPIR || selectedNode.data?.schedulerPlanPIR;
-                                if (schedulerPlanPIRValue) {
-                                  try {
-                                    const planArrayPIR = JSON.parse(schedulerPlanPIRValue);
-                                    setOriginalSchedulerPlanPIR(Array.isArray(planArrayPIR) ? planArrayPIR : []);
-                                  } catch (error) {
-                                    console.error('Error parsing original schedulerPlanPIR:', error);
-                                    setOriginalSchedulerPlanPIR([]);
-                                  }
-                                } else {
-                                  setOriginalSchedulerPlanPIR([]);
                                 }
                                 
                                 // Reset pending changes
@@ -4145,64 +4069,14 @@ export default function HeatingControl() {
                             );
                           })()}
                           
-                          {usePresenceSensor && (() => {
-                            const hasPir = nodeDetails?.attributes?.hasPir === true || nodeDetails?.attributes?.hasPir === 'true' || selectedNode?.data?.hasPir === true || selectedNode?.data?.hasPir === 'true';
-                            const occupied = nodeDetails?.attributes?.occupied ?? selectedNode?.data?.occupied;
-                            const isOccupied = occupied === true || occupied === 'true';
-                            return (
-                              <div className={`responsive-card ${!hasPir ? 'disabled-card' : ''}`}>
-                                <div className="card">
-                                  <div className="card-body text-center">
-                                    <FontAwesomeIcon icon={faUser} className={`${hasPir && isOccupied ? 'text-success' : hasPir && !isOccupied ? 'text-primary' : 'text-muted'} mb-3`} size="2x" />
-                                    <h4 className="card-title">Anwesenheit</h4>
-                                    {hasPir ? (
-                                      <div className={isOccupied ? 'text-success fw-bold' : 'text-muted'}>
-                                        {isOccupied ? 'Belegt' : 'Nicht belegt'}
-                                      </div>
-                                    ) : (
-                                      <div className="text-muted">
-                                        <p>Bewegungssensor nicht aktiviert</p>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          })()}
-                          {/* Gerätestatus (wie Übersicht: x / y davon inaktiv, Rahmen grün/gelb/rot) */}
-                          <div className="responsive-card">
+                          <div className="responsive-card disabled-card">
                             <div className="card">
                               <div className="card-body text-center">
-                                <FontAwesomeIcon icon={faMicrochip} className="text-primary mb-3" size="2x" />
-                                <h4 className="card-title">Gerätestatus</h4>
-                                {devices && devices.length > 0 ? (() => {
-                                  const getActive = (d) => {
-                                    const id = typeof d?.id === 'string' ? d.id : d?.id?.id;
-                                    if (id && allDevicesForStatus.length > 0) {
-                                      const found = allDevicesForStatus.find(x => x.id === id);
-                                      return found?.active;
-                                    }
-                                    return d?.active;
-                                  };
-                                  const total = devices.length;
-                                  const inactive = devices.filter(d => getActive(d) === false).length;
-                                  let borderColor = '#28a745';
-                                  if (total > 0 && inactive === total) borderColor = '#dc3545';
-                                  else if (inactive > 0) borderColor = '#ffc107';
-                                  return (
-                                    <div
-                                      className="d-inline-block px-3 py-2 rounded small"
-                                      style={{
-                                        border: `2px solid ${borderColor}`,
-                                        backgroundColor: `${borderColor}15`
-                                      }}
-                                    >
-                                      Geräte: {total} / {inactive} davon inaktiv
-                                    </div>
-                                  );
-                                })() : (
-                                  <div className="text-muted small">Keine Geräte zugeordnet</div>
-                                )}
+                                <FontAwesomeIcon icon={faUser} className="text-success mb-3" size="2x" />
+                                <h4 className="card-title">Anwesenheit</h4>
+                                <div className="text-muted">
+                                  <p>Kein Anwesenheitssensor gefunden</p>
+                                </div>
                               </div>
                             </div>
                           </div>
@@ -4279,6 +4153,7 @@ export default function HeatingControl() {
                   
                   <div className="row">
                     <div className="col-12">
+                      {debugLog('Rendering devices:', devices, 'Length:', devices?.length)}
                       {devices && devices.length > 0 && (
                         <>
                           <div className="d-flex justify-content-between align-items-center mb-3">
@@ -4288,7 +4163,10 @@ export default function HeatingControl() {
                             </h6>
                           </div>
                           <div className="list-group">
-                            {devices.map((device, index) => (
+                            {devices.map((device, index) => {
+                              // Debug: Log device telemetry data
+                              debugLog('Device', index, 'telemetry data:', device.telemetry);
+                              return (
                               <div key={index} className="list-group-item">
                                 <div className="d-flex align-items-center">
                                   <FontAwesomeIcon 
@@ -4301,58 +4179,11 @@ export default function HeatingControl() {
                                       {device.name || device.id} • {device.type || 'Unbekannt'}
                                     </small>
                                   </div>
-                                  <div className="text-end">
-                                    {(() => {
-                                      const rawId = device?.id;
-                                      const id = typeof rawId === 'string' ? rawId : (rawId?.id ?? rawId);
-                                      const idStr = id != null ? String(id).trim() : '';
-                                      const byId = (x) => {
-                                        if (x?.id == null) return false;
-                                        const xi = typeof x.id === 'object' ? x.id?.id : x.id;
-                                        return xi != null && String(xi).trim() === idStr;
-                                      };
-                                      let statusDevice = idStr && allDevicesForStatus.length > 0
-                                        ? allDevicesForStatus.find(byId)
-                                        : null;
-                                      if (!statusDevice && allDevicesForStatus.length > 0 && (device?.name || device?.label)) {
-                                        statusDevice = allDevicesForStatus.find(x =>
-                                          (x?.name && device?.name && String(x.name).trim() === String(device.name).trim()) ||
-                                          (x?.label && device?.label && String(x.label).trim() === String(device.label).trim())
-                                        ) || null;
-                                      }
-                                      const active = statusDevice?.active ?? device?.active;
-                                      const ts = statusDevice?.lastActivityTime ?? device?.lastActivityTime ?? device?.telemetry?.lastActivityTime;
-                                      let ms = NaN;
-                                      if (ts != null && ts !== '') {
-                                        if (typeof ts === 'number' && !Number.isNaN(ts)) {
-                                          ms = ts;
-                                        } else if (typeof ts === 'string') {
-                                          const parsed = /^\d+$/.test(ts) ? parseInt(ts, 10) : new Date(ts).getTime();
-                                          if (!Number.isNaN(parsed)) ms = parsed;
-                                        }
-                                        if (!Number.isNaN(ms) && ms > 0 && ms < 1e12) ms *= 1000;
-                                      }
-                                      const hasTime = !Number.isNaN(ms) && ms > 0;
-                                      return (
-                                        <>
-                                          <span className={`badge ${active ? 'bg-success' : 'bg-danger'}`}>
-                                            {active ? 'Aktiv' : 'Inaktiv'}
-                                          </span>
-                                          <div className="small text-muted mt-1" style={{ fontSize: '0.75rem' }}>
-                                            {hasTime
-                                              ? new Date(ms).toLocaleString('de-DE', {
-                                                  day: '2-digit',
-                                                  month: '2-digit',
-                                                  year: 'numeric',
-                                                  hour: '2-digit',
-                                                  minute: '2-digit'
-                                                })
-                                              : '–'}
-                                          </div>
-                                        </>
-                                      );
-                                    })()}
-                                  </div>
+                                  {device.active !== undefined && (
+                                    <span className={`badge ${device.active ? 'bg-success' : 'bg-warning'}`}>
+                                      {device.active ? 'Aktiv' : 'Inaktiv'}
+                                    </span>
+                                  )}
                                 </div>
                                 {(device.telemetry || deviceTemperatures[device.id]) && (
                                   <div className="mt-2">
@@ -4457,50 +4288,20 @@ export default function HeatingControl() {
                                           </div>
                                         </div>
                                       )}
-                                      {String(device.type || '').toLowerCase() === 'ws202' && (() => {
-                                        const t = device.telemetry || {};
-                                        const pirVal = t.pir;
-                                        const lightVal = t.light;
-                                        return (
-                                          <>
-                                            <div 
-                                              className="bg-light border rounded p-2 text-center" 
-                                              style={{ minWidth: '80px', flex: '0 0 auto', cursor: 'pointer' }}
-                                              onClick={() => handleTelemetryValueClick(device, 'pir')}
-                                              title="Klicken für Werteliste"
-                                            >
-                                              <small className="text-muted d-block">pir</small>
-                                              <div className="fw-bold text-primary" style={{ fontSize: '0.9rem' }}>
-                                                {pirVal !== undefined && pirVal !== null ? String(pirVal) : '–'}
-                                              </div>
-                                            </div>
-                                            <div 
-                                              className="bg-light border rounded p-2 text-center" 
-                                              style={{ minWidth: '80px', flex: '0 0 auto', cursor: 'pointer' }}
-                                              onClick={() => handleTelemetryValueClick(device, 'light')}
-                                              title="Klicken für Werteliste"
-                                            >
-                                              <small className="text-muted d-block">light</small>
-                                              <div className="fw-bold text-primary" style={{ fontSize: '0.9rem' }}>
-                                                {lightVal !== undefined && lightVal !== null ? String(lightVal) : '–'}
-                                              </div>
-                                            </div>
-                                          </>
-                                        );
-                                      })()}
                                     </div>
                                   </div>
                                 )}
                               </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         </>
                       )}
                       {(!devices || devices.length === 0) && (
-                          <div className="text-center text-muted py-3">
-                            <FontAwesomeIcon icon={faMicrochip} size="2x" className="mb-2" />
-                            <p className="mb-0">Keine Geräte zugeordnet</p>
-                          </div>
+                        <div className="text-center text-muted py-3">
+                          <FontAwesomeIcon icon={faMicrochip} size="2x" className="mb-2" />
+                          <p className="mb-0">Keine Geräte zugeordnet</p>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -4558,19 +4359,17 @@ export default function HeatingControl() {
                                     <small className="text-muted">Fix</small>
                                   </div>
                                 </div>
-                                {usePresenceSensor && (nodeDetails?.attributes?.hasPir === true || nodeDetails?.attributes?.hasPir === 'true' || selectedNode?.data?.hasPir === true || selectedNode?.data?.hasPir === 'true') && (
-                                  <div className="text-center">
-                                    <img 
-                                      src={isPirRunStatus(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) ? "/assets/img/hm_pir_active.svg" : "/assets/img/hm_pir_inactive.svg"}
-                                      alt="Bewegung"
-                                      style={{ width: '60px', height: '60px', cursor: 'pointer' }}
-                                      onClick={() => updateRunStatus('pir')}
-                                    />
-                                    <div className="mt-2">
-                                      <small className="text-muted">Bewegung</small>
-                                    </div>
+                                <div className="text-center">
+                                  <img 
+                                    src={(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) === 'PIR' ? "/assets/img/hm_pir_active.svg" : "/assets/img/hm_pir_inactive.svg"}
+                                    alt="Bewegung"
+                                    style={{ width: '60px', height: '60px', cursor: 'pointer' }}
+                                    onClick={() => updateRunStatus('PIR')}
+                                  />
+                                  <div className="mt-2">
+                                    <small className="text-muted">Bewegung</small>
                                   </div>
-                                )}
+                                </div>
                               </div>
                             </div>
 
@@ -4817,174 +4616,10 @@ export default function HeatingControl() {
                               </div>
                             )}
 
-                            {/* Wochenplan Bewegung (runStatus = pir) – nutzt schedulerPlanPIR; nur bei usePresenceSensor */}
-                            {usePresenceSensor && isPirRunStatus(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) && (
+                            {/* Motion Widget - Placeholder for future implementation */}
+                            {(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) === 'PIR' && (
                               <div className="mb-4">
-                                <div className="mb-3">
-                                  <label className="form-label fw-bold">Temperatur bei Belegung</label>
-                                  <input
-                                    type="number"
-                                    min={15}
-                                    max={30}
-                                    step={0.5}
-                                    className="form-control"
-                                    style={{ maxWidth: '120px' }}
-                                    value={pendingOccupiedTemp !== null ? pendingOccupiedTemp : (nodeDetails?.attributes?.occupiedTemp != null ? Number(nodeDetails.attributes.occupiedTemp) : 20)}
-                                    onChange={(e) => {
-                                      const v = parseFloat(e.target.value, 10);
-                                      if (!Number.isNaN(v)) {
-                                        const clamped = Math.min(30, Math.max(15, v));
-                                        setPendingOccupiedTemp(clamped);
-                                        setHasUnsavedChanges(true);
-                                      }
-                                    }}
-                                  />
-                                  <small className="text-muted">Nur Werte zwischen 15 und 30 °C</small>
-                                </div>
-                                <div className="d-flex justify-content-between align-items-center mb-3">
-                                  <h5 className="mb-0"><strong>Wochenplan (Vorbelegung):</strong></h5>
-                                  {hasUnsavedChanges && (
-                                    <div className="d-flex gap-2">
-                                      <button
-                                        className="btn btn-outline-secondary btn-sm"
-                                        onClick={cancelChanges}
-                                        disabled={savingSchedule}
-                                      >
-                                        <FontAwesomeIcon icon={faTimes} className="me-1" />
-                                        Abbrechen
-                                      </button>
-                                      <button
-                                        className="btn btn-warning btn-sm"
-                                        onClick={saveChanges}
-                                        disabled={savingSchedule}
-                                      >
-                                        {savingSchedule ? (
-                                          <>
-                                            <span className="spinner-border spinner-border-sm me-1" role="status"></span>
-                                            Speichern...
-                                          </>
-                                        ) : (
-                                          <>
-                                            <FontAwesomeIcon icon={faCheckCircle} className="me-1" />
-                                            Speichern
-                                          </>
-                                        )}
-                                      </button>
-                                    </div>
-                                  )}
-                                </div>
-                                <div className="card" style={{
-                                  border: '2px solid #0d6efd',
-                                  borderRadius: '15px',
-                                  boxShadow: '0 4px 15px rgba(13, 110, 253, 0.1)'
-                                }}>
-                                  <div className="card-body">
-                                    {loadingSchedule ? (
-                                      <div className="text-center py-5">
-                                        <div className="spinner-border text-primary" role="status">
-                                          <span className="visually-hidden">Loading...</span>
-                                        </div>
-                                        <p className="mt-2 text-muted">Lade Wochenplan...</p>
-                                      </div>
-                                    ) : scheduleData && Array.isArray(scheduleData) && scheduleData.length > 0 ? (
-                                      <div className="table-responsive">
-                                        <table className="table table-sm table-bordered">
-                                          <thead className="table-primary">
-                                            <tr>
-                                              <th style={{ width: '60px' }}>Std</th>
-                                              {['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map((day, dayIndex) => (
-                                                <th key={day} className="text-center" style={{ minWidth: '120px', fontSize: '0.9rem', padding: '0.5rem 0.25rem' }}>
-                                                  <div className="fw-bold">{day}</div>
-                                                  <div style={{ marginTop: '5px' }}>
-                                                    <select
-                                                      className="form-select form-select-sm"
-                                                      value={(() => {
-                                                        if (selectedDayPlansPIR[dayIndex] !== undefined) return selectedDayPlansPIR[dayIndex];
-                                                        const val = nodeDetails?.attributes?.schedulerPlanPIR;
-                                                        if (val && Array.isArray(scheduleData)) {
-                                                          try {
-                                                            const planArray = JSON.parse(val);
-                                                            if (Array.isArray(planArray) && planArray[dayIndex]) {
-                                                              const foundIndex = scheduleData.findIndex(plan => plan[0] === planArray[dayIndex]);
-                                                              return foundIndex !== -1 ? foundIndex : 0;
-                                                            }
-                                                          } catch (e) { /* ignore */ }
-                                                        }
-                                                        return 0;
-                                                      })()}
-                                                      onChange={(e) => handlePlanChangePIR(dayIndex, parseInt(e.target.value))}
-                                                      style={{ fontSize: '0.7rem', border: '1px solid #dee2e6' }}
-                                                    >
-                                                      {Array.isArray(scheduleData) ? scheduleData.map((plan, planIndex) => (
-                                                        <option key={planIndex} value={planIndex}>{plan[0]}</option>
-                                                      )) : null}
-                                                    </select>
-                                                  </div>
-                                                </th>
-                                              ))}
-                                            </tr>
-                                          </thead>
-                                          <tbody>
-                                            {Array.from({ length: 24 }, (_, hour) => (
-                                              <tr key={hour}>
-                                                <td className="fw-bold text-muted text-center" style={{ backgroundColor: hour % 2 === 0 ? '#ffffff' : '#e8e8e8', fontSize: '0.8rem' }}>
-                                                  {hour.toString().padStart(2, '0')}
-                                                </td>
-                                                {['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map((day, dayIndex) => {
-                                                  const availablePlans = Array.isArray(scheduleData) ? scheduleData : [];
-                                                  let selectedPlanIndex;
-                                                  if (selectedDayPlansPIR[dayIndex] !== undefined) {
-                                                    selectedPlanIndex = selectedDayPlansPIR[dayIndex];
-                                                  } else {
-                                                    const val = nodeDetails?.attributes?.schedulerPlanPIR;
-                                                    if (val && Array.isArray(scheduleData)) {
-                                                      try {
-                                                        const planArray = JSON.parse(val);
-                                                        if (Array.isArray(planArray) && planArray[dayIndex]) {
-                                                          const foundIndex = scheduleData.findIndex(plan => plan[0] === planArray[dayIndex]);
-                                                          selectedPlanIndex = foundIndex !== -1 ? foundIndex : 0;
-                                                        } else selectedPlanIndex = 0;
-                                                      } catch (e) { selectedPlanIndex = 0; }
-                                                    } else selectedPlanIndex = 0;
-                                                  }
-                                                  const selectedPlanData = availablePlans[selectedPlanIndex];
-                                                  const planSchedule = selectedPlanData?.[1] || [];
-                                                  const temp = planSchedule?.[hour];
-                                                  return (
-                                                    <td key={dayIndex} className="text-center" style={{
-                                                      padding: '0.5rem 0.25rem', fontSize: '0.8rem',
-                                                      backgroundColor: hour % 2 === 0 ? '#ffffff' : '#e8e8e8',
-                                                      color: temp ? '#0d6efd' : '#6c757d',
-                                                      fontWeight: temp ? 'bold' : 'normal'
-                                                    }}>
-                                                      {temp ? `${temp}°` : '-'}
-                                                    </td>
-                                                  );
-                                                })}
-                                              </tr>
-                                            ))}
-                                          </tbody>
-                                        </table>
-                                      </div>
-                                    ) : (
-                                      <div className="alert alert-info">
-                                        <FontAwesomeIcon icon={faInfoCircle} className="me-2" />
-                                        <div>
-                                          <strong>Kein Wochenplan verfügbar.</strong>
-                                          <br />
-                                          <small>
-                                            {scheduleData ? 'Keine gültigen Plan-Daten gefunden.' : 'Plan-Daten werden geladen oder sind nicht verfügbar.'}
-                                          </small>
-                                          {nodeDetails?.attributes?.schedulerPlanPIR && (
-                                            <div className="mt-2">
-                                              <small className="text-muted">Ein PIR-Wochenplan ist gespeichert.</small>
-                                            </div>
-                                          )}
-                                        </div>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
+                                {/* Content will be added in future steps */}
                               </div>
                             )}
 
@@ -5099,51 +4734,21 @@ export default function HeatingControl() {
                                       <div key={node.id} className="col-md-6 col-lg-4 mb-3">
                                         <div className="card h-100">
                                           <div className="card-body">
-                                            <div className="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-1">
-                                              <div className="d-flex align-items-center">
+                                            <div className="d-flex align-items-center mb-2">
+                                              <FontAwesomeIcon 
+                                                icon={getIconForType(node.type)} 
+                                                className="me-2 text-primary"
+                                              />
+                                              <h6 className="card-title mb-0" style={{ fontSize: '0.875rem' }}>
+                                                {node.label || node.name || node.text}
+                                              </h6>
+                                              {node.hasDevices && (
                                                 <FontAwesomeIcon 
-                                                  icon={getIconForType(node.type)} 
-                                                  className="me-2 text-primary"
+                                                  icon={faThermometerHalf} 
+                                                  className="ms-2 text-success"
+                                                  title="Hat Geräte"
                                                 />
-                                                <h6 className="card-title mb-0" style={{ fontSize: '0.875rem' }}>
-                                                  {node.label || node.name || node.text}
-                                                </h6>
-                                                {node.hasDevices && (
-                                                  <FontAwesomeIcon 
-                                                    icon={faThermometerHalf} 
-                                                    className="ms-2 text-success"
-                                                    title="Hat Geräte"
-                                                  />
-                                                )}
-                                              </div>
-                                              {(() => {
-                                                const devs = node.relatedDevices || node.data?.relatedDevices || [];
-                                                const total = devs.length;
-                                                const getActive = (d) => {
-                                                  const id = typeof d?.id === 'string' ? d.id : d?.id?.id;
-                                                  if (id && allDevicesForStatus.length > 0) {
-                                                    const found = allDevicesForStatus.find(x => x.id === id);
-                                                    return found?.active;
-                                                  }
-                                                  return d?.active;
-                                                };
-                                                const inactive = devs.filter(d => getActive(d) === false).length;
-                                                let borderColor = '#28a745';
-                                                if (total > 0 && inactive === total) borderColor = '#dc3545';
-                                                else if (inactive > 0) borderColor = '#ffc107';
-                                                return (
-                                                  <span
-                                                    className="small px-2 py-1 rounded"
-                                                    style={{
-                                                      border: `2px solid ${borderColor}`,
-                                                      backgroundColor: `${borderColor}10`,
-                                                      whiteSpace: 'nowrap'
-                                                    }}
-                                                  >
-                                                    Geräte: {total} / {inactive} davon inaktiv
-                                                  </span>
-                                                );
-                                              })()}
+                                              )}
                                             </div>
                                             
                                             {/* Breadcrumb Path */}
@@ -5517,25 +5122,6 @@ export default function HeatingControl() {
                       <span className="visually-hidden">Laden...</span>
                     </div>
                     <span>Lade Verlaufsdaten...</span>
-                  </div>
-                ) : (selectedTelemetryAttribute === 'pir' || selectedTelemetryAttribute === 'light') && telemetryChartData && telemetryChartData.length > 0 ? (
-                  <div className="table-responsive" style={{ maxHeight: '500px', overflowY: 'auto' }}>
-                    <table className="table table-sm table-striped table-bordered mb-0">
-                      <thead className="table-light sticky-top">
-                        <tr>
-                          <th>Zeit</th>
-                          <th>Wert</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {[...telemetryChartData].reverse().map((point, idx) => (
-                          <tr key={idx}>
-                            <td>{point.time || new Date(point.timestamp).toLocaleString('de-DE')}</td>
-                            <td>{point.value !== undefined && point.value !== null ? String(point.value) : '–'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
                   </div>
                 ) : telemetryChartData && telemetryChartData.length > 0 ? (
                   <div>
