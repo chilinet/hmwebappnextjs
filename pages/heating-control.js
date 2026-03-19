@@ -51,10 +51,32 @@ import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import ReactECharts from 'echarts-for-react';
 import TelemetryModal from '../components/TelemetryModal';
+import {
+  debugLog,
+  debugWarn,
+  timeRangeOptions,
+  getTimeRangeInMs,
+  getTimeRangeLabel,
+  getIconForType,
+  getIconColor,
+  getNodeTypeLabel,
+  convertToTreeViewFormat,
+  getAllNodeIds,
+  getFirstLevelNodeIds,
+  getPathToNode,
+  getAllSubordinateNodeIds,
+  getAllSubordinateNodes,
+  getFilteredTreeData,
+  getAttributeDisplayName,
+  synchronizeChartData,
+  getTemperatureChartOption
+} from '../lib/heating-control';
+import TreeNode from '../components/HeatingControl/TreeNode';
 
-const DEBUG_HEATING_CONTROL = process.env.NEXT_PUBLIC_HEATING_CONTROL_DEBUG === 'true';
-const debugLog = (...args) => { if (DEBUG_HEATING_CONTROL) console.log(...args); };
-const debugWarn = (...args) => { if (DEBUG_HEATING_CONTROL) console.warn(...args); };
+/** ThingsBoard liefert runStatus teils als "pir", UI nutzt "PIR" – für Vergleiche normalisieren. */
+function isPirRunStatus(status) {
+  return status != null && String(status).toLowerCase() === 'pir';
+}
 
 export default function HeatingControl() {
   const router = useRouter();
@@ -69,6 +91,7 @@ export default function HeatingControl() {
   const [error, setError] = useState(null);
   const [treeData, setTreeData] = useState([]);
   const [customerData, setCustomerData] = useState(null);
+  const [usePresenceSensor, setUsePresenceSensor] = useState(false);
   const [openNodes, setOpenNodes] = useState([]);
   const [forceExpand, setForceExpand] = useState(false);
   const [windowHeight, setWindowHeight] = useState(0);
@@ -134,6 +157,8 @@ export default function HeatingControl() {
   const [scheduleData, setScheduleData] = useState(null);
   const [selectedDayPlans, setSelectedDayPlans] = useState({});
   const [originalSchedulerPlan, setOriginalSchedulerPlan] = useState([]);
+  const [selectedDayPlansPIR, setSelectedDayPlansPIR] = useState({});
+  const [originalSchedulerPlanPIR, setOriginalSchedulerPlanPIR] = useState([]);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [loadingSchedule, setLoadingSchedule] = useState(false);
@@ -156,40 +181,13 @@ export default function HeatingControl() {
   const [subordinateTelemetry, setSubordinateTelemetry] = useState({});
   const [loadingSubordinateTelemetry, setLoadingSubordinateTelemetry] = useState(false);
 
-  const timeRangeOptions = [
-    { value: '1d', label: '1 Tag' },
-    { value: '3d', label: '3 Tage' },
-    { value: '7d', label: '7 Tage' },
-    { value: '14d', label: '14 Tage' },
-    { value: '30d', label: '30 Tage' },
-    { value: '90d', label: '90 Tage' }
-  ];
-
-  const getTimeRangeInMs = (timeRange) => {
-    const now = Date.now();
-    switch (timeRange) {
-      case '1d': return now - (1 * 24 * 60 * 60 * 1000);
-      case '3d': return now - (3 * 24 * 60 * 60 * 1000);
-      case '7d': return now - (7 * 24 * 60 * 60 * 1000);
-      case '14d': return now - (14 * 24 * 60 * 60 * 1000);
-      case '30d': return now - (30 * 24 * 60 * 60 * 1000);
-      case '90d': return now - (90 * 24 * 60 * 60 * 1000);
-      default: return now - (7 * 24 * 60 * 60 * 1000);
-    }
-  };
-
-  const getTimeRangeLabel = (timeRange) => {
-    const option = timeRangeOptions.find(opt => opt.value === timeRange);
-    return option ? option.label : '7 Tage';
-  };
-
   // Heating control functions
   const updateRunStatus = (newStatus) => {
     setPendingRunStatus(newStatus);
     setHasUnsavedChanges(true);
     
-    // Load schedule data when switching to schedule mode
-    if (newStatus === 'schedule' && customerData?.customerid) {
+    // Load schedule data when switching to schedule or PIR mode (both use plan table)
+    if ((newStatus === 'schedule' || isPirRunStatus(newStatus)) && customerData?.customerid) {
       fetchScheduleData(customerData.customerid);
     }
   };
@@ -234,6 +232,14 @@ export default function HeatingControl() {
     setHasUnsavedChanges(true);
   };
 
+  const handlePlanChangePIR = (dayIndex, planIndex) => {
+    setSelectedDayPlansPIR(prev => ({
+      ...prev,
+      [dayIndex]: planIndex
+    }));
+    setHasUnsavedChanges(true);
+  };
+
   // Funktion zur Berechnung der geplanten Zieltemperatur
   const calculatePlannedTargetTemperature = useCallback(() => {
     if (!nodeDetails || !nodeDetails.attributes) {
@@ -254,9 +260,11 @@ export default function HeatingControl() {
       return;
     }
 
-    // Wenn Schedule eingestellt ist
-    if (runStatus === 'schedule') {
-      const schedulerPlanValue = nodeDetails.attributes.schedulerPlan;
+    // Wenn Schedule oder PIR (Bewegung) eingestellt ist – gleiche Logik, unterschiedliches Attribut
+    if (runStatus === 'schedule' || isPirRunStatus(runStatus)) {
+      const schedulerPlanValue = isPirRunStatus(runStatus)
+        ? nodeDetails.attributes.schedulerPlanPIR
+        : nodeDetails.attributes.schedulerPlan;
       if (!schedulerPlanValue || !scheduleData || !Array.isArray(scheduleData)) {
         setPlannedTargetTemperature(null);
         return;
@@ -385,6 +393,21 @@ export default function HeatingControl() {
         }
       }
 
+      // Handle schedulerPlanPIR changes - when PIR mode or PIR plan changes
+      if (isPirRunStatus(pendingRunStatus) || Object.keys(selectedDayPlansPIR).length > 0) {
+        if (Array.isArray(scheduleData)) {
+          let planArrayPIR = [...originalSchedulerPlanPIR];
+          while (planArrayPIR.length < 7) {
+            planArrayPIR.push(scheduleData[0]?.[0] || '');
+          }
+          Object.entries(selectedDayPlansPIR).forEach(([dayIndex, planIndex]) => {
+            const newPlanName = scheduleData[planIndex]?.[0] || '';
+            planArrayPIR[parseInt(dayIndex)] = newPlanName;
+          });
+          updateData.schedulerPlanPIR = JSON.stringify(planArrayPIR);
+        }
+      }
+
       debugLog('🔵 [DEBUG] Saving heating control data:', updateData);
       debugLog('🔵 [DEBUG] pendingRunStatus before save:', pendingRunStatus);
       debugLog('🔵 [DEBUG] Selected day plans:', selectedDayPlans);
@@ -417,9 +440,13 @@ export default function HeatingControl() {
       if (updateData.schedulerPlan) {
         setOriginalSchedulerPlan(JSON.parse(updateData.schedulerPlan));
       }
+      if (updateData.schedulerPlanPIR) {
+        setOriginalSchedulerPlanPIR(JSON.parse(updateData.schedulerPlanPIR));
+      }
 
       setHasUnsavedChanges(false);
       setSelectedDayPlans({});
+      setSelectedDayPlansPIR({});
       setPendingRunStatus(null);
       setPendingFixValue(null);
       
@@ -449,6 +476,7 @@ export default function HeatingControl() {
 
   const cancelChanges = () => {
     setSelectedDayPlans({});
+    setSelectedDayPlansPIR({});
     setPendingRunStatus(null);
     setPendingFixValue(null);
     setHasUnsavedChanges(false);
@@ -457,38 +485,6 @@ export default function HeatingControl() {
       setTempSliderValue(originalFixValue);
     }
   };
-
-  // Function to collect all subordinate node IDs recursively
-  const getAllSubordinateNodeIds = useCallback((nodeId, nodes = treeData) => {
-    const findNode = (nodeList, targetId) => {
-      for (const node of nodeList) {
-        if (node.id === targetId) {
-          return node;
-        }
-        if (node.children && Array.isArray(node.children)) {
-          const found = findNode(node.children, targetId);
-          if (found) return found;
-        }
-      }
-      return null;
-    };
-
-    const collectAllChildrenIds = (node) => {
-      let childIds = [];
-      if (node.children && Array.isArray(node.children)) {
-        for (const child of node.children) {
-          childIds.push(child.id);
-          childIds = childIds.concat(collectAllChildrenIds(child));
-        }
-      }
-      return childIds;
-    };
-
-    const targetNode = findNode(nodes, nodeId);
-    if (!targetNode) return [];
-
-    return collectAllChildrenIds(targetNode);
-  }, [treeData]);
 
   const saveSettings = async () => {
     if (!selectedNode) return;
@@ -531,7 +527,7 @@ export default function HeatingControl() {
       }
 
       // Step 2: Update all subordinate nodes in the tree
-      const subordinateNodeIds = getAllSubordinateNodeIds(selectedNode.id);
+      const subordinateNodeIds = getAllSubordinateNodeIds(selectedNode.id, treeData);
       debugLog('Updating subordinate nodes in tree:', subordinateNodeIds);
       
       // Update each subordinate node in the tree (but not in ThingsBoard)
@@ -591,76 +587,6 @@ export default function HeatingControl() {
 
 
 
-  const getIconForType = (type) => {
-    switch (type) {
-      case 'Property':
-        return faMapMarkerAlt;
-      case 'Building':
-        return faBuilding;
-      case 'Floor':
-        return faStairs;
-      case 'Room':
-        return faDoorOpen;
-      case 'Area':
-        return faLayerGroup;
-      case 'Device':
-        return faThermometerHalf;
-      case 'vicki':
-        return faThermometerHalf;
-      case 'LHT52':
-        return faThermometerHalf;
-      case 'LW-eTRV':
-        return faThermometerHalf;
-      case 'dnt-lw-wth':
-        return faCog;
-      case 'mcpanel':
-        return faDesktop;
-      default:
-        return faHome;
-    }
-  };
-
-  const getIconColor = (type) => {
-    switch (type) {
-      case 'Property':
-        return '#6c757d'; // Gray
-      case 'Building':
-        return '#0d6efd'; // Blue
-      case 'Floor':
-        return '#198754'; // Green
-      case 'Room':
-        return '#fd7e14'; // Orange
-      case 'Area':
-        return '#6f42c1'; // Purple
-      case 'Device':
-      case 'vicki':
-      case 'LHT52':
-      case 'LW-eTRV':
-      case 'dnt-lw-wth':
-      case 'mcpanel':
-        return '#dc3545'; // Red
-      default:
-        return '#6c757d'; // Gray
-    }
-  };
-
-  const getNodeTypeLabel = (type) => {
-    const typeLabels = {
-      'Property': 'Eigentum',
-      'Building': 'Gebäude',
-      'Floor': 'Etage',
-      'Room': 'Raum',
-      'Area': 'Bereich',
-      'Device': 'Gerät',
-      'vicki': 'Vicki Thermostat',
-      'LHT52': 'LHT52 Sensor',
-      'LW-eTRV': 'LW-eTRV Ventil',
-      'dnt-lw-wth': 'Wandthermostat',
-      'mcpanel': 'Wandpanel'
-    };
-    return typeLabels[type] || type;
-  };
-
   const fetchUserData = useCallback(async () => {
     try {
       debugLog('🔍 Fetching user data...');
@@ -688,71 +614,21 @@ export default function HeatingControl() {
     }
   }, [session?.token, session?.user?.customerid]);
 
-  const convertToTreeViewFormat = (nodes, parentId = 0) => {
-    if (!nodes || !Array.isArray(nodes)) return [];
-    
-    return nodes.flatMap(node => {
-      const hasChildren = node.children && node.children.length > 0;
-      
-      const treeNode = {
-        id: node.id,
-        parent: parentId,
-        droppable: true,
-        text: node.label || node.name,
-        data: {
-          ...node, // Copy all properties from the original node
-          type: node.type,
-          hasDevices: node.hasDevices,
-          label: node.label,
-          name: node.name
-        }
-      };
-      
-      if (hasChildren) {
-        return [treeNode, ...convertToTreeViewFormat(node.children, node.id)];
-      }
-
-      return [treeNode];
-    });
-  };
-
-  // Hilfsfunktion um alle Knoten-IDs rekursiv zu sammeln
-  const getAllNodeIds = (nodes) => {
-    const nodeIds = [];
-    
-    const collectIds = (nodeList) => {
-      if (!Array.isArray(nodeList)) return;
-      
-      nodeList.forEach(node => {
-        if (node.id) {
-          nodeIds.push(node.id);
-        }
-        if (node.children && Array.isArray(node.children)) {
-          collectIds(node.children);
-        }
-      });
-    };
-    
-    collectIds(nodes);
-    return nodeIds;
-  };
-
-  // Hilfsfunktion um nur Level 1 (Root-Ebene) aufzuklappen
-  const getFirstLevelNodeIds = (nodes) => {
-    const nodeIds = [];
-    
-    // Nur die Root-Knoten (Level 0) werden aufgeklappt
-    // Dadurch werden ihre direkten Kinder (Level 1) sichtbar
-    if (!Array.isArray(nodes)) return nodeIds;
-    
-    nodes.forEach(node => {
-      if (node.id) {
-        nodeIds.push(node.id);
-      }
-    });
-    
-    return nodeIds;
-  };
+  // Load customer attributes (e.g. usePresenceSensor) when customer is known
+  useEffect(() => {
+    if (!customerData?.customerid || !session?.token) {
+      setUsePresenceSensor(false);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/config/customers/${customerData.customerid}/attributes`, {
+      headers: { 'Authorization': `Bearer ${session.token}` }
+    })
+      .then(res => res.ok ? res.json() : { usePresenceSensor: false })
+      .then(data => { if (!cancelled) setUsePresenceSensor(!!data.usePresenceSensor); })
+      .catch(() => { if (!cancelled) setUsePresenceSensor(false); });
+    return () => { cancelled = true; };
+  }, [customerData?.customerid, session?.token]);
 
   const fetchTreeData = useCallback(async () => {
     if (!customerData?.customerid) {
@@ -820,7 +696,7 @@ export default function HeatingControl() {
       debugLog('🟢 [DEBUG] fetchNodeDetails - nodeData.attributes:', nodeData?.attributes);
       debugLog('🟢 [DEBUG] fetchNodeDetails - runStatus from API:', nodeData?.attributes?.runStatus);
       debugLog('🟢 [DEBUG] fetchNodeDetails - runStatus type:', typeof nodeData?.attributes?.runStatus);
-      debugLog('🟢 [DEBUG] fetchNodeDetails - runStatus === "PIR":', nodeData?.attributes?.runStatus === 'PIR');
+      debugLog('🟢 [DEBUG] fetchNodeDetails - runStatus is PIR:', isPirRunStatus(nodeData?.attributes?.runStatus));
       debugLog('🟢 [DEBUG] fetchNodeDetails - runStatus === "fix":', nodeData?.attributes?.runStatus === 'fix');
       
       setNodeDetails(nodeData);
@@ -862,6 +738,19 @@ export default function HeatingControl() {
         }
       } else {
         setOriginalSchedulerPlan([]);
+      }
+
+      const schedulerPlanPIRValue = nodeData?.attributes?.schedulerPlanPIR;
+      if (schedulerPlanPIRValue) {
+        try {
+          const planArrayPIR = JSON.parse(schedulerPlanPIRValue);
+          setOriginalSchedulerPlanPIR(Array.isArray(planArrayPIR) ? planArrayPIR : []);
+        } catch (error) {
+          console.error('Error parsing schedulerPlanPIR in fetchNodeDetails:', error);
+          setOriginalSchedulerPlanPIR([]);
+        }
+      } else {
+        setOriginalSchedulerPlanPIR([]);
       }
       
       // Update original settings values from node details (direkt aus ThingsBoard)
@@ -2063,18 +1952,6 @@ export default function HeatingControl() {
     }
   }, [session?.token]);
 
-  const getAttributeDisplayName = (attribute) => {
-    const displayNames = {
-      'sensorTemperature': 'Aktuelle Temperatur',
-      'targetTemperature': 'Zieltemperatur',
-      'batteryVoltage': 'Batteriespannung',
-      'PercentValveOpen': 'Ventilöffnung',
-      'signalQuality': 'Signalqualität',
-      'hall_sensor_state': 'Hall Sensor'
-    };
-    return displayNames[attribute] || attribute;
-  };
-
   const handleTelemetryValueClick = useCallback(async (device, attribute) => {
     const deviceId = typeof device.id === 'object' && device.id?.id ? device.id.id : device.id;
     if (!deviceId) return;
@@ -2198,6 +2075,18 @@ export default function HeatingControl() {
     } else {
       setOriginalSchedulerPlan([]);
     }
+    const schedulerPlanPIRValue = node.data?.schedulerPlanPIR;
+    if (schedulerPlanPIRValue) {
+      try {
+        const planArrayPIR = JSON.parse(schedulerPlanPIRValue);
+        setOriginalSchedulerPlanPIR(Array.isArray(planArrayPIR) ? planArrayPIR : []);
+      } catch (error) {
+        console.error('Error parsing schedulerPlanPIR in handleNodeSelect:', error);
+        setOriginalSchedulerPlanPIR([]);
+      }
+    } else {
+      setOriginalSchedulerPlanPIR([]);
+    }
     
     // Settings values werden jetzt immer direkt aus ThingsBoard geladen (in fetchNodeDetails)
     // Keine Initialisierung aus node.data mehr, da diese aus dem tree Feld kommen könnten
@@ -2227,94 +2116,6 @@ export default function HeatingControl() {
       });
     }
   };
-
-  const nodeMatchesSearch = (node, searchTerm) => {
-    if (!searchTerm) return true;
-    const term = searchTerm.toLowerCase();
-    return (
-      (node.label && node.label.toLowerCase().includes(term)) ||
-      (node.name && node.name.toLowerCase().includes(term)) ||
-      (node.type && node.type.toLowerCase().includes(term))
-    );
-  };
-
-  const getFilteredTreeData = () => {
-    if (!treeSearchTerm) return treeData;
-    
-    const filterNodes = (nodes) => {
-      return nodes.filter(node => {
-        const matches = nodeMatchesSearch(node, treeSearchTerm);
-        const childrenMatch = node.children ? filterNodes(node.children).length > 0 : false;
-        return matches || childrenMatch;
-      }).map(node => ({
-        ...node,
-        children: node.children ? filterNodes(node.children) : []
-      }));
-    };
-    
-    return filterNodes(treeData);
-  };
-
-
-  // Function to get all subordinate nodes (children and their descendants)
-  const getAllSubordinateNodes = useCallback((nodeId, nodes = treeData) => {
-    const findNode = (nodeList, targetId) => {
-      for (const node of nodeList) {
-        if (node.id === targetId) {
-          return node;
-        }
-        if (node.children) {
-          const found = findNode(node.children, targetId);
-          if (found) return found;
-        }
-      }
-      return null;
-    };
-
-    const getNodePath = (nodeId, nodes = treeData, path = []) => {
-      for (const node of nodes) {
-        const currentPath = [...path, node];
-        if (node.id === nodeId) {
-          return currentPath;
-        }
-        if (node.children) {
-          const found = getNodePath(nodeId, node.children, currentPath);
-          if (found) return found;
-        }
-      }
-      return null;
-    };
-
-    const collectAllChildren = (node) => {
-      let allChildren = [];
-      if (node.children) {
-        for (const child of node.children) {
-          allChildren.push(child);
-          allChildren = allChildren.concat(collectAllChildren(child));
-        }
-      }
-      return allChildren;
-    };
-
-    const targetNode = findNode(nodes, nodeId);
-    if (!targetNode) return { path: [], subordinates: [] };
-
-    const path = getNodePath(nodeId, nodes);
-    const subordinates = collectAllChildren(targetNode);
-
-    // Add path information to each subordinate node and filter only nodes with devices
-    const subordinatesWithPaths = subordinates
-      .filter(subNode => subNode.hasDevices === true)
-      .map(subNode => {
-        const subNodePath = getNodePath(subNode.id, nodes);
-        return {
-          ...subNode,
-          path: subNodePath || []
-        };
-      });
-
-    return { path: path || [], subordinates: subordinatesWithPaths };
-  }, [treeData]);
 
   // Function to fetch telemetry data for a node
   const fetchNodeTelemetry = async (node) => {
@@ -2510,536 +2311,9 @@ export default function HeatingControl() {
     }
   }, []);
 
-  // Funktion zur Synchronisation aller Datenquellen in 10-Minuten-Zeitscheiben
-  const synchronizeChartData = () => {
-    const hasTemperatureData = temperatureHistory && temperatureHistory.length > 0;
-    const hasTargetTemperatureData = targetTemperatureHistory && targetTemperatureHistory.length > 0;
-    const hasValveOpenData = valveOpenHistory && valveOpenHistory.length > 0;
-    
-    if (!hasTemperatureData && !hasTargetTemperatureData && !hasValveOpenData) {
-      return { temperatureData: [], targetTemperatureData: [], valveOpenData: [] };
-    }
-
-    // Finde den gemeinsamen Zeitbereich
-    const allTimestamps = [];
-    if (hasTemperatureData) allTimestamps.push(...temperatureHistory.map(item => item.timestamp));
-    if (hasTargetTemperatureData) allTimestamps.push(...targetTemperatureHistory.map(item => item.timestamp));
-    if (hasValveOpenData) allTimestamps.push(...valveOpenHistory.map(item => item.timestamp));
-    
-    if (allTimestamps.length === 0) {
-      return { temperatureData: [], targetTemperatureData: [], valveOpenData: [] };
-    }
-
-    const minTimestamp = Math.min(...allTimestamps);
-    const maxTimestamp = Math.max(...allTimestamps);
-    
-    debugLog('Synchronizing data from', new Date(minTimestamp), 'to', new Date(maxTimestamp));
-    
-    // Erstelle 10-Minuten-Zeitscheiben
-    const timeSlices = [];
-    const intervalMs = 10 * 60 * 1000; // 10 Minuten in Millisekunden
-    
-    for (let timestamp = minTimestamp; timestamp <= maxTimestamp; timestamp += intervalMs) {
-      timeSlices.push(timestamp);
-    }
-    
-    debugLog('Created', timeSlices.length, 'time slices (10-minute intervals)');
-    
-    // Hilfsfunktion: Finde den nächstgelegenen Wert zu einem Zeitpunkt
-    const findNearestValue = (dataArray, targetTimestamp, maxDistanceMs = 30 * 60 * 1000) => {
-      if (!dataArray || dataArray.length === 0) return null;
-      
-      let nearestItem = null;
-      let minDistance = Infinity;
-      
-      for (const item of dataArray) {
-        const distance = Math.abs(item.timestamp - targetTimestamp);
-        if (distance < minDistance && distance <= maxDistanceMs) {
-          minDistance = distance;
-          nearestItem = item;
-        }
-      }
-      
-      return nearestItem;
-    };
-    
-    // Synchronisiere alle Datenquellen
-    const synchronizedData = {
-      temperatureData: [],
-      targetTemperatureData: [],
-      valveOpenData: []
-    };
-    
-    timeSlices.forEach(sliceTimestamp => {
-      // Finde Temperatur-Wert für diese Zeitscheibe
-      const tempItem = hasTemperatureData ? findNearestValue(temperatureHistory, sliceTimestamp) : null;
-      if (tempItem) {
-        const temp = Number(tempItem.temperature);
-        if (!isNaN(temp)) {
-          synchronizedData.temperatureData.push([sliceTimestamp, temp]);
-        }
-      }
-      
-      // Finde Zieltemperatur-Wert für diese Zeitscheibe
-      const targetItem = hasTargetTemperatureData ? findNearestValue(targetTemperatureHistory, sliceTimestamp) : null;
-      if (targetItem) {
-        const targetTemp = Number(targetItem.temperature);
-        if (!isNaN(targetTemp)) {
-          synchronizedData.targetTemperatureData.push([sliceTimestamp, targetTemp]);
-        }
-      }
-      
-      // Finde Ventilöffnung-Wert für diese Zeitscheibe
-      const valveItem = hasValveOpenData ? findNearestValue(valveOpenHistory, sliceTimestamp) : null;
-      if (valveItem) {
-        const valve = Number(valveItem.valveOpen);
-        if (!isNaN(valve)) {
-          synchronizedData.valveOpenData.push([sliceTimestamp, valve]);
-        }
-      }
-    });
-    
-    debugLog('Synchronized data points:', {
-      temperature: synchronizedData.temperatureData.length,
-      targetTemperature: synchronizedData.targetTemperatureData.length,
-      valveOpen: synchronizedData.valveOpenData.length
-    });
-    
-    return synchronizedData;
-  };
-
-  const getTemperatureChartOption = (timeRange = null) => {
-    // Verwende synchronisierte Daten
-    const synchronizedData = synchronizeChartData();
-    const { temperatureData, targetTemperatureData, valveOpenData } = synchronizedData;
-    
-    const timeRangeToUse = timeRange || selectedTimeRange;
-    
-    debugLog('Chart data - temperatureData length:', temperatureData.length);
-    debugLog('Chart data - targetTemperatureData length:', targetTemperatureData.length);
-    debugLog('Chart data - valveOpenData length:', valveOpenData.length);
-    debugLog('Chart data - valveOpenData sample:', valveOpenData.slice(0, 3));
-    
-    const hasTemperatureData = temperatureData.length > 0;
-    const hasTargetTemperatureData = targetTemperatureData.length > 0;
-    const hasValveOpenData = valveOpenData.length > 0;
-    
-    debugLog('Chart flags - hasTemperatureData:', hasTemperatureData);
-    debugLog('Chart flags - hasTargetTemperatureData:', hasTargetTemperatureData);
-    debugLog('Chart flags - hasValveOpenData:', hasValveOpenData);
-    
-    if (!hasTemperatureData && !hasTargetTemperatureData && !hasValveOpenData) {
-      return {
-        xAxis: {
-          type: 'time',
-          name: 'Zeit',
-          nameLocation: 'middle',
-          nameGap: 30,
-          axisLabel: {
-            color: '#666',
-            formatter: function(value) {
-              return new Date(value).toLocaleDateString('de-DE', {
-                day: '2-digit',
-                month: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit'
-              });
-            }
-          },
-          axisLine: {
-            lineStyle: {
-              color: '#ddd'
-            }
-          },
-          splitLine: {
-            lineStyle: {
-              color: '#f0f0f0'
-            }
-          }
-        },
-        yAxis: {
-          type: 'value',
-          name: 'Temperatur (°C)',
-          nameLocation: 'middle',
-          nameGap: 50,
-          axisLabel: {
-            color: '#666',
-            formatter: '{value}°C'
-          },
-          axisLine: {
-            lineStyle: {
-              color: '#ddd'
-            }
-          },
-          splitLine: {
-            lineStyle: {
-              color: '#f0f0f0'
-            }
-          }
-        },
-        series: [],
-        tooltip: {
-          trigger: 'axis',
-          backgroundColor: 'rgba(255, 255, 255, 0.95)',
-          borderColor: '#ddd',
-          borderWidth: 1,
-          textStyle: {
-            color: '#333'
-          },
-          formatter: function(params) {
-            return 'Keine Daten verfügbar';
-          }
-        },
-        grid: {
-          left: '10%',
-          right: '10%',
-          bottom: '15%',
-          top: '15%',
-          backgroundColor: 'transparent'
-        },
-        backgroundColor: 'transparent'
-      };
-    }
-
-    debugLog('Synchronized chart data points:', {
-      temperature: temperatureData.length,
-      targetTemperature: targetTemperatureData.length,
-      valveOpen: valveOpenData.length
-    });
-    
-    return {
-      legend: {
-        data: [
-          ...(hasTemperatureData ? ['Aktuelle Temperatur'] : []),
-          ...(hasTargetTemperatureData ? ['Zieltemperatur'] : []),
-          ...(hasValveOpenData ? ['Ventilöffnung'] : [])
-        ],
-        top: 10,
-        left: 'center',
-        textStyle: {
-          color: '#333',
-          fontSize: 12
-        },
-        itemGap: 20,
-        itemWidth: 14,
-        itemHeight: 14
-      },
-      xAxis: {
-        type: 'time',
-        name: 'Zeit',
-        nameLocation: 'middle',
-        nameGap: 30,
-        axisLabel: {
-          color: '#666',
-          formatter: function(value) {
-            return new Date(value).toLocaleDateString('de-DE', {
-              day: '2-digit',
-              month: '2-digit',
-              hour: '2-digit',
-              minute: '2-digit'
-            });
-          }
-        },
-        axisLine: {
-          lineStyle: {
-            color: '#ddd'
-          }
-        },
-        splitLine: {
-          lineStyle: {
-            color: '#f0f0f0'
-          }
-        },
-        scale: true,
-        minInterval: 3600000 // 1 hour minimum interval
-      },
-      yAxis: [
-        {
-          type: 'value',
-          name: 'Temperatur (°C)',
-          nameLocation: 'middle',
-          nameGap: 50,
-          position: 'left',
-          axisLabel: {
-            color: '#666',
-            formatter: '{value}°C'
-          },
-          axisLine: {
-            lineStyle: {
-              color: '#ddd'
-            }
-          },
-          splitLine: {
-            lineStyle: {
-              color: '#f0f0f0'
-            }
-          }
-        },
-        {
-          type: 'value',
-          name: 'Ventilöffnung (%)',
-          nameLocation: 'middle',
-          nameGap: 50,
-          position: 'right',
-          min: 0,
-          max: 100,
-          axisLabel: {
-            color: '#666',
-            formatter: '{value}%'
-          },
-          axisLine: {
-            lineStyle: {
-              color: '#ddd'
-            }
-          },
-          splitLine: {
-            show: false
-          }
-        }
-      ],
-      series: [
-        ...(hasTemperatureData ? [{
-          name: 'Aktuelle Temperatur',
-          type: 'line',
-          data: temperatureData,
-          smooth: true,
-          symbol: 'none',
-          symbolSize: 0,
-          connectNulls: true,
-          encode: {
-            x: 0,
-            y: 1
-          },
-          lineStyle: {
-            color: '#F44336',
-            width: 2
-          },
-          itemStyle: {
-            color: '#F44336'
-          },
-          areaStyle: {
-            color: {
-              type: 'linear',
-              x: 0,
-              y: 0,
-              x2: 0,
-              y2: 1,
-              colorStops: [{
-                offset: 0, color: 'rgba(244, 67, 54, 0.3)'
-              }, {
-                offset: 1, color: 'rgba(244, 67, 54, 0.05)'
-              }]
-            }
-          }
-        }] : []),
-        ...(hasTargetTemperatureData ? [{
-          name: 'Zieltemperatur',
-          type: 'line',
-          data: targetTemperatureData,
-          smooth: true,
-          symbol: 'none',
-          symbolSize: 0,
-          connectNulls: true,
-          encode: {
-            x: 0,
-            y: 1
-          },
-          lineStyle: {
-            color: '#4CAF50',
-            width: 2
-          },
-          itemStyle: {
-            color: '#4CAF50'
-          }
-        }] : []),
-        ...(hasValveOpenData ? [{
-          name: 'Ventilöffnung',
-          type: 'line',
-          data: valveOpenData,
-          smooth: true,
-          symbol: 'none',
-          symbolSize: 0,
-          connectNulls: true,
-          yAxisIndex: 1,
-          encode: {
-            x: 0,
-            y: 1
-          },
-          lineStyle: {
-            color: '#9E9E9E',
-            width: 2
-          },
-          itemStyle: {
-            color: '#9E9E9E'
-          }
-        }] : [])
-      ],
-      tooltip: {
-        trigger: 'axis',
-        backgroundColor: 'rgba(255, 255, 255, 0.95)',
-        borderColor: '#ddd',
-        borderWidth: 1,
-        textStyle: {
-          color: '#333',
-          fontSize: 12
-        },
-        formatter: function(params) {
-          debugLog('Tooltip params:', params);
-          
-          if (params && params.length > 0) {
-            // Get the timestamp from the first parameter
-            const timestamp = params[0].axisValue;
-            debugLog('Tooltip timestamp:', timestamp, 'Date:', new Date(timestamp));
-            
-            const date = new Date(timestamp).toLocaleString('de-DE', {
-              day: '2-digit',
-              month: '2-digit',
-              year: 'numeric',
-              hour: '2-digit',
-              minute: '2-digit'
-            });
-            let tooltipText = `<div style="font-weight: bold; margin-bottom: 5px;">${date}</div>`;
-            
-            params.forEach((param, index) => {
-              debugLog(`Param ${index}:`, param);
-              
-              // For time series data, param.value is an array [timestamp, value]
-              const value = Array.isArray(param.value) ? param.value[1] : param.value;
-              const seriesName = param.seriesName;
-              const color = param.color;
-              const displayValue = !isNaN(Number(value)) ? Number(value).toFixed(1) : 'N/A';
-              
-              debugLog(`Series ${index}: ${seriesName}, value: ${value}, displayValue: ${displayValue}`);
-              
-              // Determine unit based on series name
-              const unit = seriesName === 'Ventilöffnung' ? '%' : '°C';
-              
-              tooltipText += `<div style="display: flex; align-items: center; margin: 2px 0;">
-                <span style="color:${color}; margin-right: 8px;">●</span> 
-                <span style="font-weight: 500;">${seriesName}:</span> 
-                <span style="margin-left: 8px; font-weight: bold;">${displayValue}${unit}</span>
-              </div>`;
-            });
-            
-            debugLog('Final tooltip text:', tooltipText);
-            return tooltipText;
-          }
-          return '';
-        }
-      },
-      grid: {
-        left: '10%',
-        right: '10%',
-        bottom: '15%', // Space for dataZoom slider
-        top: '15%', // Space for legend
-        backgroundColor: 'transparent'
-      },
-      dataZoom: [{
-        type: 'inside',
-        start: 0,
-        end: 100
-      }, {
-        type: 'slider',
-        start: 0,
-        end: 100,
-        height: 20,
-        bottom: 15,
-        backgroundColor: 'rgba(240, 240, 240, 0.3)',
-        dataBackground: {
-          areaStyle: {
-            color: '#f0f0f0'
-          },
-          lineStyle: {
-            color: '#ccc'
-          }
-        },
-        selectedDataBackground: {
-          areaStyle: {
-            color: '#e6f3ff'
-          },
-          lineStyle: {
-            color: '#1890ff'
-          }
-        },
-        handleStyle: {
-          color: '#1890ff'
-        }
-      }],
-      backgroundColor: 'transparent',
-      animation: true,
-      animationDuration: 1000,
-      animationEasing: 'cubicOut'
-    };
-  };
-
-  const CustomNode = ({ node, onToggle, dragHandle, isOpen }) => {
-    const isSelected = selectedNode?.id === node.id;
-    const hasChildren = node.droppable;
-    const icon = getIconForType(node.data?.type);
-    const iconColor = getIconColor(node.data?.type);
-
-    return (
-      <div 
-        className={`tree-node ${isSelected ? 'selected' : ''}`}
-        data-node-id={node.id}
-        style={{
-          padding: '8px 12px',
-          cursor: 'pointer',
-          backgroundColor: isSelected ? '#fd7e14' : 'transparent',
-          borderRadius: '4px',
-          margin: '2px 0',
-          border: isSelected ? '1px solid #fd7e14' : '1px solid transparent',
-          transition: 'all 0.2s ease'
-        }}
-        onClick={() => handleNodeSelect(node)}
-      >
-        <div className="d-flex align-items-center">
-          {hasChildren && (
-            <button
-              className="btn btn-sm p-0 me-2 border-0 bg-transparent"
-              onClick={(e) => {
-                e.stopPropagation();
-                onToggle();
-              }}
-              style={{ 
-                width: '16px', 
-                height: '16px',
-                color: isSelected ? 'white' : '#6c757d'
-              }}
-            >
-              <FontAwesomeIcon 
-                icon={isOpen ? faChevronDown : faChevronRight} 
-                size="xs"
-              />
-            </button>
-          )}
-          
-          {!hasChildren && <div style={{ width: '16px', marginRight: '8px' }} />}
-          
-          <FontAwesomeIcon 
-            icon={icon} 
-            className="me-2" 
-            style={{ color: isSelected ? 'white' : iconColor, fontSize: '14px' }}
-          />
-          
-          <span className="flex-grow-1" style={{ fontSize: '14px', color: isSelected ? 'white' : '#333' }}>
-            {node.text}
-          </span>
-          
-          {node.data?.hasDevices && (
-            <FontAwesomeIcon 
-              icon={faThermometerHalf} 
-              className="ms-2" 
-              style={{ 
-                color: isSelected ? 'white' : '#28a745', 
-                fontSize: '12px' 
-              }}
-              title="Hat Geräte"
-            />
-          )}
-        </div>
-      </div>
-    );
+  const getTemperatureChartOptionForRender = (timeRange = null) => {
+    const synchronizedData = synchronizeChartData(temperatureHistory, targetTemperatureHistory, valveOpenHistory, debugLog);
+    return getTemperatureChartOption(synchronizedData, timeRange || selectedTimeRange, debugLog);
   };
 
   // Effects
@@ -3129,12 +2403,12 @@ export default function HeatingControl() {
   // Load telemetry data for subordinate nodes when activeTab changes to 'empty'
   useEffect(() => {
     if (activeTab === 'empty' && selectedNode) {
-      const { subordinates } = getAllSubordinateNodes(selectedNode.id);
+      const { subordinates } = getAllSubordinateNodes(selectedNode.id, treeData);
       if (subordinates.length > 0) {
         fetchSubordinateTelemetry(subordinates);
       }
     }
-  }, [activeTab, selectedNode, getAllSubordinateNodes, fetchSubordinateTelemetry]);
+  }, [activeTab, selectedNode, treeData, fetchSubordinateTelemetry]);
 
   // Update settings values from nodeDetails when they are loaded (direkt aus ThingsBoard)
   // Diese Werte werden immer direkt aus ThingsBoard geholt, nicht aus dem tree Feld
@@ -3157,29 +2431,6 @@ export default function HeatingControl() {
   }, [activeTab, nodeDetails]);
 
 
-  // Function to find path to selected node
-  const getPathToNode = useCallback((nodeId, nodes = treeData) => {
-    const findPath = (nodeList, targetId, currentPath = []) => {
-      for (const node of nodeList) {
-        const newPath = [...currentPath, node.id];
-        
-        if (node.id === targetId) {
-          return newPath;
-        }
-        
-        if (node.children && node.children.length > 0) {
-          const childPath = findPath(node.children, targetId, newPath);
-          if (childPath) {
-            return childPath;
-          }
-        }
-      }
-      return null;
-    };
-    
-    return findPath(nodes, nodeId);
-  }, [treeData]);
-
   // Expand only Level 1 (first level) when tree data is loaded
   useEffect(() => {
     if (treeData && treeData.length > 0) {
@@ -3201,7 +2452,7 @@ export default function HeatingControl() {
   // Expand path to selected node when a node is selected
   useEffect(() => {
     if (selectedNode && treeData && treeData.length > 0) {
-      const pathToNode = getPathToNode(selectedNode.id);
+      const pathToNode = getPathToNode(selectedNode.id, treeData);
       if (pathToNode) {
         debugLog('Selected node:', selectedNode.label);
         debugLog('Path to selected node:', pathToNode);
@@ -3209,7 +2460,7 @@ export default function HeatingControl() {
         setForceExpand(false); // Disable force expand, use specific path
       }
     }
-  }, [selectedNode, treeData, getPathToNode]);
+  }, [selectedNode, treeData]);
 
   // Scroll to selected node when it changes
   useEffect(() => {
@@ -3649,7 +2900,7 @@ export default function HeatingControl() {
                   <Tree
                   ref={treeRef}
                   tree={(() => {
-                    const filtered = getFilteredTreeData();
+                    const filtered = getFilteredTreeData(treeData, treeSearchTerm);
                     const converted = convertToTreeViewFormat(filtered);
                     debugLog('Filtered tree data:', filtered);
                     debugLog('Converted tree data:', converted);
@@ -3663,11 +2914,12 @@ export default function HeatingControl() {
                     dropTarget: 'drop-target'
                   }}
                   render={(node, { onToggle, dragHandle, isOpen }) => (
-                    <CustomNode
+                    <TreeNode
                       node={node}
                       onToggle={onToggle}
-                      dragHandle={dragHandle}
                       isOpen={isOpen}
+                      selectedNode={selectedNode}
+                      onSelect={handleNodeSelect}
                     />
                   )}
                   //openNodes={getAllNodeIds(treeData)}
@@ -3765,7 +3017,7 @@ export default function HeatingControl() {
                               debugLog('🟡 [DEBUG] selectedNode.data?.runStatus:', selectedNode.data?.runStatus);
                               debugLog('🟡 [DEBUG] selectedNode.runStatus:', selectedNode.runStatus);
                               debugLog('🟡 [DEBUG] Final runStatus (preferring nodeDetails):', runStatus);
-                              debugLog('🟡 [DEBUG] runStatus === "PIR":', runStatus === 'PIR');
+                              debugLog('🟡 [DEBUG] runStatus is PIR:', isPirRunStatus(runStatus));
                               debugLog('🟡 [DEBUG] runStatus === "fix":', runStatus === 'fix');
                               
                               // Set original values
@@ -3782,10 +3034,10 @@ export default function HeatingControl() {
                               }
                               
                               // Load schedule data if customer data is available AND current status is 'schedule'
-                              if (customerData?.customerid && runStatus === 'schedule') {
+if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runStatus))) {
                                 fetchScheduleData(customerData.customerid);
                               }
-                              
+
                               // Parse existing scheduler plan
                               const schedulerPlanValue = nodeDetails?.attributes?.schedulerPlan || selectedNode.data?.schedulerPlan;
                               if (schedulerPlanValue) {
@@ -3799,11 +3051,23 @@ export default function HeatingControl() {
                               } else {
                                 setOriginalSchedulerPlan([]);
                               }
+                              const schedulerPlanPIRValue = nodeDetails?.attributes?.schedulerPlanPIR || selectedNode.data?.schedulerPlanPIR;
+                              if (schedulerPlanPIRValue) {
+                                try {
+                                  const planArrayPIR = JSON.parse(schedulerPlanPIRValue);
+                                  setOriginalSchedulerPlanPIR(Array.isArray(planArrayPIR) ? planArrayPIR : []);
+                                } catch (error) {
+                                  setOriginalSchedulerPlanPIR([]);
+                                }
+                              } else {
+                                setOriginalSchedulerPlanPIR([]);
+                              }
                               
                               // Reset pending changes
                               setPendingRunStatus(null);
                               setPendingFixValue(null);
                               setSelectedDayPlans({});
+                              setSelectedDayPlansPIR({});
                               setHasUnsavedChanges(false);
                             }
                           }}
@@ -3905,7 +3169,7 @@ export default function HeatingControl() {
                                 debugLog('🟡 [DEBUG] selectedNode.data?.runStatus:', selectedNode.data?.runStatus);
                                 debugLog('🟡 [DEBUG] selectedNode.runStatus:', selectedNode.runStatus);
                                 debugLog('🟡 [DEBUG] Final runStatus (preferring nodeDetails):', runStatus);
-                                debugLog('🟡 [DEBUG] runStatus === "PIR":', runStatus === 'PIR');
+                                debugLog('🟡 [DEBUG] runStatus is PIR:', isPirRunStatus(runStatus));
                                 debugLog('🟡 [DEBUG] runStatus === "fix":', runStatus === 'fix');
                                 
                                 // Set original values
@@ -3922,7 +3186,7 @@ export default function HeatingControl() {
                                 }
                                 
                                 // Load schedule data if customer data is available AND current status is 'schedule'
-                                if (customerData?.customerid && runStatus === 'schedule') {
+                                if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runStatus))) {
                                   fetchScheduleData(customerData.customerid);
                                 }
                                 
@@ -3939,11 +3203,23 @@ export default function HeatingControl() {
                                 } else {
                                   setOriginalSchedulerPlan([]);
                                 }
+                                const schedulerPlanPIRValue = nodeDetails?.attributes?.schedulerPlanPIR || selectedNode.data?.schedulerPlanPIR;
+                                if (schedulerPlanPIRValue) {
+                                  try {
+                                    const planArrayPIR = JSON.parse(schedulerPlanPIRValue);
+                                    setOriginalSchedulerPlanPIR(Array.isArray(planArrayPIR) ? planArrayPIR : []);
+                                  } catch (error) {
+                                    setOriginalSchedulerPlanPIR([]);
+                                  }
+                                } else {
+                                  setOriginalSchedulerPlanPIR([]);
+                                }
                                 
                                 // Reset pending changes
                                 setPendingRunStatus(null);
                                 setPendingFixValue(null);
                                 setSelectedDayPlans({});
+                                setSelectedDayPlansPIR({});
                                 setHasUnsavedChanges(false);
                               }
                             }}>
@@ -4121,7 +3397,7 @@ export default function HeatingControl() {
                                     minHeight: '400px'
                                   }}>
                                     <ReactECharts
-                                      option={getTemperatureChartOption()}
+                                      option={getTemperatureChartOptionForRender()}
                                       style={{ height: '400px', width: '100%' }}
                                       opts={{ renderer: 'canvas' }}
                                     />
@@ -4359,17 +3635,19 @@ export default function HeatingControl() {
                                     <small className="text-muted">Fix</small>
                                   </div>
                                 </div>
-                                <div className="text-center">
-                                  <img 
-                                    src={(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) === 'PIR' ? "/assets/img/hm_pir_active.svg" : "/assets/img/hm_pir_inactive.svg"}
-                                    alt="Bewegung"
-                                    style={{ width: '60px', height: '60px', cursor: 'pointer' }}
-                                    onClick={() => updateRunStatus('PIR')}
-                                  />
-                                  <div className="mt-2">
-                                    <small className="text-muted">Bewegung</small>
+                                {usePresenceSensor && (
+                                  <div className="text-center">
+                                    <img 
+                                      src={isPirRunStatus(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) ? "/assets/img/hm_pir_active.svg" : "/assets/img/hm_pir_inactive.svg"}
+                                      alt="Bewegung"
+                                      style={{ width: '60px', height: '60px', cursor: 'pointer' }}
+                                      onClick={() => updateRunStatus('PIR')}
+                                    />
+                                    <div className="mt-2">
+                                      <small className="text-muted">Bewegung</small>
+                                    </div>
                                   </div>
-                                </div>
+                                )}
                               </div>
                             </div>
 
@@ -4616,10 +3894,165 @@ export default function HeatingControl() {
                               </div>
                             )}
 
-                            {/* Motion Widget - Placeholder for future implementation */}
-                            {(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) === 'PIR' && (
+                            {/* PIR (Bewegung) – Wochenplan-Tabelle analog zu Plan, Daten aus schedulerPlanPIR */}
+                            {isPirRunStatus(pendingRunStatus !== null ? pendingRunStatus : nodeDetails?.attributes?.runStatus) && usePresenceSensor && (
                               <div className="mb-4">
-                                {/* Content will be added in future steps */}
+                                {hasUnsavedChanges && (Object.keys(selectedDayPlansPIR).length > 0 || isPirRunStatus(pendingRunStatus)) && (
+                                  <div className="d-flex justify-content-end gap-2 mb-2">
+                                    <button
+                                      className="btn btn-outline-secondary btn-sm"
+                                      onClick={cancelChanges}
+                                      type="button"
+                                    >
+                                      Abbrechen
+                                    </button>
+                                    <button
+                                      className="btn btn-warning btn-sm"
+                                      onClick={saveChanges}
+                                      disabled={savingSchedule}
+                                    >
+                                      {savingSchedule ? (
+                                        <>
+                                          <span className="spinner-border spinner-border-sm me-1" role="status"></span>
+                                          Speichern...
+                                        </>
+                                      ) : (
+                                        <>
+                                          <FontAwesomeIcon icon={faCheckCircle} className="me-1" />
+                                          Speichern
+                                        </>
+                                      )}
+                                    </button>
+                                  </div>
+                                )}
+                                <div className="card" style={{
+                                  border: '2px solid #17a2b8',
+                                  borderRadius: '15px',
+                                  boxShadow: '0 4px 15px rgba(23, 162, 184, 0.1)'
+                                }}>
+                                  <div className="card-body">
+                                    <h5 className="card-title text-info mb-3">
+                                      <FontAwesomeIcon icon={faBullseye} className="me-2" />
+                                      Wochenplan Bewegung (PIR)
+                                    </h5>
+                                    {loadingSchedule ? (
+                                      <div className="text-center py-5">
+                                        <div className="spinner-border text-info" role="status">
+                                          <span className="visually-hidden">Loading...</span>
+                                        </div>
+                                        <p className="mt-2 text-muted">Lade Wochenplan...</p>
+                                      </div>
+                                    ) : scheduleData && Array.isArray(scheduleData) && scheduleData.length > 0 ? (
+                                      <div className="table-responsive">
+                                        <table className="table table-sm table-bordered">
+                                          <thead className="table-info">
+                                            <tr>
+                                              <th style={{ width: '60px' }}>Std</th>
+                                              {['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map((day, dayIndex) => (
+                                                <th key={day} className="text-center" style={{ minWidth: '120px', fontSize: '0.9rem', padding: '0.5rem 0.25rem' }}>
+                                                  <div className="fw-bold">{day}</div>
+                                                  <div style={{ marginTop: '5px' }}>
+                                                    <select
+                                                      className="form-select form-select-sm"
+                                                      value={(() => {
+                                                        if (selectedDayPlansPIR[dayIndex] !== undefined) {
+                                                          return selectedDayPlansPIR[dayIndex];
+                                                        }
+                                                        const val = nodeDetails?.attributes?.schedulerPlanPIR;
+                                                        if (val && Array.isArray(scheduleData)) {
+                                                          try {
+                                                            const arr = JSON.parse(val);
+                                                            if (Array.isArray(arr) && arr[dayIndex]) {
+                                                              const foundIndex = scheduleData.findIndex(plan => plan[0] === arr[dayIndex]);
+                                                              return foundIndex !== -1 ? foundIndex : 0;
+                                                            }
+                                                          } catch (e) { /* ignore */ }
+                                                        }
+                                                        return 0;
+                                                      })()}
+                                                      onChange={(e) => handlePlanChangePIR(dayIndex, parseInt(e.target.value))}
+                                                      style={{ fontSize: '0.7rem', border: '1px solid #dee2e6' }}
+                                                    >
+                                                      {Array.isArray(scheduleData) ? scheduleData.map((plan, planIndex) => (
+                                                        <option key={planIndex} value={planIndex}>{plan[0]}</option>
+                                                      )) : null}
+                                                    </select>
+                                                  </div>
+                                                </th>
+                                              ))}
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {Array.from({ length: 24 }, (_, hour) => (
+                                              <tr key={hour}>
+                                                <td className="fw-bold text-muted text-center" style={{
+                                                  backgroundColor: hour % 2 === 0 ? '#ffffff' : '#e8e8e8',
+                                                  fontSize: '0.8rem'
+                                                }}>
+                                                  {hour.toString().padStart(2, '0')}
+                                                </td>
+                                                {['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map((day, dayIndex) => {
+                                                  const availablePlans = Array.isArray(scheduleData) ? scheduleData : [];
+                                                  let selectedPlanIndex;
+                                                  if (selectedDayPlansPIR[dayIndex] !== undefined) {
+                                                    selectedPlanIndex = selectedDayPlansPIR[dayIndex];
+                                                  } else {
+                                                    const val = nodeDetails?.attributes?.schedulerPlanPIR;
+                                                    if (val && Array.isArray(scheduleData)) {
+                                                      try {
+                                                        const arr = JSON.parse(val);
+                                                        if (Array.isArray(arr) && arr[dayIndex]) {
+                                                          const foundIndex = scheduleData.findIndex(plan => plan[0] === arr[dayIndex]);
+                                                          selectedPlanIndex = foundIndex !== -1 ? foundIndex : 0;
+                                                        } else {
+                                                          selectedPlanIndex = 0;
+                                                        }
+                                                      } catch (e) {
+                                                        selectedPlanIndex = 0;
+                                                      }
+                                                    } else {
+                                                      selectedPlanIndex = 0;
+                                                    }
+                                                  }
+                                                  const selectedPlanData = availablePlans[selectedPlanIndex];
+                                                  const planSchedule = selectedPlanData?.[1] || [];
+                                                  const temp = planSchedule?.[hour];
+                                                  return (
+                                                    <td key={dayIndex} className="text-center" style={{
+                                                      padding: '0.5rem 0.25rem',
+                                                      fontSize: '0.8rem',
+                                                      backgroundColor: hour % 2 === 0 ? '#ffffff' : '#e8e8e8',
+                                                      color: temp ? '#0c5460' : '#6c757d',
+                                                      fontWeight: temp ? 'bold' : 'normal'
+                                                    }}>
+                                                      {temp ? `${temp}°` : '-'}
+                                                    </td>
+                                                  );
+                                                })}
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    ) : (
+                                      <div className="alert alert-info">
+                                        <FontAwesomeIcon icon={faInfoCircle} className="me-2" />
+                                        <strong>Kein Wochenplan verfügbar.</strong>
+                                        <br />
+                                        <small>
+                                          {scheduleData ? 'Keine gültigen Plan-Daten gefunden.' : 'Plan-Daten werden geladen oder sind nicht verfügbar.'}
+                                        </small>
+                                        {nodeDetails?.attributes?.schedulerPlanPIR && (
+                                          <div className="mt-2">
+                                            <small className="text-muted">
+                                              PIR-Wochenplan ist konfiguriert.
+                                            </small>
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
                               </div>
                             )}
 
@@ -4660,7 +4093,7 @@ export default function HeatingControl() {
                     {activeTab === 'empty' && selectedNode && (selectedNode.hasDevices === false || (selectedNode.data?.hasDevices === false)) && (
                       <div className="tab-pane fade show active">
                         {(() => {
-                          const { path, subordinates } = getAllSubordinateNodes(selectedNode?.id);
+                          const { path, subordinates } = getAllSubordinateNodes(selectedNode?.id, treeData);
                           
                           // Get all subordinates without filtering to calculate the difference
                           const getAllSubordinatesWithoutFilter = (nodeId, nodes = treeData) => {
