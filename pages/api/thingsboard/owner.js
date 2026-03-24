@@ -184,7 +184,7 @@ export default async function handler(req, res) {
         ownerId: { id: customerId },
         customerId: { id: customerId }
       };
-      const updateRes = await fetchWithRetry(`${baseUrl}/api/device/${deviceId}`, {
+      const updateRes = await fetchWithRetry(`${baseUrl}/api/device`, {
         method: 'POST',
         headers: tbHeaders,
         body: JSON.stringify(devicePayload)
@@ -327,7 +327,7 @@ export default async function handler(req, res) {
               ownerId: { id: tenantId, entityType: 'TENANT' },
               customerId: null
             };
-            const updateRes = await fetchWithRetry(`${baseUrl}/api/device/${deviceId}`, {
+            const updateRes = await fetchWithRetry(`${baseUrl}/api/device`, {
               method: 'POST',
               headers: tbHeaders,
               body: JSON.stringify(unassignPayload)
