@@ -1,6 +1,6 @@
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../auth/[...nextauth]';
-import { getMelitaToken } from '../../../../../lib/melitaAuth';
+import { getMelitaApiConnection, getMelitaToken } from '../../../../../lib/melitaAuth';
 
 /**
  * GET /api/lns/melita/device-profiles
@@ -16,19 +16,19 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Nicht authentifiziert' });
   }
 
-  const baseUrl = (process.env.MELITA_BASE_URL || '').replace(/\/+$/, '');
   // Melita API: GET /api/iot-gateway/lorawan/profiles (see https://www.melita.io/api-documentation/#/)
   const profilesPath = process.env.MELITA_DEVICE_PROFILES_PATH || '/api/iot-gateway/lorawan/profiles';
 
-  if (!process.env.MELITA_API_KEY || !baseUrl) {
-    return res.status(500).json({
-      error: 'Melita API nicht konfiguriert (MELITA_API_KEY, MELITA_BASE_URL).',
-    });
-  }
-
   try {
-    const authToken = await getMelitaToken();
-    const url = `${baseUrl}${profilesPath.startsWith('/') ? '' : '/'}${profilesPath}`;
+    const melitaConn = await getMelitaApiConnection();
+    if (!melitaConn?.apiKey || !melitaConn?.baseUrl) {
+      return res.status(500).json({
+        error: 'Melita API nicht konfiguriert',
+        details: 'Keine Melita Verbindung in mw/nwconnections gefunden (und MELITA_API_KEY/MELITA_BASE_URL nicht gesetzt).',
+      });
+    }
+    const authToken = await getMelitaToken({ apiKey: melitaConn.apiKey, baseUrl: melitaConn.baseUrl });
+    const url = `${melitaConn.baseUrl}${profilesPath.startsWith('/') ? '' : '/'}${profilesPath}`;
 
     const response = await fetch(url, {
       method: 'GET',

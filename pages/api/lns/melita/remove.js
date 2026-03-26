@@ -1,7 +1,7 @@
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../auth/[...nextauth]';
 import { getConnection, getMssqlConfig } from '../../../../lib/db';
-import { getMelitaToken } from '../../../../lib/melitaAuth';
+import { getMelitaApiConnection, getMelitaToken } from '../../../../lib/melitaAuth';
 import sql from 'mssql';
 
 /**
@@ -25,16 +25,19 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'deviceIds (array) ist erforderlich.' });
   }
 
-  const baseUrl = (process.env.MELITA_BASE_URL || '').replace(/\/+$/, '');
   const removePath = process.env.MELITA_REMOVE_DEVICE_PATH || '/api/iot-gateway/lorawan';
 
-  if (!process.env.MELITA_API_KEY || !baseUrl) {
-    return res.status(500).json({
-      error: 'Melita API nicht konfiguriert (MELITA_API_KEY, MELITA_BASE_URL).',
-    });
-  }
-
   try {
+    const melitaConn = await getMelitaApiConnection();
+    if (!melitaConn?.apiKey || !melitaConn?.baseUrl) {
+      return res.status(500).json({
+        error: 'Melita API nicht konfiguriert',
+        details: 'Keine Melita Verbindung in mw/nwconnections gefunden und MELITA_API_KEY/MELITA_BASE_URL nicht gesetzt.',
+      });
+    }
+    const baseUrl = melitaConn.baseUrl;
+    const authToken = await getMelitaToken({ apiKey: melitaConn.apiKey, baseUrl: melitaConn.baseUrl });
+
     const pool = await getConnection();
     const db = getMssqlConfig().database;
 
@@ -55,7 +58,6 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: 'Keine Geräte mit den angegebenen IDs gefunden.' });
     }
 
-    const authToken = await getMelitaToken();
     const errors = [];
     let melitaRemoved = 0;
 

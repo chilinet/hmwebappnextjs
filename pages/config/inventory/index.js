@@ -47,11 +47,26 @@ function Inventory() {
   const [melitaProfiles, setMelitaProfiles] = useState([]);
   const [melitaProfilesLoading, setMelitaProfilesLoading] = useState(false);
   const [melitaProfilesError, setMelitaProfilesError] = useState(null);
+  const [thingsstackApplications, setThingsstackApplications] = useState([]);
+  const [thingsstackApplicationsLoading, setThingsstackApplicationsLoading] = useState(false);
+  const [thingsstackApplicationsError, setThingsstackApplicationsError] = useState(null);
+  const [thingsstackInputMethod, setThingsstackInputMethod] = useState('manual'); // manual | repository
+  const [thingsstackFrequencyPlanId, setThingsstackFrequencyPlanId] = useState('EU_863_870');
+  const [thingsstackMacVersion, setThingsstackMacVersion] = useState('MAC_V1_0_2');
+  const [thingsstackPhyVersion, setThingsstackPhyVersion] = useState('PHY_V1_0_2_REV_B');
+  const [thingsstackBrands, setThingsstackBrands] = useState([]);
+  const [thingsstackBrandsLoading, setThingsstackBrandsLoading] = useState(false);
+  const [thingsstackBrandsError, setThingsstackBrandsError] = useState(null);
+  const [thingsstackBrandId, setThingsstackBrandId] = useState('');
+  const [thingsstackModels, setThingsstackModels] = useState([]);
+  const [thingsstackModelsLoading, setThingsstackModelsLoading] = useState(false);
+  const [thingsstackModelsError, setThingsstackModelsError] = useState(null);
+  const [thingsstackModelId, setThingsstackModelId] = useState('');
   const [assignLnsSelectedProfile, setAssignLnsSelectedProfile] = useState('');
   const [isAssigningLns, setIsAssigningLns] = useState(false);
   const [assignLnsError, setAssignLnsError] = useState(null);
   const [isRemovingLns, setIsRemovingLns] = useState(false);
-  const LNS_OPTIONS = [{ value: 'melita', label: 'Melita' }, { value: 'tti', label: 'TTI' }, { value: 'thingsstack', label: 'Thingsstack' }];
+  const LNS_OPTIONS = [{ value: 'melita', label: 'Melita' }, { value: 'thingsstack', label: 'Thingsstack' }];
 
   // Excel Import States
   const [showImportModal, setShowImportModal] = useState(false);
@@ -125,6 +140,88 @@ function Inventory() {
     return () => { cancelled = true; };
   }, [showAssignLnsModal, assignLnsSelectedLns, session?.token]);
 
+  // Fetch Thingsstack Device Repository brands
+  useEffect(() => {
+    if (!showAssignLnsModal || assignLnsSelectedLns !== 'thingsstack' || thingsstackInputMethod !== 'repository' || !session?.token) {
+      if (assignLnsSelectedLns !== 'thingsstack' || thingsstackInputMethod !== 'repository') {
+        setThingsstackBrands([]);
+        setThingsstackBrandsError(null);
+        setThingsstackBrandId('');
+        setThingsstackModels([]);
+        setThingsstackModelsError(null);
+        setThingsstackModelId('');
+      }
+      return;
+    }
+    let cancelled = false;
+    setThingsstackBrandsLoading(true);
+    setThingsstackBrandsError(null);
+    fetch('/api/lns/thingsstack/device-repository/brands', {
+      headers: { 'Authorization': `Bearer ${session.token}` },
+    })
+      .then((res) => {
+        if (cancelled) return res;
+        if (!res.ok) return res.json().then((body) => { throw new Error(body?.error || body?.details || res.statusText); });
+        return res.json();
+      })
+      .then((data) => {
+        if (!cancelled) {
+          setThingsstackBrands(data?.brands ?? []);
+          setThingsstackBrandsError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setThingsstackBrands([]);
+          setThingsstackBrandsError(err.message || 'Fehler beim Laden der Device Repository Brands');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setThingsstackBrandsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [showAssignLnsModal, assignLnsSelectedLns, thingsstackInputMethod, session?.token]);
+
+  // Fetch Thingsstack Device Repository models for selected brand
+  useEffect(() => {
+    if (!showAssignLnsModal || assignLnsSelectedLns !== 'thingsstack' || thingsstackInputMethod !== 'repository' || !thingsstackBrandId || !session?.token) {
+      if (!thingsstackBrandId) {
+        setThingsstackModels([]);
+        setThingsstackModelsError(null);
+        setThingsstackModelId('');
+      }
+      return;
+    }
+    let cancelled = false;
+    setThingsstackModelsLoading(true);
+    setThingsstackModelsError(null);
+    setThingsstackModelId('');
+    fetch(`/api/lns/thingsstack/device-repository/models?brandId=${encodeURIComponent(thingsstackBrandId)}`, {
+      headers: { 'Authorization': `Bearer ${session.token}` },
+    })
+      .then((res) => {
+        if (cancelled) return res;
+        if (!res.ok) return res.json().then((body) => { throw new Error(body?.error || body?.details || res.statusText); });
+        return res.json();
+      })
+      .then((data) => {
+        if (!cancelled) {
+          setThingsstackModels(data?.models ?? []);
+          setThingsstackModelsError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setThingsstackModels([]);
+          setThingsstackModelsError(err.message || 'Fehler beim Laden der Device Repository Models');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setThingsstackModelsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [showAssignLnsModal, assignLnsSelectedLns, thingsstackInputMethod, thingsstackBrandId, session?.token]);
+
   // Fetch Melita device profiles when contract is selected (for Assign LNS)
   useEffect(() => {
     if (!showAssignLnsModal || assignLnsSelectedLns !== 'melita' || !assignLnsSelectedOffer || !session?.token) {
@@ -164,6 +261,44 @@ function Inventory() {
       });
     return () => { cancelled = true; };
   }, [showAssignLnsModal, assignLnsSelectedLns, assignLnsSelectedOffer, session?.token]);
+
+  // Fetch Thingsstack applications when Assign LNS modal is open and Thingsstack is selected
+  useEffect(() => {
+    if (!showAssignLnsModal || assignLnsSelectedLns !== 'thingsstack' || !session?.token) {
+      if (assignLnsSelectedLns !== 'thingsstack') {
+        setThingsstackApplications([]);
+        setThingsstackApplicationsError(null);
+      }
+      return;
+    }
+    let cancelled = false;
+    setThingsstackApplicationsLoading(true);
+    setThingsstackApplicationsError(null);
+    fetch('/api/lns/thingsstack/applications', {
+      headers: { 'Authorization': `Bearer ${session.token}` },
+    })
+      .then((res) => {
+        if (cancelled) return res;
+        if (!res.ok) return res.json().then((body) => { throw new Error(body?.error || body?.details?.message || body?.details || res.statusText); });
+        return res.json();
+      })
+      .then((data) => {
+        if (!cancelled) {
+          setThingsstackApplications(data?.offers ?? []);
+          setThingsstackApplicationsError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setThingsstackApplications([]);
+          setThingsstackApplicationsError(err.message || 'Fehler beim Laden der Thingsstack Applications');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setThingsstackApplicationsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [showAssignLnsModal, assignLnsSelectedLns, session?.token]);
 
   // Fetch devices with retry mechanism
   const fetchDevices = useCallback(async (retryCount = 0) => {
@@ -674,11 +809,19 @@ function Inventory() {
   };
 
   const handleAssignLns = async () => {
-    if (assignLnsSelectedLns !== 'melita' || !assignLnsSelectedOffer || selectedDeviceIds.length === 0) {
-      setAssignLnsError(assignLnsSelectedLns !== 'melita' ? 'Nur Melita LNS wird derzeit unterstützt.' : 'Bitte Offer/Contract auswählen.');
+    if (!assignLnsSelectedLns || selectedDeviceIds.length === 0) {
+      setAssignLnsError('Bitte LNS und mindestens ein Gerät auswählen.');
       return;
     }
-    if (!assignLnsSelectedProfile || assignLnsSelectedProfile.trim() === '') {
+    if (!assignLnsSelectedOffer || assignLnsSelectedOffer.trim() === '') {
+      setAssignLnsError(assignLnsSelectedLns === 'thingsstack' ? 'Bitte Application auswählen.' : 'Bitte Offer/Contract auswählen.');
+      return;
+    }
+    if (assignLnsSelectedLns === 'thingsstack' && thingsstackInputMethod === 'repository' && (!thingsstackBrandId || !thingsstackModelId)) {
+      setAssignLnsError('Bitte Device Repository Brand und Model auswählen.');
+      return;
+    }
+    if (assignLnsSelectedLns === 'melita' && (!assignLnsSelectedProfile || assignLnsSelectedProfile.trim() === '')) {
       setAssignLnsError('Bitte Device Profile auswählen.');
       return;
     }
@@ -686,33 +829,59 @@ function Inventory() {
     setIsAssigningLns(true);
     try {
       const lnsName = LNS_OPTIONS.find((o) => o.value === assignLnsSelectedLns)?.label || assignLnsSelectedLns || 'Melita';
-      const res = await fetch('/api/lns/melita/assign', {
+      const endpoint = assignLnsSelectedLns === 'thingsstack' ? '/api/lns/thingsstack/assign' : '/api/lns/melita/assign';
+      const body = assignLnsSelectedLns === 'thingsstack'
+        ? {
+            deviceIds: selectedDeviceIds,
+            applicationId: assignLnsSelectedOffer.trim(),
+            lnsAssignmentName: lnsName,
+            thingsstackConfig: {
+              inputMethod: thingsstackInputMethod,
+              frequencyPlanId: thingsstackFrequencyPlanId,
+              macVersion: thingsstackMacVersion,
+              phyVersion: thingsstackPhyVersion,
+              brandId: thingsstackBrandId,
+              modelId: thingsstackModelId,
+            },
+          }
+        : {
+            deviceIds: selectedDeviceIds,
+            contractId: assignLnsSelectedOffer.trim(),
+            deviceProfileId: assignLnsSelectedProfile.trim(),
+            lnsAssignmentName: lnsName,
+          };
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          deviceIds: selectedDeviceIds,
-          contractId: assignLnsSelectedOffer.trim(),
-          deviceProfileId: assignLnsSelectedProfile.trim(),
-          lnsAssignmentName: lnsName,
-        }),
+        body: JSON.stringify(body),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(data?.error || data?.details || res.statusText);
       }
       const { success, failed, errors } = data;
-      const contractId = assignLnsSelectedOffer;
+      const selectedTarget = assignLnsSelectedOffer;
       await fetchDevices();
       setShowAssignLnsModal(false);
       setAssignLnsSelectedLns('');
       setAssignLnsSelectedOffer('');
       setAssignLnsSelectedProfile('');
+      setThingsstackInputMethod('manual');
+      setThingsstackFrequencyPlanId('EU_863_870');
+      setThingsstackMacVersion('MAC_V1_0_2');
+      setThingsstackPhyVersion('PHY_V1_0_2_REV_B');
+      setThingsstackBrandId('');
+      setThingsstackModelId('');
       setSelectedDeviceIds([]);
       if (failed > 0 && errors?.length) {
         setError(`${success} zugewiesen, ${failed} fehlgeschlagen: ${errors.slice(0, 2).join('; ')}`);
       } else if (success > 0) {
         setError(null);
-        alert(`${success} Gerät(e) erfolgreich zu Melita LNS (Contract ${contractId}) zugewiesen.`);
+        if (assignLnsSelectedLns === 'thingsstack') {
+          alert(`${success} Gerät(e) erfolgreich zu Thingsstack (Application ${selectedTarget}) zugewiesen.`);
+        } else {
+          alert(`${success} Gerät(e) erfolgreich zu Melita LNS (Contract ${selectedTarget}) zugewiesen.`);
+        }
       }
     } catch (err) {
       setAssignLnsError(err.message);
@@ -1929,6 +2098,16 @@ function Inventory() {
           setAssignLnsSelectedLns('');
           setAssignLnsSelectedOffer('');
           setAssignLnsSelectedProfile('');
+          setThingsstackInputMethod('manual');
+          setThingsstackFrequencyPlanId('EU_863_870');
+          setThingsstackMacVersion('MAC_V1_0_2');
+          setThingsstackPhyVersion('PHY_V1_0_2_REV_B');
+          setThingsstackBrandId('');
+          setThingsstackModelId('');
+          setThingsstackBrands([]);
+          setThingsstackModels([]);
+          setThingsstackBrandsError(null);
+          setThingsstackModelsError(null);
         }}
         size="md"
         centered
@@ -1947,6 +2126,13 @@ function Inventory() {
                 onChange={(e) => {
                   setAssignLnsSelectedLns(e.target.value);
                   setAssignLnsSelectedOffer('');
+                  setAssignLnsSelectedProfile('');
+                  setThingsstackInputMethod('manual');
+                  setThingsstackFrequencyPlanId('EU_863_870');
+                  setThingsstackMacVersion('MAC_V1_0_2');
+                  setThingsstackPhyVersion('PHY_V1_0_2_REV_B');
+                  setThingsstackBrandId('');
+                  setThingsstackModelId('');
                 }}
               >
                 <option value="">LNS auswählen...</option>
@@ -1956,25 +2142,34 @@ function Inventory() {
               </Form.Select>
             </Form.Group>
             <Form.Group className="mb-3">
-              <Form.Label>Offer / Contract</Form.Label>
+              <Form.Label>{assignLnsSelectedLns === 'thingsstack' ? 'Application' : 'Offer / Contract'}</Form.Label>
               <Form.Select
                 value={assignLnsSelectedOffer}
                 onChange={(e) => {
                   setAssignLnsSelectedOffer(e.target.value);
                   setAssignLnsSelectedProfile('');
                 }}
-                disabled={!assignLnsSelectedLns || (assignLnsSelectedLns === 'melita' && melitaOffersLoading)}
+                disabled={
+                  !assignLnsSelectedLns ||
+                  (assignLnsSelectedLns === 'melita' && melitaOffersLoading) ||
+                  (assignLnsSelectedLns === 'thingsstack' && thingsstackApplicationsLoading)
+                }
               >
                 <option value="">
                   {!assignLnsSelectedLns
                     ? 'Zuerst LNS auswählen'
                     : assignLnsSelectedLns === 'melita' && melitaOffersLoading
                       ? 'Lade Offers...'
+                      : assignLnsSelectedLns === 'thingsstack' && thingsstackApplicationsLoading
+                        ? 'Lade Applications...'
                       : assignLnsSelectedLns === 'melita'
                         ? 'Offer/Contract auswählen...'
-                        : 'Offer/Contract auswählen...'}
+                        : 'Application auswählen...'}
                 </option>
                 {assignLnsSelectedLns === 'melita' && melitaOffers.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+                {assignLnsSelectedLns === 'thingsstack' && thingsstackApplications.map((opt) => (
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </Form.Select>
@@ -1988,10 +2183,103 @@ function Inventory() {
               )}
               {assignLnsSelectedLns && assignLnsSelectedLns !== 'melita' && (
                 <Form.Text className="text-muted">
-                  Offer/Contract für dieses LNS wird später implementiert.
+                  Applications werden aus Thingsstack geladen (via mwconnections APIkey/URL).
                 </Form.Text>
               )}
+              {assignLnsSelectedLns === 'thingsstack' && thingsstackApplicationsError && (
+                <Form.Text className="text-danger">{thingsstackApplicationsError}</Form.Text>
+              )}
             </Form.Group>
+            {assignLnsSelectedLns === 'thingsstack' && assignLnsSelectedOffer && (
+              <>
+                <Form.Group className="mb-3">
+                  <Form.Label>Input method</Form.Label>
+                  <Form.Select
+                    value={thingsstackInputMethod}
+                    onChange={(e) => {
+                      const mode = e.target.value;
+                      setThingsstackInputMethod(mode);
+                      setThingsstackBrandId('');
+                      setThingsstackModelId('');
+                    }}
+                  >
+                    <option value="manual">Enter device specifics manually</option>
+                    <option value="repository">Select device in Device Repository</option>
+                  </Form.Select>
+                </Form.Group>
+                {thingsstackInputMethod === 'manual' && (
+                  <>
+                    <Form.Group className="mb-3">
+                      <Form.Label>Frequency plan</Form.Label>
+                      <Form.Select
+                        value={thingsstackFrequencyPlanId}
+                        onChange={(e) => setThingsstackFrequencyPlanId(e.target.value)}
+                      >
+                        <option value="EU_863_870">EU_863_870</option>
+                        <option value="EU_863_870_TTN">EU_863_870_TTN</option>
+                        <option value="US_902_928_FSB_2">US_902_928_FSB_2</option>
+                      </Form.Select>
+                    </Form.Group>
+                    <Form.Group className="mb-3">
+                      <Form.Label>LoRaWAN MAC version</Form.Label>
+                      <Form.Select
+                        value={thingsstackMacVersion}
+                        onChange={(e) => setThingsstackMacVersion(e.target.value)}
+                      >
+                        <option value="MAC_V1_0_2">MAC_V1_0_2</option>
+                        <option value="MAC_V1_0_3">MAC_V1_0_3</option>
+                        <option value="MAC_V1_1">MAC_V1_1</option>
+                      </Form.Select>
+                    </Form.Group>
+                    <Form.Group className="mb-3">
+                      <Form.Label>LoRaWAN PHY version</Form.Label>
+                      <Form.Select
+                        value={thingsstackPhyVersion}
+                        onChange={(e) => setThingsstackPhyVersion(e.target.value)}
+                      >
+                        <option value="PHY_V1_0_2_REV_B">PHY_V1_0_2_REV_B</option>
+                        <option value="PHY_V1_0_3_REV_A">PHY_V1_0_3_REV_A</option>
+                        <option value="PHY_V1_1_REV_B">PHY_V1_1_REV_B</option>
+                      </Form.Select>
+                    </Form.Group>
+                  </>
+                )}
+                {thingsstackInputMethod === 'repository' && (
+                  <>
+                    <Form.Group className="mb-3">
+                      <Form.Label>End device brand</Form.Label>
+                      <Form.Select
+                        value={thingsstackBrandId}
+                        onChange={(e) => setThingsstackBrandId(e.target.value)}
+                        disabled={thingsstackBrandsLoading}
+                      >
+                        <option value="">{thingsstackBrandsLoading ? 'Lade Brands...' : 'Brand auswählen...'}</option>
+                        {thingsstackBrands.map((opt) => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </Form.Select>
+                      {thingsstackBrandsError && <Form.Text className="text-danger">{thingsstackBrandsError}</Form.Text>}
+                    </Form.Group>
+                    <Form.Group className="mb-3">
+                      <Form.Label>Model</Form.Label>
+                      <Form.Select
+                        value={thingsstackModelId}
+                        onChange={(e) => setThingsstackModelId(e.target.value)}
+                        disabled={!thingsstackBrandId || thingsstackModelsLoading}
+                      >
+                        <option value="">
+                          {!thingsstackBrandId ? 'Zuerst Brand auswählen' : (thingsstackModelsLoading ? 'Lade Models...' : 'Model auswählen...')}
+                        </option>
+                        {thingsstackModels.map((opt) => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </Form.Select>
+                      {thingsstackModelsError && <Form.Text className="text-danger">{thingsstackModelsError}</Form.Text>}
+                    </Form.Group>
+                  </>
+                )}
+              </>
+            )}
             {assignLnsSelectedLns === 'melita' && assignLnsSelectedOffer && (
               <Form.Group className="mb-3">
                 <Form.Label>Device Profile</Form.Label>
@@ -2027,6 +2315,12 @@ function Inventory() {
               setAssignLnsSelectedLns('');
               setAssignLnsSelectedOffer('');
               setAssignLnsSelectedProfile('');
+              setThingsstackInputMethod('manual');
+              setThingsstackFrequencyPlanId('EU_863_870');
+              setThingsstackMacVersion('MAC_V1_0_2');
+              setThingsstackPhyVersion('PHY_V1_0_2_REV_B');
+              setThingsstackBrandId('');
+              setThingsstackModelId('');
               setAssignLnsError(null);
             }}
             disabled={isAssigningLns}
@@ -2038,6 +2332,8 @@ function Inventory() {
             onClick={handleAssignLns}
             disabled={
               !assignLnsSelectedLns ||
+              !assignLnsSelectedOffer ||
+              (assignLnsSelectedLns === 'thingsstack' && thingsstackInputMethod === 'repository' && (!thingsstackBrandId || !thingsstackModelId)) ||
               (assignLnsSelectedLns === 'melita' && (!assignLnsSelectedOffer || !assignLnsSelectedProfile)) ||
               isAssigningLns
             }

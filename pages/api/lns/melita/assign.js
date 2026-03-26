@@ -1,7 +1,7 @@
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../auth/[...nextauth]';
 import { getConnection, getMssqlConfig } from '../../../../lib/db';
-import { getMelitaToken } from '../../../../lib/melitaAuth';
+import { getMelitaApiConnection, getMelitaToken } from '../../../../lib/melitaAuth';
 import sql from 'mssql';
 
 /**
@@ -32,18 +32,21 @@ export default async function handler(req, res) {
     });
   }
 
-  const baseUrl = (process.env.MELITA_BASE_URL || '').replace(/\/+$/, '');
   const contractIdTrimmed = String(contractId).trim();
   // Melita "Create New Device": POST /api/iot-gateway/lorawan/device (singular), body: contractId, deviceProfileId, devicesRequest[]
   const addDevicePath = process.env.MELITA_ADD_DEVICE_PATH || '/api/iot-gateway/lorawan/device';
 
-  if (!process.env.MELITA_API_KEY || !baseUrl) {
-    return res.status(500).json({
-      error: 'Melita API nicht konfiguriert (MELITA_API_KEY, MELITA_BASE_URL).',
-    });
-  }
-
   try {
+    const melitaConn = await getMelitaApiConnection();
+    if (!melitaConn?.apiKey || !melitaConn?.baseUrl) {
+      return res.status(500).json({
+        error: 'Melita API nicht konfiguriert',
+        details: 'Keine Melita Verbindung in mw/nwconnections gefunden und MELITA_API_KEY/MELITA_BASE_URL nicht gesetzt.',
+      });
+    }
+    const baseUrl = melitaConn.baseUrl;
+    const authTokenForMelita = await getMelitaToken({ apiKey: melitaConn.apiKey, baseUrl: melitaConn.baseUrl });
+
     const pool = await getConnection();
     const db = getMssqlConfig().database;
 
@@ -64,7 +67,7 @@ export default async function handler(req, res) {
       return res.status(404).json({ error: 'Keine Geräte mit den angegebenen IDs gefunden.' });
     }
 
-    const authToken = await getMelitaToken();
+    const authToken = authTokenForMelita;
     const url = `${baseUrl}${addDevicePath.startsWith('/') ? '' : '/'}${addDevicePath}`;
     const profileId = String(deviceProfileId).trim();
 

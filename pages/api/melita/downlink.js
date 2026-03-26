@@ -1,18 +1,14 @@
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../auth/[...nextauth]";
-import { getMelitaToken } from "../../../lib/melitaAuth";
-
-// Melita.io Konfiguration
-const MELITA_BASE_URL = process.env.MELITA_BASE_URL;
+import { getMelitaApiConnection, getMelitaToken } from "../../../lib/melitaAuth";
 
 const POSSIBLE_DOWNLINK_ENDPOINTS = [
   '/api/iot-gateway/lorawan/{deviceEui}/queue'
 ];
 
 // Downlink-Nachricht an Melita.io senden
-async function sendDownlinkToMelita(deviceEui, payload, authToken, confirmed, fPort) {
-  // Base-URL korrekt formatieren
-  const baseUrl = MELITA_BASE_URL.endsWith('/') ? MELITA_BASE_URL.slice(0, -1) : MELITA_BASE_URL;
+async function sendDownlinkToMelita(deviceEui, payload, authToken, confirmed, fPort, baseUrl) {
+  const normalizedBaseUrl = (String(baseUrl || '').trim()).replace(/\/+$/, '');
   
   // Device EUI Format validieren (sollte 16 Zeichen Hex-String sein)
   if (!/^[0-9a-fA-F]{16}$/.test(deviceEui)) {
@@ -27,7 +23,7 @@ async function sendDownlinkToMelita(deviceEui, payload, authToken, confirmed, fP
   for (const endpointTemplate of POSSIBLE_DOWNLINK_ENDPOINTS) {
     try {
       const endpoint = endpointTemplate.replace('{deviceEui}', deviceEui);
-      const downlinkUrl = `${baseUrl}${endpoint}`;
+      const downlinkUrl = `${normalizedBaseUrl}${endpoint}`;
       
       console.log(`[MELITA] Trying downlink endpoint: ${downlinkUrl}`);
       
@@ -118,11 +114,19 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Invalid base64 payload' });
     }
 
-    // Melita.io Token holen
-    const authToken = await getMelitaToken();
+    const melitaConn = await getMelitaApiConnection();
+    if (!melitaConn?.apiKey || !melitaConn?.baseUrl) {
+      return res.status(500).json({
+        error: 'Melita API nicht konfiguriert',
+        details: 'Keine Melita Verbindung in mw/nwconnections gefunden und MELITA_API_KEY/MELITA_BASE_URL nicht gesetzt.',
+      });
+    }
+
+    const authToken = await getMelitaToken({ apiKey: melitaConn.apiKey, baseUrl: melitaConn.baseUrl });
+    const baseUrl = melitaConn.baseUrl;
 
     // Downlink-Nachricht senden
-    const result = await sendDownlinkToMelita(deviceEui, payload, authToken, confirmed, fPort);
+    const result = await sendDownlinkToMelita(deviceEui, payload, authToken, confirmed, fPort, baseUrl);
 
     // Erfolgreiche Antwort
     return res.status(200).json({

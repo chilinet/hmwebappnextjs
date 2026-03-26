@@ -1,11 +1,11 @@
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../auth/[...nextauth]';
-import { getMelitaToken } from '../../../../lib/melitaAuth';
+import { getMelitaApiConnection, getMelitaToken } from '../../../../lib/melitaAuth';
 
 /**
  * GET /api/lns/melita/offers
  * Fetches offers/contracts from Melita LoRaWAN API for the Assign LNS dropdown.
- * Uses MELITA_API_KEY and MELITA_BASE_URL from .env.
+ * Uses API key + base URL from DB (mwconnections/nwconnections) or falls back to .env.
  * Melita requires an auth token from /api/iot-gateway/auth/generate (ApiKey header), then Bearer token for API calls.
  */
 export default async function handler(req, res) {
@@ -18,19 +18,18 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: 'Nicht authentifiziert' });
   }
 
-  const baseUrl = (process.env.MELITA_BASE_URL || '').replace(/\/+$/, '');
   const offersPath = process.env.MELITA_OFFERS_PATH || '/api/iot-gateway/contracts';
 
-  if (!process.env.MELITA_API_KEY || !baseUrl) {
-    return res.status(500).json({
-      error: 'Melita API nicht konfiguriert',
-      details: 'MELITA_API_KEY und MELITA_BASE_URL müssen in .env gesetzt sein.',
-    });
-  }
-
   try {
-    const authToken = await getMelitaToken();
-    const url = `${baseUrl}${offersPath.startsWith('/') ? '' : '/'}${offersPath}`;
+    const connection = await getMelitaApiConnection();
+    if (!connection?.apiKey || !connection?.baseUrl) {
+      return res.status(500).json({
+        error: 'Melita API nicht konfiguriert',
+        details: 'Keine Melita Verbindung in mwconnections/nwconnections gefunden und MELITA_API_KEY/MELITA_BASE_URL nicht gesetzt.',
+      });
+    }
+    const authToken = await getMelitaToken({ apiKey: connection.apiKey, baseUrl: connection.baseUrl });
+    const url = `${connection.baseUrl}${offersPath.startsWith('/') ? '' : '/'}${offersPath}`;
 
     const response = await fetch(url, {
       method: 'GET',
