@@ -44,7 +44,8 @@ import {
   faPlay,
   faCloud,
   faWindowMaximize,
-  faUser
+  faUser,
+  faTable
 } from '@fortawesome/free-solid-svg-icons';
 import { Tree } from '@minoru/react-dnd-treeview';
 import { DndProvider } from 'react-dnd';
@@ -76,6 +77,66 @@ import TreeNode from '../components/HeatingControl/TreeNode';
 /** ThingsBoard liefert runStatus teils als "pir", UI nutzt "PIR" – für Vergleiche normalisieren. */
 function isPirRunStatus(status) {
   return status != null && String(status).toLowerCase() === 'pir';
+}
+
+function deviceIsWs202(device) {
+  const t = String(device?.type || '').toLowerCase();
+  return t.includes('ws202');
+}
+
+/** Fensterkontakt dnt-LW-WSCI (ThingsBoard device type). */
+function deviceIsWsci(device) {
+  const t = String(device?.type || device?.device_type || '').toLowerCase();
+  return t.includes('wsci');
+}
+
+/** Modal/Telemetrie: Tabelle statt Diagramm (PIR, Licht, WSCI-Fenster). */
+function telemetryUsesTableModal(device, attribute) {
+  if (!attribute) return false;
+  if (attribute === 'pir' || attribute === 'light') return true;
+  if (attribute === 'hall_sensor_state' && deviceIsWsci(device)) return true;
+  return false;
+}
+
+/** WS202 PIR: typisch "normal" | "triggert" (auch triggered/trigger). */
+function formatPirTelemetryLabel(v) {
+  if (v === undefined || v === null || v === '') return '–';
+  const s = String(v).trim().toLowerCase();
+  if (s === 'triggert' || s === 'triggered' || s === 'trigger') return 'Triggert';
+  if (s === 'normal') return 'Normal';
+  if (s === 'high' || s === 'on' || s === '1' || s === 'true' || v === 1 || v === true) return 'Triggert';
+  if (s === 'low' || s === 'off' || s === '0' || s === 'false' || v === 0 || v === false) return 'Normal';
+  return String(v);
+}
+
+/** WS202 Licht: typisch "light" | "dark". */
+function formatLightTelemetryLabel(v) {
+  if (v === undefined || v === null || v === '') return '–';
+  const s = String(v).trim().toLowerCase();
+  if (s === 'light' || s === 'hell' || s === 'bright') return 'Hell';
+  if (s === 'dark' || s === 'dunkel') return 'Dunkel';
+  const n = Number(v);
+  if (!Number.isNaN(n) && String(v).trim() !== '') {
+    return n % 1 === 0 ? String(n) : n.toFixed(2);
+  }
+  return String(v);
+}
+
+/** WSCI / hall_sensor_state: LOW = offen, HIGH = geschlossen (wie Fenster-Status). */
+function formatHallSensorTelemetryLabel(v) {
+  if (v === undefined || v === null || v === '') return '–';
+  const s = String(v).trim().toUpperCase();
+  if (s === 'LOW' || s === 'OPEN' || s === 'OFFEN' || s === '0' || s === 'FALSE' || v === 0 || v === false) {
+    return 'Offen';
+  }
+  if (s === 'HIGH' || s === 'CLOSED' || s === 'GESCHLOSSEN' || s === '1' || s === 'TRUE' || v === 1 || v === true) {
+    return 'Geschlossen';
+  }
+  const n = Number(v);
+  if (!Number.isNaN(n) && String(v).trim() !== '') {
+    return n > 0 ? 'Geschlossen' : 'Offen';
+  }
+  return String(v);
 }
 
 export default function HeatingControl() {
@@ -1742,8 +1803,8 @@ export default function HeatingControl() {
 
       debugLog('Fetching telemetry for device IDs:', deviceIds);
 
-      // Define the attributes we want to fetch
-      const attributes = ['sensorTemperature', 'targetTemperature', 'PercentValveOpen', 'batteryVoltage', 'signalQuality', 'hall_sensor_state'];
+      // Define the attributes we want to fetch (pir/light: WS202 u. a.)
+      const attributes = ['sensorTemperature', 'targetTemperature', 'PercentValveOpen', 'batteryVoltage', 'signalQuality', 'hall_sensor_state', 'pir', 'light'];
       
       // Fetch telemetry data for each device individually
       const devicesWithTelemetry = await Promise.all(
@@ -1757,8 +1818,9 @@ export default function HeatingControl() {
             // Fetch each attribute using the aggregated API
             const telemetry = {};
             
-            // For hall_sensor_state, use the details endpoint which provides current values
-            if (attributes.includes('hall_sensor_state')) {
+            // Hall / PIR / Licht: aktuelle Werte aus Details-API (Timeseries-Keys inkl. pir, light)
+            const detailKeys = ['hall_sensor_state', 'pir', 'light'];
+            if (detailKeys.some((k) => attributes.includes(k))) {
               try {
                 const detailsResponse = await fetch(
                   `/api/thingsboard/devices/${deviceId}/details`,
@@ -1771,26 +1833,29 @@ export default function HeatingControl() {
 
                 if (detailsResponse.ok) {
                   const detailsData = await detailsResponse.json();
-                  if (detailsData.success && detailsData.data?.telemetry?.current?.hall_sensor_state !== undefined) {
-                    telemetry.hall_sensor_state = detailsData.data.telemetry.current.hall_sensor_state;
-                    debugLog(`hall_sensor_state from details API for device ${deviceId}:`, {
-                      rawValue: telemetry.hall_sensor_state,
-                      type: typeof telemetry.hall_sensor_state
+                  const current = detailsData.success ? detailsData.data?.telemetry?.current : null;
+                  if (current && typeof current === 'object') {
+                    detailKeys.forEach((key) => {
+                      if (!attributes.includes(key)) return;
+                      const raw = current[key];
+                      if (raw !== undefined && raw !== null) {
+                        telemetry[key] = raw;
+                        debugLog(`${key} from details API for device ${deviceId}:`, raw);
+                      }
                     });
                   }
                 }
               } catch (error) {
-                debugWarn(`Error fetching hall_sensor_state from details API for device ${deviceId}:`, error);
+                debugWarn(`Error fetching telemetry from details API for device ${deviceId}:`, error);
               }
             }
-            
+
             // Fetch other attributes using the aggregated API
             for (const attribute of attributes) {
-              // Skip hall_sensor_state as we already fetched it from details API
-              if (attribute === 'hall_sensor_state') {
+              if (detailKeys.includes(attribute) && telemetry[attribute] !== undefined) {
                 continue;
               }
-              
+
               try {
                 const response = await fetch(
                   `/api/thingsboard/devices/telemetry/aggregated?deviceIds=${deviceId}&attribute=${attribute}&limit=1`,
@@ -1858,7 +1923,7 @@ export default function HeatingControl() {
     }
   }, [session?.token]);
 
-  const fetchTelemetryHistory = useCallback(async (deviceId, attribute, timeRange = '7d') => {
+  const fetchTelemetryHistory = useCallback(async (deviceId, attribute, timeRange = '7d', hallSensorAsTable = false) => {
     if (!deviceId || !attribute || !session?.token) {
       return [];
     }
@@ -1885,32 +1950,42 @@ export default function HeatingControl() {
           const chartData = data.data.telemetry.values.map(point => {
             let value = point.value;
             
-            // Convert hall_sensor_state text values to numeric: HIGH -> 1, LOW -> 0
+            // PIR/Licht: Rohwerte für Tabelle (WS202: normal/triggert, light/dark)
+            if (attribute === 'pir' || attribute === 'light') {
+              return {
+                timestamp: point.timestamp,
+                time: new Date(point.timestamp).toLocaleString('de-DE'),
+                rawValue: point.value,
+                displayLabel: attribute === 'pir'
+                  ? formatPirTelemetryLabel(point.value)
+                  : formatLightTelemetryLabel(point.value),
+                value: point.value
+              };
+            }
+
+            // WSCI Fenster: Rohwerte für Tabelle (LOW/HIGH)
+            if (attribute === 'hall_sensor_state' && hallSensorAsTable) {
+              return {
+                timestamp: point.timestamp,
+                time: new Date(point.timestamp).toLocaleString('de-DE'),
+                rawValue: point.value,
+                displayLabel: formatHallSensorTelemetryLabel(point.value),
+                value: point.value
+              };
+            }
+
+            // Hall: Text zu 0/1 für Diagramm
             if (attribute === 'hall_sensor_state') {
-              const originalValue = value;
               const valueStr = String(value).toUpperCase().trim();
-              
-              // Debug logging for first few values
               if (debugCount < 3) {
-                debugLog('hall_sensor_state conversion:', {
-                  originalValue: originalValue,
-                  type: typeof originalValue,
-                  valueStr: valueStr,
-                  point: point
-                });
+                debugLog('hall_sensor_state conversion:', { value, valueStr });
                 debugCount++;
               }
-              
-              // Check for HIGH (various formats)
-              if (valueStr === 'HIGH' || valueStr === '1' || valueStr === 'TRUE' || value === 1 || value === true) {
+              if (valueStr === 'HIGH' || valueStr === 'ON' || valueStr === '1' || valueStr === 'TRUE' || value === 1 || value === true) {
                 value = 1;
-              } 
-              // Check for LOW (various formats)
-              else if (valueStr === 'LOW' || valueStr === '0' || valueStr === 'FALSE' || value === 0 || value === false) {
+              } else if (valueStr === 'LOW' || valueStr === 'OFF' || valueStr === '0' || valueStr === 'FALSE' || value === 0 || value === false) {
                 value = 0;
-              }
-              // Default: if it's already a number, use it; otherwise default to 0
-              else {
+              } else {
                 const numValue = Number(value);
                 if (!isNaN(numValue)) {
                   value = numValue > 0 ? 1 : 0;
@@ -1919,7 +1994,7 @@ export default function HeatingControl() {
                 }
               }
             }
-            
+
             return {
               timestamp: point.timestamp,
               value: value,
@@ -1927,14 +2002,16 @@ export default function HeatingControl() {
             };
           });
           
-          // Debug: Log first few converted values
-          if (attribute === 'hall_sensor_state' && chartData.length > 0) {
-            debugLog('hall_sensor_state converted data sample:', chartData.slice(0, 5));
-            debugLog('hall_sensor_state value range:', {
+          if (attribute === 'hall_sensor_state' && chartData.length > 0 && !hallSensorAsTable) {
+            debugLog(`${attribute} converted data sample:`, chartData.slice(0, 5));
+            debugLog(`${attribute} value range:`, {
               min: Math.min(...chartData.map(d => d.value)),
               max: Math.max(...chartData.map(d => d.value)),
               uniqueValues: [...new Set(chartData.map(d => d.value))]
             });
+          }
+          if ((attribute === 'pir' || attribute === 'light' || (attribute === 'hall_sensor_state' && hallSensorAsTable)) && chartData.length > 0) {
+            debugLog(`${attribute} table rows sample:`, chartData.slice(0, 5));
           }
           
           setTelemetryChartData(chartData);
@@ -1960,7 +2037,8 @@ export default function HeatingControl() {
     setSelectedTelemetryAttribute(attribute);
     setSelectedChartTimeRange('7d'); // Reset to default
     setShowTelemetryChartModal(true);
-    await fetchTelemetryHistory(deviceId, attribute, '7d');
+    const hallSensorAsTable = attribute === 'hall_sensor_state' && deviceIsWsci(device);
+    await fetchTelemetryHistory(deviceId, attribute, '7d', hallSensorAsTable);
   }, [fetchTelemetryHistory]);
 
   const handleChartTimeRangeChange = useCallback(async (timeRange) => {
@@ -1970,7 +2048,9 @@ export default function HeatingControl() {
         ? selectedTelemetryDevice.id.id 
         : selectedTelemetryDevice.id;
       if (deviceId) {
-        await fetchTelemetryHistory(deviceId, selectedTelemetryAttribute, timeRange);
+        const hallSensorAsTable =
+          selectedTelemetryAttribute === 'hall_sensor_state' && deviceIsWsci(selectedTelemetryDevice);
+        await fetchTelemetryHistory(deviceId, selectedTelemetryAttribute, timeRange, hallSensorAsTable);
       }
     }
   }, [selectedTelemetryDevice, selectedTelemetryAttribute, fetchTelemetryHistory]);
@@ -3345,17 +3425,40 @@ if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runS
                             );
                           })()}
                           
-                          <div className="responsive-card disabled-card">
-                            <div className="card">
-                              <div className="card-body text-center">
-                                <FontAwesomeIcon icon={faUser} className="text-success mb-3" size="2x" />
-                                <h4 className="card-title">Anwesenheit</h4>
-                                <div className="text-muted">
-                                  <p>Kein Anwesenheitssensor gefunden</p>
+                          {(() => {
+                            const attrTruthy = (v) => (
+                              v === true ||
+                              v === 1 ||
+                              (typeof v === 'string' && (v.toLowerCase() === 'true' || v === '1'))
+                            );
+                            const hasPirAttr = attrTruthy(nodeDetails?.attributes?.hasPir) || attrTruthy(selectedNode?.data?.hasPir);
+                            if (!hasPirAttr) return null;
+                            const isOccupied = attrTruthy(nodeDetails?.attributes?.occupied) || attrTruthy(selectedNode?.data?.occupied);
+                            return (
+                              <div className="responsive-card">
+                                <div className="card">
+                                  <div className="card-body text-center">
+                                    <FontAwesomeIcon
+                                      icon={faUser}
+                                      className={`mb-3 ${isOccupied ? 'text-primary' : 'text-secondary'}`}
+                                      size="2x"
+                                    />
+                                    <h4 className="card-title">Anwesenheit</h4>
+                                    <div className="display-4 mb-2" style={{
+                                      fontSize: '1.5rem',
+                                      fontWeight: 'bold',
+                                      color: isOccupied ? '#0d6efd' : '#6c757d'
+                                    }}>
+                                      {isOccupied ? 'Belegt' : 'Unbelegt'}
+                                    </div>
+                                    <div className="text-muted" style={{ fontSize: '0.75rem' }}>
+                                      {isOccupied ? 'Raum als belegt erkannt' : 'Keine Belegung erkannt'}
+                                    </div>
+                                  </div>
                                 </div>
                               </div>
-                            </div>
-                          </div>
+                            );
+                          })()}
                         </div>
 
                         {/* Temperaturverlauf Chart */}
@@ -3539,28 +3642,64 @@ if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runS
                                       {device.telemetry?.hall_sensor_state !== undefined && device.telemetry?.hall_sensor_state !== null && (
                                         <div 
                                           className="bg-light border rounded p-2 text-center" 
-                                          style={{ minWidth: '80px', flex: '0 0 auto', cursor: 'pointer' }}
+                                          style={{ minWidth: '100px', flex: '0 0 auto', cursor: 'pointer' }}
                                           onClick={() => handleTelemetryValueClick(device, 'hall_sensor_state')}
-                                          title="Klicken für Verlauf"
+                                          title={deviceIsWsci(device) ? 'Klicken für Messwerte-Tabelle' : 'Klicken für Verlauf'}
                                         >
-                                          <small className="text-muted d-block">Hall Sensor</small>
+                                          <small className="text-muted d-block">
+                                            {deviceIsWsci(device) ? 'Fenster (WSCI)' : 'Hall Sensor'}
+                                          </small>
                                           <div className="fw-bold" style={{ 
                                             fontSize: '0.9rem',
                                             color: (() => {
                                               const value = device.telemetry.hall_sensor_state;
-                                              // HIGH/1 = geschlossen (grün), LOW/0 = offen (rot)
                                               const isHigh = String(value).toUpperCase() === 'HIGH' || value === 1 || value === '1' || value === true;
                                               return isHigh ? '#28a745' : '#dc3545';
                                             })()
                                           }}>
-                                            {(() => {
-                                              const value = String(device.telemetry.hall_sensor_state).toUpperCase();
-                                              // HIGH = geschlossen, LOW = offen
-                                              if (value === 'HIGH' || value === '1' || value === 'TRUE') {
-                                                return 'geschlossen';
-                                              }
-                                              return 'offen';
-                                            })()}
+                                            {deviceIsWsci(device)
+                                              ? formatHallSensorTelemetryLabel(device.telemetry.hall_sensor_state)
+                                              : (() => {
+                                                  const value = String(device.telemetry.hall_sensor_state).toUpperCase();
+                                                  if (value === 'HIGH' || value === '1' || value === 'TRUE') {
+                                                    return 'geschlossen';
+                                                  }
+                                                  return 'offen';
+                                                })()}
+                                          </div>
+                                        </div>
+                                      )}
+                                      {(deviceIsWs202(device) || (device.telemetry && Object.prototype.hasOwnProperty.call(device.telemetry, 'pir'))) && (
+                                        <div
+                                          className="bg-light border rounded p-2 text-center"
+                                          style={{ minWidth: '100px', flex: '0 0 auto', cursor: 'pointer' }}
+                                          onClick={() => handleTelemetryValueClick(device, 'pir')}
+                                          title="Klicken für Messwerte-Tabelle"
+                                        >
+                                          <small className="text-muted d-block">PIR</small>
+                                          <div className="fw-bold" style={{
+                                            fontSize: '0.9rem',
+                                            color: (() => {
+                                              const v = device.telemetry?.pir;
+                                              const s = String(v ?? '').trim().toLowerCase();
+                                              const trig = s === 'triggert' || s === 'triggered' || s === 'trigger' || s === 'high' || s === 'on' || s === '1' || s === 'true' || v === 1 || v === true;
+                                              return trig ? '#fd7e14' : '#6c757d';
+                                            })()
+                                          }}>
+                                            {formatPirTelemetryLabel(device.telemetry?.pir)}
+                                          </div>
+                                        </div>
+                                      )}
+                                      {(deviceIsWs202(device) || (device.telemetry && Object.prototype.hasOwnProperty.call(device.telemetry, 'light'))) && (
+                                        <div
+                                          className="bg-light border rounded p-2 text-center"
+                                          style={{ minWidth: '100px', flex: '0 0 auto', cursor: 'pointer' }}
+                                          onClick={() => handleTelemetryValueClick(device, 'light')}
+                                          title="Klicken für Messwerte-Tabelle"
+                                        >
+                                          <small className="text-muted d-block">Licht</small>
+                                          <div className="fw-bold text-warning" style={{ fontSize: '0.9rem' }}>
+                                            {formatLightTelemetryLabel(device.telemetry?.light)}
                                           </div>
                                         </div>
                                       )}
@@ -4515,8 +4654,11 @@ if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runS
             <div className="modal-content">
               <div className="modal-header">
                 <h5 className="modal-title">
-                  <FontAwesomeIcon icon={faChartLine} className="me-2" />
-                  Verlauf - {getAttributeDisplayName(selectedTelemetryAttribute)} ({selectedTelemetryDevice.label || selectedTelemetryDevice.name})
+                  <FontAwesomeIcon
+                    icon={telemetryUsesTableModal(selectedTelemetryDevice, selectedTelemetryAttribute) ? faTable : faChartLine}
+                    className="me-2"
+                  />
+                  {telemetryUsesTableModal(selectedTelemetryDevice, selectedTelemetryAttribute) ? 'Messwerte' : 'Verlauf'} – {selectedTelemetryAttribute === 'hall_sensor_state' && deviceIsWsci(selectedTelemetryDevice) ? 'Fenster (WSCI)' : getAttributeDisplayName(selectedTelemetryAttribute)} ({selectedTelemetryDevice.label || selectedTelemetryDevice.name})
                 </h5>
                 <button 
                   type="button" 
@@ -4554,7 +4696,34 @@ if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runS
                     <div className="spinner-border me-2" role="status">
                       <span className="visually-hidden">Laden...</span>
                     </div>
-                    <span>Lade Verlaufsdaten...</span>
+                    <span>
+                      {telemetryUsesTableModal(selectedTelemetryDevice, selectedTelemetryAttribute)
+                        ? 'Lade Messwerte...'
+                        : 'Lade Verlaufsdaten...'}
+                    </span>
+                  </div>
+                ) : telemetryChartData && telemetryChartData.length > 0 && telemetryUsesTableModal(selectedTelemetryDevice, selectedTelemetryAttribute) ? (
+                  <div className="table-responsive" style={{ maxHeight: '520px', overflowY: 'auto' }}>
+                    <table className="table table-sm table-striped table-hover mb-0">
+                      <thead className="table-light sticky-top">
+                        <tr>
+                          <th>Zeit</th>
+                          <th>Rohwert</th>
+                          <th>Anzeige</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...telemetryChartData]
+                          .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
+                          .map((row, idx) => (
+                            <tr key={`${row.timestamp}-${idx}`}>
+                              <td className="text-nowrap">{row.time}</td>
+                              <td><code className="small">{row.rawValue !== undefined && row.rawValue !== null ? String(row.rawValue) : '–'}</code></td>
+                              <td>{row.displayLabel ?? '–'}</td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
                   </div>
                 ) : telemetryChartData && telemetryChartData.length > 0 ? (
                   <div>
@@ -4587,8 +4756,13 @@ if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runS
                                 let unit = '';
                                 
                                 if (selectedTelemetryAttribute === 'hall_sensor_state') {
-                                  // For hall_sensor_state, show "geschlossen" (1) or "offen" (0)
                                   displayValue = Number(value) === 1 ? 'geschlossen' : 'offen';
+                                } else if (selectedTelemetryAttribute === 'pir') {
+                                  displayValue = Number(value) === 1 ? 'Bewegung' : 'ruhig';
+                                } else if (selectedTelemetryAttribute === 'light') {
+                                  const n = Number(value);
+                                  displayValue = !isNaN(n) ? (n % 1 === 0 ? String(n) : n.toFixed(2)) : String(value);
+                                  unit = !isNaN(n) ? ' (Licht)' : '';
                                 } else {
                                   displayValue = !isNaN(Number(value)) ? Number(value).toFixed(2) : String(value);
                                   unit = selectedTelemetryAttribute === 'batteryVoltage' ? 'V' : 
@@ -4629,15 +4803,21 @@ if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runS
                           name: selectedTelemetryAttribute === 'batteryVoltage' ? 'Spannung (V)' : 
                                 selectedTelemetryAttribute === 'sensorTemperature' || selectedTelemetryAttribute === 'targetTemperature' ? 'Temperatur (°C)' :
                                 selectedTelemetryAttribute === 'PercentValveOpen' ? 'Ventilöffnung (%)' :
-                                selectedTelemetryAttribute === 'hall_sensor_state' ? 'Status' : 'Wert',
+                                selectedTelemetryAttribute === 'hall_sensor_state' ? 'Status' :
+                                selectedTelemetryAttribute === 'pir' ? 'PIR' :
+                                selectedTelemetryAttribute === 'light' ? 'Licht' : 'Wert',
                           nameLocation: 'middle',
                           nameGap: 50,
-                          min: selectedTelemetryAttribute === 'hall_sensor_state' ? 0 : undefined,
-                          max: selectedTelemetryAttribute === 'hall_sensor_state' ? 1 : undefined,
-                          interval: selectedTelemetryAttribute === 'hall_sensor_state' ? 1 : undefined,
+                          min: (selectedTelemetryAttribute === 'hall_sensor_state' || selectedTelemetryAttribute === 'pir') ? 0 : undefined,
+                          max: (selectedTelemetryAttribute === 'hall_sensor_state' || selectedTelemetryAttribute === 'pir') ? 1 : undefined,
+                          interval: (selectedTelemetryAttribute === 'hall_sensor_state' || selectedTelemetryAttribute === 'pir') ? 1 : undefined,
                           axisLabel: selectedTelemetryAttribute === 'hall_sensor_state' ? {
                             formatter: function(value) {
                               return value === 1 ? 'geschlossen' : value === 0 ? 'offen' : value;
+                            }
+                          } : selectedTelemetryAttribute === 'pir' ? {
+                            formatter: function(value) {
+                              return value === 1 ? 'Bewegung' : value === 0 ? 'ruhig' : value;
                             }
                           } : undefined
                         },
@@ -4693,8 +4873,16 @@ if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runS
                 ) : (
                   <div className="text-center text-muted" style={{ height: '400px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <div>
-                      <FontAwesomeIcon icon={faChartLine} size="2x" className="mb-3" />
-                      <p>Keine Verlaufsdaten verfügbar</p>
+                      <FontAwesomeIcon
+                        icon={telemetryUsesTableModal(selectedTelemetryDevice, selectedTelemetryAttribute) ? faTable : faChartLine}
+                        size="2x"
+                        className="mb-3"
+                      />
+                      <p>
+                        {telemetryUsesTableModal(selectedTelemetryDevice, selectedTelemetryAttribute)
+                          ? 'Keine Messwerte verfügbar'
+                          : 'Keine Verlaufsdaten verfügbar'}
+                      </p>
                     </div>
                   </div>
                 )}

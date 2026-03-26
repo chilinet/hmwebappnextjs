@@ -214,6 +214,7 @@ export default async function handler(req, res) {
         }
       }
       
+      const numericValues = processedValues.map((v) => v.value).filter((v) => typeof v === 'number' && !Number.isNaN(v));
       result.data.telemetry = {
         attribute: attribute,
         dataPoints: processedValues.length,
@@ -224,9 +225,9 @@ export default async function handler(req, res) {
           value: item.value
         })),
         statistics: {
-          min: Math.min(...processedValues.map(v => v.value).filter(v => typeof v === 'number')),
-          max: Math.max(...processedValues.map(v => v.value).filter(v => typeof v === 'number')),
-          avg: processedValues.map(v => v.value).filter(v => typeof v === 'number').reduce((a, b) => a + b, 0) / processedValues.filter(v => typeof v === 'number').length
+          min: numericValues.length ? Math.min(...numericValues) : null,
+          max: numericValues.length ? Math.max(...numericValues) : null,
+          avg: numericValues.length ? numericValues.reduce((a, b) => a + b, 0) / numericValues.length : null
         }
       };
     } else {

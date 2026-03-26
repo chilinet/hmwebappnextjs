@@ -23,51 +23,61 @@ const ASSET_ATTRIBUTE_KEYS = [
   'occupiedTemp'
 ];
 
-// Funktion zum Abrufen der Asset-Attribute mit Timeout (SERVER_SCOPE + keys)
+/** Parst ThingsBoard-Attribut-Arrays [{ key, value }, ...] in ein flaches Objekt. */
+function extractAttributesFromTbResponse(tbAttributesArray, keys) {
+  const out = {};
+  if (!Array.isArray(tbAttributesArray)) return out;
+  keys.forEach((key) => {
+    const attribute = tbAttributesArray.find((attr) => attr.key === key);
+    if (attribute) out[key] = attribute.value;
+  });
+  return out;
+}
+
+/**
+ * Liest SERVER_SCOPE und CLIENT_SCOPE (ThingsBoard kann hasPir/occupied in einem der Scopes haben).
+ * Pro Key gilt: SERVER_SCOPE hat Vorrang, sonst CLIENT_SCOPE.
+ */
 async function fetchAssetAttributes(assetId, tbToken) {
-  try {
+  const TB = process.env.THINGSBOARD_URL;
+  const keysParam = ASSET_ATTRIBUTE_KEYS.join(',');
+
+  async function fetchScope(scopeLabel) {
+    const url = `${TB}/api/plugins/telemetry/ASSET/${assetId}/values/attributes/${scopeLabel}?keys=${encodeURIComponent(keysParam)}`;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 Sekunden Timeout
-
-    const keysParam = ASSET_ATTRIBUTE_KEYS.join(',');
-    const url = `${process.env.THINGSBOARD_URL}/api/plugins/telemetry/ASSET/${assetId}/values/attributes/SERVER_SCOPE?keys=${encodeURIComponent(keysParam)}`;
-
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
     try {
       const response = await fetch(url, {
-        headers: {
-          'X-Authorization': `Bearer ${tbToken}`
-        },
+        headers: { 'X-Authorization': `Bearer ${tbToken}` },
         signal: controller.signal
       });
-
       clearTimeout(timeoutId);
-
       if (!response.ok) {
-        console.log(`Failed to fetch attributes for asset ${assetId}: ${response.status}`);
+        console.log(`[fetchAssetAttributes] ${scopeLabel} failed for asset ${assetId}: ${response.status}`);
         return {};
       }
-
       const attributes = await response.json();
-
-      const extractedAttributes = {};
-      ASSET_ATTRIBUTE_KEYS.forEach(key => {
-        const attribute = attributes.find(attr => attr.key === key);
-        if (attribute) {
-          extractedAttributes[key] = attribute.value;
-        }
-      });
-
-      return extractedAttributes;
+      return extractAttributesFromTbResponse(attributes, ASSET_ATTRIBUTE_KEYS);
     } catch (fetchError) {
       clearTimeout(timeoutId);
-      // Ignoriere Timeout-Fehler stillschweigend
       if (fetchError.name !== 'AbortError' && !fetchError.message?.includes('timeout')) {
-        console.warn(`Error fetching attributes for asset ${assetId}:`, fetchError.message || fetchError);
+        console.warn(`[fetchAssetAttributes] ${scopeLabel} error for asset ${assetId}:`, fetchError.message || fetchError);
       }
       return {};
     }
+  }
+
+  try {
+    const [serverAttrs, clientAttrs] = await Promise.all([
+      fetchScope('SERVER_SCOPE'),
+      fetchScope('CLIENT_SCOPE')
+    ]);
+    const merged = { ...clientAttrs };
+    ASSET_ATTRIBUTE_KEYS.forEach((key) => {
+      if (serverAttrs[key] !== undefined) merged[key] = serverAttrs[key];
+    });
+    return merged;
   } catch (error) {
-    // Ignoriere Timeout-Fehler
     if (!error.message?.includes('timeout') && !error.message?.includes('aborted')) {
       console.warn(`Error fetching attributes for asset ${assetId}:`, error.message || error);
     }
@@ -228,7 +238,7 @@ export default async function handler(req, res) {
         attributes: attributes
       });
     } else if (req.method === 'PUT') {
-      const { minTemp, maxTemp, overruleMinutes, runStatus, fixValue, schedulerPlan, schedulerPlanPIR, childLock, windowSensor, operationalMode, operationalDevice, extTempDevice, hasPir, occupiedTemp } = req.body;
+      const { minTemp, maxTemp, overruleMinutes, runStatus, fixValue, schedulerPlan, schedulerPlanPIR, childLock, windowSensor, operationalMode, operationalDevice, extTempDevice, hasPir, occupied, occupiedTemp } = req.body;
 
       // Wenn es ein Tree-Only-Update ist, überspringe ThingsBoard Update
       if (isTreeOnlyUpdate) {
@@ -254,6 +264,7 @@ export default async function handler(req, res) {
         attributesToUpdate.extTempDevice = extTempDevice;
       }
       if (hasPir !== undefined) attributesToUpdate.hasPir = hasPir;
+      if (occupied !== undefined) attributesToUpdate.occupied = occupied;
       if (occupiedTemp !== undefined) attributesToUpdate.occupiedTemp = occupiedTemp;
 
       if (Object.keys(attributesToUpdate).length === 0) {

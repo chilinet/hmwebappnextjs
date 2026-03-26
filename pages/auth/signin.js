@@ -261,7 +261,7 @@ export default function SignIn() {
                                     </small>
                                     <br />
                                     <small className="text-muted">
-                                        v1.01
+                                        v1.01a
                                     </small>
                                 </div>
                             </div>
