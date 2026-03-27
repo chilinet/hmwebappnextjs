@@ -120,7 +120,8 @@ async function createThingsstackDevice({ baseUrl, apiKey, applicationId, device,
   const deviceEui = normalizeHex(device.deveui);
   const joinEui = normalizeHex(device.joineui);
   const appKey = normalizeHex(device.appkey);
-  const deviceId = toDeviceId(device.deviceLabel || device.deveui || `device-${device.id}`);
+  // Use DevEUI for deterministic device_id across runs/clusters.
+  const deviceId = toDeviceId(device.deveui || device.deviceLabel || `device-${device.id}`);
 
   if (!deviceEui || deviceEui.length !== 16) {
     return { ok: false, error: `DevEUI ungültig (${device.deveui || 'leer'})` };
@@ -192,8 +193,9 @@ async function createThingsstackDevice({ baseUrl, apiKey, applicationId, device,
 
   for (const candidate of baseCandidates) {
     const routes = [
-      `${candidate}/api/v3/as/applications/${encodeURIComponent(applicationId)}/devices`,
+      // Prefer canonical application endpoint first.
       `${candidate}/api/v3/applications/${encodeURIComponent(applicationId)}/devices`,
+      `${candidate}/api/v3/as/applications/${encodeURIComponent(applicationId)}/devices`,
     ];
     for (const route of routes) {
       tried.push(route);

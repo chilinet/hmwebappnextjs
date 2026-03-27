@@ -895,29 +895,65 @@ function Inventory() {
       setError('Bitte mindestens ein Gerät auswählen.');
       return;
     }
-    if (!window.confirm(`LNS-Zuordnung für ${selectedDeviceIds.length} Gerät(e) entfernen? Die Geräte werden bei Melita entfernt und die Zuordnung in der Inventarliste gelöscht.`)) {
+    const selectedDevices = devices.filter((d) => selectedDeviceIds.includes(d.id));
+    const thingsstackIds = selectedDevices
+      .filter((d) => String(d.lns_assignment_name || '').toLowerCase().startsWith('thingsstack'))
+      .map((d) => d.id);
+    const melitaIds = selectedDevices
+      .filter((d) => String(d.lns_assignment_name || '').toLowerCase().startsWith('melita'))
+      .map((d) => d.id);
+
+    const hasUnknown = selectedDevices.length !== (thingsstackIds.length + melitaIds.length);
+    if (!window.confirm(
+      `LNS-Zuordnung für ${selectedDeviceIds.length} Gerät(e) entfernen?` +
+      (thingsstackIds.length > 0 ? `\n- Thingsstack: ${thingsstackIds.length}` : '') +
+      (melitaIds.length > 0 ? `\n- Melita: ${melitaIds.length}` : '') +
+      (hasUnknown ? `\n- Hinweis: Einige Geräte konnten keinem LNS zugeordnet werden.` : '')
+    )) {
       return;
     }
     setError(null);
     setIsRemovingLns(true);
     try {
-      const res = await fetch('/api/lns/melita/remove', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deviceIds: selectedDeviceIds }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data?.error || data?.details || res.statusText);
+      const results = [];
+
+      if (thingsstackIds.length > 0) {
+        const resTb = await fetch('/api/lns/thingsstack/remove', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deviceIds: thingsstackIds }),
+        });
+        const dataTb = await resTb.json().catch(() => ({}));
+        if (!resTb.ok) throw new Error(dataTb?.error || dataTb?.details || resTb.statusText);
+        results.push({ provider: 'thingsstack', data: dataTb });
       }
-      const { success, melitaRemoved, errors } = data;
+
+      if (melitaIds.length > 0) {
+        const resMe = await fetch('/api/lns/melita/remove', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deviceIds: melitaIds }),
+        });
+        const dataMe = await resMe.json().catch(() => ({}));
+        if (!resMe.ok) throw new Error(dataMe?.error || dataMe?.details || resMe.statusText);
+        results.push({ provider: 'melita', data: dataMe });
+      }
+
       await fetchDevices();
       setSelectedDeviceIds([]);
-      if (errors?.length) {
-        setError(`${success} Geräte aktualisiert, ${errors.length} Melita-Fehler: ${errors.slice(0, 2).join('; ')}`);
+      setError(null);
+
+      const allErrors = results.flatMap((r) => r?.data?.errors || []);
+      if (allErrors.length > 0) {
+        setError(allErrors.length > 0 ? `Fehler beim Entfernen: ${allErrors.slice(0, 3).join('; ')}` : null);
       } else {
-        setError(null);
-        alert(`${melitaRemoved ?? success} Gerät(e) erfolgreich von LNS entfernt.`);
+        const removedCount =
+          results.reduce((acc, r) => {
+            if (r.provider === 'thingsstack') return acc + (r.data?.thingsstackRemoved ?? r.data?.success ?? 0);
+            if (r.provider === 'melita') return acc + (r.data?.melitaRemoved ?? r.data?.success ?? 0);
+            return acc;
+          }, 0) || selectedDeviceIds.length;
+        alert(`${removedCount} Gerät(e) erfolgreich von LNS entfernt.`);
       }
     } catch (err) {
       setError(err.message);
