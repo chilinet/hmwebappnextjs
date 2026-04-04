@@ -12,6 +12,39 @@
     }
   ],
   "paths": {
+    "/heating-scheduler": {
+      "get": {
+        "summary": "Alle Heizpläne des Kunden",
+        "description": "Wie **config/heating-schedules**: ThingsBoard-Kundenattribut **plans** — Array von `[\"Planname\", [24 Temperaturen]]`. Auth: NextAuth-Session oder Bearer-JWT mit **tbToken** und **customerid** (wie Login-Token).",
+        "tags": ["Heating", "Config"],
+        "security": [
+          {
+            "nextauth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Heizpläne",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HeatingSchedulesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Nicht authentifiziert / kein tbToken"
+          },
+          "503": {
+            "description": "THINGSBOARD_URL fehlt"
+          },
+          "500": {
+            "description": "ThingsBoard oder Verarbeitung fehlgeschlagen"
+          }
+        }
+      }
+    },
     "/config/devices": {
       "get": {
         "summary": "Liste aller Geräte abrufen",
@@ -113,10 +146,448 @@
           }
         }
       }
+    },
+    "/login": {
+      "post": {
+        "summary": "Anmeldung",
+        "description": "Heatmanager-Login mit Datenbank-User; liefert JWT (Bearer) und ThingsBoard-Token. Der Wert `token` für nachfolgende Aufrufe als `Authorization: Bearer <token>` verwenden.",
+        "tags": ["Auth"],
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Erfolgreich angemeldet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Ungültige Zugangsdaten oder ThingsBoard-Anmeldung fehlgeschlagen",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Nur POST erlaubt"
+          },
+          "500": {
+            "description": "Interner Serverfehler"
+          }
+        }
+      }
+    },
+    "/devices/timeseries": {
+      "get": {
+        "summary": "Geräte-Zeitreihe (Reporting)",
+        "description": "Proxy zur Reporting-API (`device_10m` / bucket_10m). Authentifizierung mit JWT aus `/login`. Reporting-Preshared-Key wird serverseitig gesetzt. Antwort enthält gefilterte Felder und `metadata.timezone` (IANA der Timestamp-Semantik).",
+        "tags": ["Devices", "Reporting"],
+        "security": [
+          {
+            "nextauth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "entity_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "ThingsBoard Entity (Device) UUID"
+          },
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Untere Grenze bucket_10m (Datum)"
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Obere Grenze bucket_10m (Datum)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 15000,
+              "default": 1000
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Erfolgreich",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceTimeseriesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "JWT fehlt oder ungültig"
+          },
+          "502": {
+            "description": "Reporting-Upstream-Fehler"
+          },
+          "503": {
+            "description": "Reporting nicht konfiguriert"
+          }
+        }
+      }
+    },
+    "/structure": {
+      "get": {
+        "summary": "Kunden-Raumstruktur",
+        "description": "Liest `customer_settings.tree` für den Kunden aus Session oder JWT (`customerid`). Pro Knoten: u. a. `attributes.has_device_assigned` und zugeordnete Geräte.",
+        "tags": ["Structure"],
+        "security": [
+          {
+            "nextauth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Optional; muss mit dem angemeldeten Kunden übereinstimmen, sonst 403"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Erfolgreich",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StructureResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Nicht authentifiziert"
+          },
+          "403": {
+            "description": "customer_id passt nicht zum Benutzer"
+          },
+          "404": {
+            "description": "Keine Struktur in customer_settings"
+          },
+          "500": {
+            "description": "Serverfehler"
+          }
+        }
+      }
+    },
+    "/asset/{assetId}/timeseries": {
+      "get": {
+        "summary": "Raum-Zeitreihen (verdichtet)",
+        "description": "Wie Temperatur-Chart in Heating Control. Zeitraum wie **/api/devices/timeseries**: start_date/end_date/limit/offset; ohne start_date: **range**/**time_range** (Default 7d). Auth: Session oder Bearer-JWT mit **tbToken**.",
+        "tags": ["Assets", "Reporting"],
+        "security": [
+          {
+            "nextauth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "assetId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "ThingsBoard Asset (Raum)"
+          },
+          {
+            "name": "entity_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Optional; muss mit assetId (Pfad) übereinstimmen — gleiche Konvention wie /api/devices/timeseries"
+          },
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Untere Grenze bucket_10m (wie /api/devices/timeseries)"
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Obere Grenze bucket_10m"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 15000,
+              "default": 2000
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": ["1d", "3d", "7d", "14d", "30d", "90d"],
+              "default": "7d"
+            },
+            "description": "Nur wenn **start_date** fehlt: Sliding-Fenster (Alias: time_range)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "**timeseries**: eine Zeile pro Zeitindex (timestamp), Felder sensor_temperature, target_temperature, percent_valve_open (jeweils optional/null)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoomAggregatedTimeseriesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "entity_id passt nicht zur assetId im Pfad"
+          },
+          "401": {
+            "description": "Nicht authentifiziert oder kein tbToken in JWT"
+          },
+          "404": {
+            "description": "Asset nicht in Struktur / kein Tree"
+          },
+          "503": {
+            "description": "Reporting nicht konfiguriert"
+          }
+        }
+      }
+    },
+    "/asset/{assetId}/current": {
+      "get": {
+        "summary": "Aktuelle Raum- und Gerätewerte (Heating Control)",
+        "description": "Pfad endet auf **current**. Antwort: success, asset_id, customer_id; Live-Daten unter **current** (**room**, **devices**, **run_status**, **windows**, **weekly_schedule**). Auth wie **/asset/{assetId}/timeseries** (Session oder Bearer-JWT mit tbToken).",
+        "tags": ["Assets", "Reporting"],
+        "security": [
+          {
+            "nextauth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "assetId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "ThingsBoard Asset (Raum)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AssetDevicesSnapshotResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Nicht authentifiziert oder kein tbToken"
+          },
+          "404": {
+            "description": "Asset nicht in Struktur / kein Tree"
+          },
+          "503": {
+            "description": "REPORTING_PRESHARED_KEY fehlt"
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "HeatingSchedulesResponse": {
+        "type": "object",
+        "description": "Gleiche Struktur wie GET /config/customers/{id}/plans",
+        "properties": {
+          "success": { "type": "boolean" },
+          "customer_id": { "type": "string", "format": "uuid" },
+          "plans": {
+            "type": "array",
+            "description": "Jeder Eintrag: [ name, temperatures[] ] mit 24 Stundenwerten",
+            "items": {
+              "type": "array",
+              "items": {}
+            }
+          }
+        }
+      },
+      "AssetDevicesSnapshotCurrent": {
+        "type": "object",
+        "description": "Aktuelle Werte (Reporting + ThingsBoard-Attribute)",
+        "properties": {
+          "operational_mode": { "type": "number" },
+          "ext_temp_device": { "type": "string", "nullable": true },
+          "room": { "type": "object", "additionalProperties": true },
+          "devices": {
+            "type": "array",
+            "items": { "type": "object", "additionalProperties": true }
+          },
+          "external_temperature_device": {
+            "type": "object",
+            "nullable": true,
+            "additionalProperties": true
+          },
+          "run_status": { "type": "string", "nullable": true },
+          "window_sensor": { "type": "boolean", "nullable": true },
+          "windows": { "type": "object", "additionalProperties": true },
+          "weekly_schedule": { "type": "object", "additionalProperties": true }
+        }
+      },
+      "AssetDevicesSnapshotResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "asset_id": { "type": "string" },
+          "customer_id": { "type": "string" },
+          "current": { "$ref": "#/components/schemas/AssetDevicesSnapshotCurrent" }
+        }
+      },
+      "RoomAggregatedTimeseriesRow": {
+        "type": "object",
+        "description": "Ein Zeitindex (10-Min-Bucket); fehlende Reihen sind null",
+        "properties": {
+          "time": { "type": "string", "description": "de-DE lokalisiert" },
+          "timestamp": { "type": "integer", "format": "int64" },
+          "sensor_temperature": { "type": "number", "nullable": true },
+          "target_temperature": { "type": "number", "nullable": true },
+          "percent_valve_open": { "type": "number", "nullable": true }
+        }
+      },
+      "RoomAggregatedTimeseriesResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "asset_id": {
+            "type": "string"
+          },
+          "customer_id": {
+            "type": "string"
+          },
+          "operational_mode": {
+            "type": "number"
+          },
+          "ext_temp_device": {
+            "type": "string",
+            "nullable": true
+          },
+          "time_range": {
+            "type": "string",
+            "nullable": true,
+            "description": "Nur bei Sliding-Fenster; bei start_date/end_date null"
+          },
+          "query": {
+            "type": "object",
+            "description": "Effektive Reporting-Parameter wie bei /devices/timeseries (start_date, end_date, limit, offset, entity_id)",
+            "additionalProperties": true
+          },
+          "range": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "timeseries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RoomAggregatedTimeseriesRow"
+            }
+          }
+        }
+      },
       "Device": {
         "type": "object",
         "properties": {
@@ -233,12 +704,250 @@
             "description": "Einstellungswert"
           }
         }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": ["username", "password"],
+        "properties": {
+          "username": {
+            "type": "string",
+            "description": "Heatmanager-Benutzername (hm_users)"
+          },
+          "password": {
+            "type": "string",
+            "format": "password",
+            "description": "Passwort"
+          }
+        }
+      },
+      "LoginResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "token": {
+            "type": "string",
+            "description": "JWT (8h); als Bearer für geschützte API-Routen"
+          },
+          "tbToken": {
+            "type": "string",
+            "description": "ThingsBoard JWT"
+          },
+          "user": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "userid": {
+                "type": "integer"
+              },
+              "email": {
+                "type": "string",
+                "nullable": true
+              }
+            }
+          }
+        }
+      },
+      "ErrorBody": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": false
+          },
+          "error": {
+            "type": "string"
+          },
+          "details": {
+            "type": "string",
+            "description": "Nur in Entwicklung"
+          }
+        }
+      },
+      "DeviceTimeseriesMetadata": {
+        "type": "object",
+        "description": "Erweitert um timezone (IANA der Timestamp-Werte in data)",
+        "additionalProperties": true,
+        "properties": {
+          "total_records": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "query_time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "timezone": {
+            "type": "string",
+            "description": "IANA-Zeitzone der Felder timestamp (z. B. UTC)",
+            "example": "UTC"
+          }
+        }
+      },
+      "DeviceTimeseriesRow": {
+        "type": "object",
+        "properties": {
+          "entity_id": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Aus bucket_10m",
+            "nullable": true
+          },
+          "sensor_temperature": {
+            "type": "number",
+            "nullable": true
+          },
+          "target_temperature": {
+            "type": "number",
+            "nullable": true
+          },
+          "percent_valve_open": {
+            "type": "number",
+            "nullable": true
+          },
+          "battery_voltage": {
+            "type": "number",
+            "nullable": true
+          },
+          "relative_humidity": {
+            "type": "number",
+            "nullable": true
+          }
+        }
+      },
+      "DeviceTimeseriesResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "metadata": {
+            "nullable": true,
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DeviceTimeseriesMetadata"
+              }
+            ]
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeviceTimeseriesRow"
+            }
+          }
+        }
+      },
+      "StructureDeviceRef": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Device-UUID"
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "StructureNodeAttributes": {
+        "type": "object",
+        "properties": {
+          "has_device_assigned": {
+            "type": "boolean",
+            "description": "Ob dem Strukturpunkt Geräte zugeordnet sind (relatedDevices / operationalDevice / hasDevices)"
+          },
+          "device_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "devices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StructureDeviceRef"
+            }
+          }
+        }
+      },
+      "StructureNode": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Asset-/Knoten-ID"
+          },
+          "parent_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "null für Wurzelknoten"
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "label": {
+            "type": "string",
+            "nullable": true
+          },
+          "type": {
+            "type": "string",
+            "nullable": true
+          },
+          "attributes": {
+            "$ref": "#/components/schemas/StructureNodeAttributes"
+          },
+          "children": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StructureNode"
+            }
+          }
+        }
+      },
+      "StructureResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "customer_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "structure": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StructureNode"
+            },
+            "description": "Wurzelknoten der Hierarchie"
+          }
+        }
       }
     },
     "securitySchemes": {
       "nextauth": {
         "type": "http",
-        "scheme": "bearer"
+        "scheme": "bearer",
+        "description": "JWT von POST /api/login (Feld `token`), signiert mit NEXTAUTH_SECRET; Payload enthält u. a. customerid und tbToken. Für `/asset/.../timeseries` ist tbToken im JWT erforderlich (ThingsBoard SERVER_SCOPE-Attribute)."
       }
     }
   }
