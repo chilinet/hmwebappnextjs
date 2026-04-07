@@ -116,6 +116,41 @@ function toDeviceId(raw) {
   return id;
 }
 
+function deriveLoRaSettingsFromDevice(device, thingsstackConfig) {
+  // Fallbacks come from the UI settings.
+  let frequencyPlanId = String(thingsstackConfig?.frequencyPlanId || 'EU_863_870').trim();
+  let macVersion = String(thingsstackConfig?.macVersion || 'MAC_V1_0_3').trim();
+  let phyVersion = String(thingsstackConfig?.phyVersion || 'PHY_V1_0_3_REV_A').trim();
+
+  const loraversion = String(device?.loraversion || '').toLowerCase();
+  const regionalversion = String(device?.regionalversion || '').toLowerCase();
+
+  // Frequency plan heuristic.
+  if (regionalversion.includes('902') || regionalversion.includes('us') || regionalversion.includes('america')) {
+    frequencyPlanId = 'US_902_928_FSB_2';
+  } else if (regionalversion.includes('863') || regionalversion.includes('eu') || regionalversion.includes('europe')) {
+    frequencyPlanId = 'EU_863_870';
+  }
+
+  // LoRaWAN version + regional revision heuristic.
+  if (loraversion.includes('1.0.2')) {
+    macVersion = 'MAC_V1_0_2';
+    phyVersion = regionalversion.includes('revision a') ? 'PHY_V1_0_2_REV_B' : 'PHY_V1_0_2_REV_B';
+  } else if (loraversion.includes('1.0.3')) {
+    macVersion = 'MAC_V1_0_3';
+    // For 1.0.3 we default to revision A (matches your example).
+    if (regionalversion.includes('revision a')) {
+      phyVersion = 'PHY_V1_0_3_REV_A';
+    } else if (regionalversion.includes('revision b')) {
+      phyVersion = 'PHY_V1_0_3_REV_A';
+    } else {
+      phyVersion = 'PHY_V1_0_3_REV_A';
+    }
+  }
+
+  return { frequencyPlanId, macVersion, phyVersion };
+}
+
 async function createThingsstackDevice({ baseUrl, apiKey, applicationId, device, thingsstackConfig = {} }) {
   const deviceEui = normalizeHex(device.deveui);
   const joinEui = normalizeHex(device.joineui);
@@ -133,6 +168,8 @@ async function createThingsstackDevice({ baseUrl, apiKey, applicationId, device,
     return { ok: false, error: 'AppKey fehlt oder ist ungültig (32 Hex-Zeichen erforderlich).' };
   }
 
+  const loRaSettings = deriveLoRaSettingsFromDevice(device, thingsstackConfig);
+
   const payload = {
     end_device: {
       ids: {
@@ -148,6 +185,11 @@ async function createThingsstackDevice({ baseUrl, apiKey, applicationId, device,
       root_keys: {
         app_key: { key: appKey },
       },
+      frequency_plan_id: loRaSettings.frequencyPlanId,
+      lorawan_version_ids: {
+        mac_version: loRaSettings.macVersion,
+        phy_version: loRaSettings.phyVersion,
+      },
     },
     field_mask: {
       paths: [
@@ -158,6 +200,9 @@ async function createThingsstackDevice({ baseUrl, apiKey, applicationId, device,
         'name',
         'supports_join',
         'root_keys.app_key.key',
+        'frequency_plan_id',
+        'lorawan_version_ids.mac_version',
+        'lorawan_version_ids.phy_version',
       ],
     },
   };
@@ -169,20 +214,6 @@ async function createThingsstackDevice({ baseUrl, apiKey, applicationId, device,
       model_id: String(thingsstackConfig.modelId),
     };
     payload.field_mask.paths.push('version_ids.brand_id', 'version_ids.model_id');
-  } else {
-    const frequencyPlanId = String(thingsstackConfig?.frequencyPlanId || 'EU_863_870').trim();
-    const macVersion = String(thingsstackConfig?.macVersion || 'MAC_V1_0_2').trim();
-    const phyVersion = String(thingsstackConfig?.phyVersion || 'PHY_V1_0_2_REV_B').trim();
-    payload.end_device.frequency_plan_id = frequencyPlanId;
-    payload.end_device.lorawan_version_ids = {
-      mac_version: macVersion,
-      phy_version: phyVersion,
-    };
-    payload.field_mask.paths.push(
-      'frequency_plan_id',
-      'lorawan_version_ids.mac_version',
-      'lorawan_version_ids.phy_version'
-    );
   }
 
   const baseCandidates = buildCandidateBaseUrls(baseUrl);
@@ -211,7 +242,7 @@ async function createThingsstackDevice({ baseUrl, apiKey, applicationId, device,
           redirect: 'follow',
         });
         if (response.ok) {
-          return { ok: true };
+          return { ok: true, alreadyExists: false };
         }
         const text = await response.text();
         if (response.status === 409 || /already exists/i.test(text)) {
@@ -284,7 +315,7 @@ export default async function handler(req, res) {
     const request = pool.request();
     ids.forEach((id, i) => request.input(`id${i}`, sql.BigInt, id));
     const devicesResult = await request.query(`
-      SELECT id, deveui, joineui, appkey, deviceLabel
+      SELECT id, deveui, joineui, appkey, deviceLabel, loraversion, regionalversion
       FROM ${db}.dbo.inventory
       WHERE id IN (${ids.map((_, i) => `@id${i}`).join(',')})
     `);
@@ -296,7 +327,8 @@ export default async function handler(req, res) {
     const appId = String(applicationId).trim();
     const displayName = (lnsAssignmentName && String(lnsAssignmentName).trim()) || `Thingsstack (${appId})`;
     const errors = [];
-    let success = 0;
+    let created = 0;
+    let alreadyExisted = 0;
 
     for (const device of devices) {
       const result = await createThingsstackDevice({
@@ -319,12 +351,19 @@ export default async function handler(req, res) {
         .input('lns_id', sql.NVarChar(100), appId)
         .input('lns_assignment_name', sql.NVarChar(200), displayName)
         .query(`UPDATE ${db}.dbo.inventory SET lns_id = @lns_id, lns_assignment_name = @lns_assignment_name WHERE id = @id`);
-      success++;
+
+      if (result.alreadyExists) alreadyExisted += 1;
+      else created += 1;
     }
 
+    const failed = devices.length - created - alreadyExisted;
+    const success = created + alreadyExisted;
+
     return res.status(200).json({
+      created,
+      alreadyExisted,
+      failed,
       success,
-      failed: devices.length - success,
       errors: errors.length > 0 ? errors : undefined,
     });
   } catch (err) {
@@ -335,4 +374,3 @@ export default async function handler(req, res) {
     });
   }
 }
-

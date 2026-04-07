@@ -107,55 +107,47 @@ async function getAssetHierarchy(deviceId, tbToken, session) {
   }
 }
 
-async function getSerialNumberFromInventory(deviceId) {
+async function getSerialNumbersFromInventoryBatch(deviceIds) {
   const db = getMssqlConfig().database;
+  const serialByDeviceId = {};
+
+  if (!Array.isArray(deviceIds) || deviceIds.length === 0) {
+    return serialByDeviceId;
+  }
+
   try {
     const pool = await getConnection();
-    
-    // Versuche zuerst die direkte Verknüpfung über tbconnectionid
-    let result = await pool.request()
-      .input('deviceId', sql.VarChar, deviceId)
-      .query(`
-        SELECT serialnbr, deveui, deviceLabel
-        FROM ${db}.dbo.inventory 
-        WHERE tbconnectionid = @deviceId
+
+    // Dedupe and chunk to keep the SQL statement manageable.
+    const uniqueIds = Array.from(new Set(deviceIds.filter(Boolean)));
+    const chunkSize = 200;
+
+    for (let i = 0; i < uniqueIds.length; i += chunkSize) {
+      const chunk = uniqueIds.slice(i, i + chunkSize);
+      const request = pool.request();
+      const placeholders = chunk.map((id, idx) => {
+        const paramName = `deviceId_${i + idx}`;
+        request.input(paramName, sql.VarChar, id);
+        return `@${paramName}`;
+      });
+
+      const result = await request.query(`
+        SELECT tbconnectionid, serialnbr
+        FROM ${db}.dbo.inventory
+        WHERE tbconnectionid IN (${placeholders.join(', ')})
       `);
-    
-    if (result.recordset.length > 0) {
-      console.log(`Found serial number for device ${deviceId}:`, result.recordset[0].serialnbr);
-      return result.recordset[0].serialnbr;
-    }
-    
-    // Fallback: Suche über DevEUI (falls verfügbar)
-    // Hier müssten wir die DevEUI aus den ThingsBoard-Attributen holen
-    console.log(`No inventory record found for device ${deviceId} with tbconnectionid`);
-    return null;
-    
-  } catch (error) {
-    console.error('Error getting serial number from inventory:', error);
-    if (error.code === 'ECONNCLOSED' || error.code === 'ECONNRESET') {
-      console.log('Database connection lost, retrying...');
-      // Kurz warten und nochmal versuchen
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      try {
-        const pool = await getConnection();
-        let result = await pool.request()
-          .input('deviceId', sql.VarChar, deviceId)
-          .query(`
-            SELECT serialnbr, deveui, deviceLabel
-            FROM ${db}.dbo.inventory 
-            WHERE tbconnectionid = @deviceId
-          `);
-        
-        if (result.recordset.length > 0) {
-          console.log(`Found serial number for device ${deviceId} on retry:`, result.recordset[0].serialnbr);
-          return result.recordset[0].serialnbr;
+
+      for (const row of result.recordset || []) {
+        if (row.tbconnectionid) {
+          serialByDeviceId[row.tbconnectionid] = row.serialnbr || null;
         }
-      } catch (retryError) {
-        console.error('Retry failed:', retryError);
       }
     }
-    return null;
+
+    return serialByDeviceId;
+  } catch (error) {
+    console.error('Error getting serial numbers from inventory (batch):', error);
+    return {};
   }
 }
 
@@ -307,14 +299,16 @@ export default async function handler(req, res) {
     const allDevices = await fetchAllDevices(session.user.customerid, session.tbToken);
     
     console.log(`Total devices fetched: ${allDevices.length}`);
+    const serialByDeviceId = await getSerialNumbersFromInventoryBatch(
+      allDevices.map((device) => device?.id?.id).filter(Boolean)
+    );
 
-    // Hole Asset-, Telemetrie- und Seriennummer-Informationen für jedes Gerät
+    // Hole Asset- und Telemetrie-Informationen für jedes Gerät; serials are preloaded in batch.
     const devicesWithData = await Promise.all(
       allDevices.map(async device => {
-        const [asset, telemetry, serialNumber] = await Promise.all([
+        const [asset, telemetry] = await Promise.all([
           getAssetHierarchy(device.id.id, session.tbToken, session),
-          getLatestTelemetry(device.id.id, session.tbToken),
-          getSerialNumberFromInventory(device.id.id)
+          getLatestTelemetry(device.id.id, session.tbToken)
         ]);
        // console.log('device: ' + JSON.stringify(device, null, 2));
        // console.log('asset: ' + JSON.stringify(asset, null, 2));
@@ -330,7 +324,7 @@ export default async function handler(req, res) {
           asset: asset,
           telemetry: telemetry,
           serverAttributes: telemetry, // Server-Attribute sind jetzt in telemetry enthalten
-          serialNumber: serialNumber // Seriennummer aus der lokalen inventory-Tabelle
+          serialNumber: serialByDeviceId[device.id.id] || null // Seriennummer aus der lokalen inventory-Tabelle
         };
       })
     );

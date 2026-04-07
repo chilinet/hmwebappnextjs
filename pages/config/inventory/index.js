@@ -52,8 +52,8 @@ function Inventory() {
   const [thingsstackApplicationsError, setThingsstackApplicationsError] = useState(null);
   const [thingsstackInputMethod, setThingsstackInputMethod] = useState('manual'); // manual | repository
   const [thingsstackFrequencyPlanId, setThingsstackFrequencyPlanId] = useState('EU_863_870');
-  const [thingsstackMacVersion, setThingsstackMacVersion] = useState('MAC_V1_0_2');
-  const [thingsstackPhyVersion, setThingsstackPhyVersion] = useState('PHY_V1_0_2_REV_B');
+  const [thingsstackMacVersion, setThingsstackMacVersion] = useState('MAC_V1_0_3');
+  const [thingsstackPhyVersion, setThingsstackPhyVersion] = useState('PHY_V1_0_3_REV_A');
   const [thingsstackBrands, setThingsstackBrands] = useState([]);
   const [thingsstackBrandsLoading, setThingsstackBrandsLoading] = useState(false);
   const [thingsstackBrandsError, setThingsstackBrandsError] = useState(null);
@@ -859,8 +859,16 @@ function Inventory() {
       if (!res.ok) {
         throw new Error(data?.error || data?.details || res.statusText);
       }
-      const { success, failed, errors } = data;
+  
+      // Supports both old backend shape ({ success, failed }) and new one
+      // ({ created, alreadyExisted, failed, success }).
+      const created = Number(data?.created ?? 0);
+      const alreadyExisted = Number(data?.alreadyExisted ?? 0);
+      const success = Number(data?.success ?? (created + alreadyExisted));
+      const failed = Number(data?.failed ?? 0);
+      const errors = Array.isArray(data?.errors) ? data.errors : [];
       const selectedTarget = assignLnsSelectedOffer;
+  
       await fetchDevices();
       setShowAssignLnsModal(false);
       setAssignLnsSelectedLns('');
@@ -868,18 +876,29 @@ function Inventory() {
       setAssignLnsSelectedProfile('');
       setThingsstackInputMethod('manual');
       setThingsstackFrequencyPlanId('EU_863_870');
-      setThingsstackMacVersion('MAC_V1_0_2');
-      setThingsstackPhyVersion('PHY_V1_0_2_REV_B');
+      setThingsstackMacVersion('MAC_V1_0_3');
+      setThingsstackPhyVersion('PHY_V1_0_3_REV_A');
       setThingsstackBrandId('');
       setThingsstackModelId('');
       setSelectedDeviceIds([]);
-      if (failed > 0 && errors?.length) {
-        setError(`${success} zugewiesen, ${failed} fehlgeschlagen: ${errors.slice(0, 2).join('; ')}`);
-      } else if (success > 0) {
+  
+      if (failed > 0 && errors.length) {
+        setError(
+          `${created} erstellt, ${alreadyExisted} bereits vorhanden, ${failed} fehlgeschlagen: ${errors.slice(0, 2).join('; ')}`
+        );
+      } else {
         setError(null);
         if (assignLnsSelectedLns === 'thingsstack') {
-          alert(`${success} Gerät(e) erfolgreich zu Thingsstack (Application ${selectedTarget}) zugewiesen.`);
-        } else {
+          if (created > 0 && alreadyExisted > 0) {
+            alert(`${created} Gerät(e) neu erstellt, ${alreadyExisted} bereits vorhanden (Application ${selectedTarget}).`);
+          } else if (created > 0) {
+            alert(`${created} Gerät(e) erfolgreich zu Thingsstack (Application ${selectedTarget}) zugewiesen.`);
+          } else if (alreadyExisted > 0) {
+            alert(`${alreadyExisted} Gerät(e) waren bereits in Thingsstack vorhanden (Application ${selectedTarget}).`);
+          } else if (success > 0) {
+            alert(`${success} Gerät(e) zu Thingsstack (Application ${selectedTarget}) verarbeitet.`);
+          }
+        } else if (success > 0) {
           alert(`${success} Gerät(e) erfolgreich zu Melita LNS (Contract ${selectedTarget}) zugewiesen.`);
         }
       }
@@ -2136,8 +2155,8 @@ function Inventory() {
           setAssignLnsSelectedProfile('');
           setThingsstackInputMethod('manual');
           setThingsstackFrequencyPlanId('EU_863_870');
-          setThingsstackMacVersion('MAC_V1_0_2');
-          setThingsstackPhyVersion('PHY_V1_0_2_REV_B');
+          setThingsstackMacVersion('MAC_V1_0_3');
+          setThingsstackPhyVersion('PHY_V1_0_3_REV_A');
           setThingsstackBrandId('');
           setThingsstackModelId('');
           setThingsstackBrands([]);
@@ -2165,8 +2184,8 @@ function Inventory() {
                   setAssignLnsSelectedProfile('');
                   setThingsstackInputMethod('manual');
                   setThingsstackFrequencyPlanId('EU_863_870');
-                  setThingsstackMacVersion('MAC_V1_0_2');
-                  setThingsstackPhyVersion('PHY_V1_0_2_REV_B');
+                  setThingsstackMacVersion('MAC_V1_0_3');
+                  setThingsstackPhyVersion('PHY_V1_0_3_REV_A');
                   setThingsstackBrandId('');
                   setThingsstackModelId('');
                 }}
@@ -2353,8 +2372,8 @@ function Inventory() {
               setAssignLnsSelectedProfile('');
               setThingsstackInputMethod('manual');
               setThingsstackFrequencyPlanId('EU_863_870');
-              setThingsstackMacVersion('MAC_V1_0_2');
-              setThingsstackPhyVersion('PHY_V1_0_2_REV_B');
+              setThingsstackMacVersion('MAC_V1_0_3');
+              setThingsstackPhyVersion('PHY_V1_0_3_REV_A');
               setThingsstackBrandId('');
               setThingsstackModelId('');
               setAssignLnsError(null);
