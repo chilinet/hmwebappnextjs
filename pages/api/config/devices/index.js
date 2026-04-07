@@ -2,6 +2,9 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../auth/[...nextauth]";
 import { getConnection, getMssqlConfig } from "../../../../lib/db";
 import sql from 'mssql';
+import { getCachedDevices, setCachedDevices } from "../../../../lib/utils/deviceCache";
+
+const DEVICES_CACHE_TTL_MS = 60 * 1000; // 1 minute server-side cache
 
 async function fetchWithRetry(url, options, retries = 3, delay = 1000) {
   for (let i = 0; i < retries; i++) {
@@ -40,7 +43,67 @@ async function fetchWithRetry(url, options, retries = 3, delay = 1000) {
   }
 }
 
-async function getAssetHierarchy(deviceId, tbToken, session) {
+async function loadTreeData(connection, customerId) {
+  const query = `
+    SELECT tree
+    FROM customer_settings
+    WHERE customer_id = @customerId
+      AND tree IS NOT NULL
+  `;
+
+  const result = await connection.request()
+    .input('customerId', sql.UniqueIdentifier, customerId)
+    .query(query);
+
+  if (result.recordset.length === 0) {
+    return [];
+  }
+
+  const treeJson = result.recordset[0].tree;
+  if (typeof treeJson === 'string') {
+    return JSON.parse(treeJson);
+  }
+
+  return Array.isArray(treeJson) ? treeJson : [];
+}
+
+function buildAssetPathMap(treeData) {
+  const map = new Map();
+
+  function walk(nodes, path = []) {
+    if (!Array.isArray(nodes)) return;
+
+    for (const node of nodes) {
+      const currentNode = {
+        id: node?.id,
+        name: node?.name,
+        type: node?.type,
+        label: node?.label
+      };
+      const nextPath = [...path, currentNode];
+
+      if (node?.id) {
+        map.set(node.id, {
+          id: node.id,
+          pathString: nextPath.map((p) => p.label || p.name || '').filter(Boolean).join(' / '),
+          fullPath: {
+            labels: nextPath.map((p) => p.label || p.name || '').filter(Boolean),
+            nodes: nextPath
+          }
+        });
+      }
+
+      if (Array.isArray(node?.children) && node.children.length > 0) {
+        walk(node.children, nextPath);
+      }
+    }
+  }
+
+  walk(treeData, []);
+  return map;
+}
+
+async function getAssetHierarchy(deviceId, tbToken, assetPathMap) {
   
   //console.log('getAssetHierarchy: ' + deviceId);
 
@@ -62,40 +125,16 @@ async function getAssetHierarchy(deviceId, tbToken, session) {
 
     const assetRelation = relations.find(r => r.from.entityType === 'ASSET');
     if (!assetRelation) return null;
-    
-    try {
-      const treePath = await fetch(`${process.env.NEXTAUTH_URL}/api/treepath/${assetRelation.from.id}?customerId=${session.user.customerid}`, {
-        headers: {
-          'x-api-source': 'backend'
-        }
-      });
-      
-      if (treePath.ok) {
-        const treePathData = await treePath.json();
-        //console.log('treePath.pathString:', treePathData.pathString);
-        return {
-          id: assetRelation.from.id,
-          pathString: treePathData.pathString || '',
-          fullPath: treePathData.fullPath || null
-        };
-      } else {
-        console.warn(`TreePath API failed for asset ${assetRelation.from.id}: ${treePath.status}`);
-        // Fallback: Gib nur die Asset-ID zurück
-        return {
-          id: assetRelation.from.id,
-          pathString: `Asset ${assetRelation.from.id}`,
-          fullPath: null
-        };
-      }
-    } catch (treePathError) {
-      console.warn('TreePath API error, using fallback:', treePathError.message);
-      // Fallback: Gib nur die Asset-ID zurück
-      return {
-        id: assetRelation.from.id,
-        pathString: `Asset ${assetRelation.from.id}`,
-        fullPath: null
-      };
-    }
+    const assetId = typeof assetRelation.from.id === 'string'
+      ? assetRelation.from.id
+      : assetRelation.from.id?.id;
+    const mappedPath = assetId ? assetPathMap.get(assetId) : null;
+
+    return {
+      id: assetId || null,
+      pathString: mappedPath?.pathString || (assetId ? `Asset ${assetId}` : ''),
+      fullPath: mappedPath?.fullPath || null
+    };
 
   } catch (error) {
     console.error('Error in getAssetHierarchy:', {
@@ -254,6 +293,16 @@ export default async function handler(req, res) {
     return res.status(400).json({ message: 'ThingsBoard token not found in session' });
   }
 
+  const customerId = session.user.customerid;
+  const forceRefresh = req.query?.refresh === 'true' || req.headers['x-force-refresh'] === '1';
+
+  if (!forceRefresh) {
+    const cachedDevices = getCachedDevices(customerId);
+    if (cachedDevices) {
+      return res.json(cachedDevices);
+    }
+  }
+
   try {
     // Hilfsfunktion zum Abrufen aller Geräte mit Pagination
     const fetchAllDevices = async (customerId, tbToken) => {
@@ -296,9 +345,13 @@ export default async function handler(req, res) {
     };
 
     // Alle Geräte mit Pagination abrufen
-    const allDevices = await fetchAllDevices(session.user.customerid, session.tbToken);
+    const allDevices = await fetchAllDevices(customerId, session.tbToken);
     
     console.log(`Total devices fetched: ${allDevices.length}`);
+    const connection = await getConnection();
+    const treeData = await loadTreeData(connection, customerId);
+    const assetPathMap = buildAssetPathMap(treeData);
+
     const serialByDeviceId = await getSerialNumbersFromInventoryBatch(
       allDevices.map((device) => device?.id?.id).filter(Boolean)
     );
@@ -307,7 +360,7 @@ export default async function handler(req, res) {
     const devicesWithData = await Promise.all(
       allDevices.map(async device => {
         const [asset, telemetry] = await Promise.all([
-          getAssetHierarchy(device.id.id, session.tbToken, session),
+          getAssetHierarchy(device.id.id, session.tbToken, assetPathMap),
           getLatestTelemetry(device.id.id, session.tbToken)
         ]);
        // console.log('device: ' + JSON.stringify(device, null, 2));
@@ -329,6 +382,7 @@ export default async function handler(req, res) {
       })
     );
 
+    setCachedDevices(customerId, devicesWithData, DEVICES_CACHE_TTL_MS);
     return res.json(devicesWithData);
   } catch (error) {
     console.error('Error in handler:', {

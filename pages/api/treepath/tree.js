@@ -100,9 +100,8 @@ export default async function handler(req, res) {
       message: error.message 
     });
   } finally {
-    if (connection) {
-      await connection.close();
-    }
+    // getConnection() returns a shared pool from lib/db.js.
+    // Do not close it per request, or concurrent requests can be aborted.
   }
 }
 

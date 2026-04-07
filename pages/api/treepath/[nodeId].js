@@ -8,7 +8,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { id, customerId: queryCustomerId } = req.query;
+  const { nodeId: id, customerId: queryCustomerId } = req.query;
 
   // Validate required parameters
   if (!id) {
@@ -91,9 +91,8 @@ export default async function handler(req, res) {
       message: error.message 
     });
   } finally {
-    if (connection) {
-      await connection.close();
-    }
+    // getConnection() returns a shared pool from lib/db.js.
+    // Do not close it per request, or concurrent requests can be aborted.
   }
 }
 
