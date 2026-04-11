@@ -1,52 +1,26 @@
 import sql from 'mssql';
-
-// Determine if this is a local connection
-const isLocalConnection = process.env.MSSQL_SERVER === '127.0.0.1' || 
-                          process.env.MSSQL_SERVER === 'localhost' ||
-                          process.env.MSSQL_SERVER?.includes('localhost');
-
-const config = {
-  user: process.env.MSSQL_USER,
-  password: process.env.MSSQL_PASSWORD,
-  server: process.env.MSSQL_SERVER,
-  database: process.env.MSSQL_DATABASE,
-  options: {
-    encrypt: !isLocalConnection, // Disable encryption for local connections
-    trustServerCertificate: true,
-  },
-};
+import { getConnection } from '../../../lib/db';
 
 async function executeQuery(query, params = {}) {
-  let pool;
-  try {
-    pool = await sql.connect(config);
-    let request = pool.request();
-    
-    // Parameter hinzufügen mit korrekten Typen
-    Object.entries(params).forEach(([key, value]) => {
-      if (key === 'id' || key === 'roleid') {
-        request.input(key, sql.Int, parseInt(value));
-      } else if (typeof value === 'string') {
-        request.input(key, sql.NVarChar, value);
-      } else if (typeof value === 'number') {
-        request.input(key, sql.Int, value);
-      } else if (typeof value === 'boolean') {
-        request.input(key, sql.Bit, value ? 1 : 0);
-      } else {
-        request.input(key, value);
-      }
-    });
-    
-    const result = await request.query(query);
-    return result.recordset;
-  } catch (err) {
-    console.error('SQL error', err);
-    throw err;
-  } finally {
-    if (pool) {
-      await pool.close();
+  const pool = await getConnection();
+  const request = pool.request();
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (key === 'id' || key === 'roleid') {
+      request.input(key, sql.Int, parseInt(value, 10));
+    } else if (typeof value === 'string') {
+      request.input(key, sql.NVarChar, value);
+    } else if (typeof value === 'number') {
+      request.input(key, sql.Int, value);
+    } else if (typeof value === 'boolean') {
+      request.input(key, sql.Bit, value ? 1 : 0);
+    } else {
+      request.input(key, value);
     }
-  }
+  });
+
+  const result = await request.query(query);
+  return result.recordset;
 }
 export default async function handler(req, res) {
   const { id } = req.query;

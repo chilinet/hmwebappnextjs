@@ -1,7 +1,7 @@
 import { useRouter } from 'next/router';
 import { useSession, getSession } from 'next-auth/react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faUsers, faUserCog, faSitemap, faUserShield, faGears, faBoxes, faCalendarAlt, faMicrochip, faPalette } from '@fortawesome/free-solid-svg-icons';
+import { faUsers, faUserCog, faSitemap, faUserShield, faGears, faBoxes, faCalendarAlt, faMicrochip, faPalette, faLayerGroup } from '@fortawesome/free-solid-svg-icons';
 import { useEffect, useState } from 'react';
 import styles from '@/styles/config.module.css';
 
@@ -173,6 +173,20 @@ export default function Config() {
               <p className={`card-text ${styles.textOrange}`}>
                 Heizpläne verwalten und konfigurieren
               </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Heizpläne (Asset) Kachel */}
+        <div className="col-md-4">
+          <div
+            className={`card h-100 text-center p-4 ${styles.cardOrange}`}
+            onClick={() => router.push('/config/heating-schedules-asset')}
+          >
+            <div className="card-body">
+              <FontAwesomeIcon icon={faLayerGroup} size="3x" className={`mb-3 ${styles.iconOrange}`} />
+              <h5 className={`card-title ${styles.titleOrange}`}>Heizpläne (Asset)</h5>
+              <p className={`card-text ${styles.textOrange}`}>Noch ohne Inhalt</p>
             </div>
           </div>
         </div>

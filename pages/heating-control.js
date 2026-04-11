@@ -1,6 +1,6 @@
 import { useRouter } from 'next/router';
 import { useSession } from 'next-auth/react';
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { 
   faBuilding, 
@@ -71,7 +71,9 @@ import {
   getAttributeDisplayName,
   synchronizeChartData,
   getTemperatureChartOption,
-  mergeRoomTimeseriesPoints
+  mergeRoomTimeseriesPoints,
+  findFlatTreeNodeByAssetId,
+  extractSubtreeRootedAtAssetId
 } from '../lib/heating-control';
 import TreeNode from '../components/HeatingControl/TreeNode';
 
@@ -195,6 +197,16 @@ export default function HeatingControl() {
   const treeRef = useRef(null);
   const treeScrollContainerRef = useRef(null); 
   const lastLoadedCustomerIdRef = useRef(null); // Track last loaded customer ID to prevent unnecessary reloads
+  /** Einstieg nur einmal pro Mandant ohne „Vorrang“, sonst bei jedem treeData-Laden erneut (Admin-Zwang) */
+  const defaultEntryAppliedRef = useRef(false);
+
+  /** Baum ohne Vorfahren des Admin-Einstiegs – nur sichtbarer Teil für diesen Benutzer */
+  const visibleTreeData = useMemo(() => {
+    if (!treeData?.length || !customerData?.defaultEntryAssetId) {
+      return treeData;
+    }
+    return extractSubtreeRootedAtAssetId(treeData, customerData.defaultEntryAssetId);
+  }, [treeData, customerData?.defaultEntryAssetId]);
 
   // Temperature state (API only)
   const [deviceTemperatures, setDeviceTemperatures] = useState({});
@@ -588,7 +600,7 @@ export default function HeatingControl() {
       }
 
       // Step 2: Update all subordinate nodes in the tree
-      const subordinateNodeIds = getAllSubordinateNodeIds(selectedNode.id, treeData);
+      const subordinateNodeIds = getAllSubordinateNodeIds(selectedNode.id, visibleTreeData);
       debugLog('Updating subordinate nodes in tree:', subordinateNodeIds);
       
       // Update each subordinate node in the tree (but not in ThingsBoard)
@@ -2087,7 +2099,7 @@ export default function HeatingControl() {
         return null;
       };
       
-      const node = findNodeInTree(treeData, nodeId);
+      const node = findNodeInTree(visibleTreeData, nodeId);
       debugLog('Found node:', node);
       debugLog('Node relatedDevices:', node?.relatedDevices);
       
@@ -2115,7 +2127,7 @@ export default function HeatingControl() {
     } finally {
       setLoadingDevices(false);
     }
-  }, [treeData, fetchTelemetryForDevices]);
+  }, [visibleTreeData, fetchTelemetryForDevices]);
 
   const handleNodeSelect = (node) => {
     debugLog('Node selected:', node);
@@ -2462,6 +2474,34 @@ export default function HeatingControl() {
   }, [customerData?.customerid, fetchTreeData]);
 
   useEffect(() => {
+    defaultEntryAppliedRef.current = false;
+  }, [customerData?.customerid]);
+
+  useEffect(() => {
+    if (!visibleTreeData?.length || !customerData?.defaultEntryAssetId) return;
+    const node = findFlatTreeNodeByAssetId(
+      convertToTreeViewFormat(visibleTreeData),
+      customerData.defaultEntryAssetId
+    );
+    if (!node) return;
+
+    if (customerData.defaultEntryOverrideUser) {
+      handleNodeSelect(node);
+      return;
+    }
+    if (defaultEntryAppliedRef.current) return;
+    defaultEntryAppliedRef.current = true;
+    handleNodeSelect(node);
+    // Absichtlich ohne handleNodeSelect in deps: nur bei Baum/Mandant/Default ändern
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    visibleTreeData,
+    customerData?.defaultEntryAssetId,
+    customerData?.defaultEntryOverrideUser,
+    customerData?.customerid
+  ]);
+
+  useEffect(() => {
     const handleResize = () => {
       setWindowHeight(window.innerHeight);
       const mobile = window.innerWidth < 800;
@@ -2489,12 +2529,12 @@ export default function HeatingControl() {
   // Load telemetry data for subordinate nodes when activeTab changes to 'empty'
   useEffect(() => {
     if (activeTab === 'empty' && selectedNode) {
-      const { subordinates } = getAllSubordinateNodes(selectedNode.id, treeData);
+      const { subordinates } = getAllSubordinateNodes(selectedNode.id, visibleTreeData);
       if (subordinates.length > 0) {
         fetchSubordinateTelemetry(subordinates);
       }
     }
-  }, [activeTab, selectedNode, treeData, fetchSubordinateTelemetry]);
+  }, [activeTab, selectedNode, visibleTreeData, fetchSubordinateTelemetry]);
 
   // Update settings values from nodeDetails when they are loaded (direkt aus ThingsBoard)
   // Diese Werte werden immer direkt aus ThingsBoard geholt, nicht aus dem tree Feld
@@ -2519,8 +2559,8 @@ export default function HeatingControl() {
 
   // Expand only Level 1 (first level) when tree data is loaded
   useEffect(() => {
-    if (treeData && treeData.length > 0) {
-      const firstLevelNodeIds = getFirstLevelNodeIds(treeData);
+    if (visibleTreeData && visibleTreeData.length > 0) {
+      const firstLevelNodeIds = getFirstLevelNodeIds(visibleTreeData);
       debugLog('Tree data loaded, expanding Level 1:', firstLevelNodeIds);
       debugLog('Current openNodes before setting:', openNodes);
       setOpenNodes(firstLevelNodeIds);
@@ -2533,12 +2573,12 @@ export default function HeatingControl() {
         setForceExpand(true);
       }, 100);
     }
-  }, [treeData]);
+  }, [visibleTreeData]);
 
   // Expand path to selected node when a node is selected
   useEffect(() => {
-    if (selectedNode && treeData && treeData.length > 0) {
-      const pathToNode = getPathToNode(selectedNode.id, treeData);
+    if (selectedNode && visibleTreeData && visibleTreeData.length > 0) {
+      const pathToNode = getPathToNode(selectedNode.id, visibleTreeData);
       if (pathToNode) {
         debugLog('Selected node:', selectedNode.label);
         debugLog('Path to selected node:', pathToNode);
@@ -2546,7 +2586,7 @@ export default function HeatingControl() {
         setForceExpand(false); // Disable force expand, use specific path
       }
     }
-  }, [selectedNode, treeData]);
+  }, [selectedNode, visibleTreeData]);
 
   // Scroll to selected node when it changes
   useEffect(() => {
@@ -2923,7 +2963,7 @@ export default function HeatingControl() {
                         onClick={() => {
                           if (openNodes.length === 0) {
                             // Alle Knoten aufklappen
-                            const allNodeIds = getAllNodeIds(treeData);
+                            const allNodeIds = getAllNodeIds(visibleTreeData);
                             setOpenNodes(allNodeIds);
                             //setOpenNodes("4db7a8b0-0816-11f0-bf3e-fdfa06a0145e");
                           } else {
@@ -2986,7 +3026,7 @@ export default function HeatingControl() {
                   <Tree
                   ref={treeRef}
                   tree={(() => {
-                    const filtered = getFilteredTreeData(treeData, treeSearchTerm);
+                    const filtered = getFilteredTreeData(visibleTreeData, treeSearchTerm);
                     const converted = convertToTreeViewFormat(filtered);
                     debugLog('Filtered tree data:', filtered);
                     debugLog('Converted tree data:', converted);
@@ -4238,10 +4278,10 @@ if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runS
                     {activeTab === 'empty' && selectedNode && (selectedNode.hasDevices === false || (selectedNode.data?.hasDevices === false)) && (
                       <div className="tab-pane fade show active">
                         {(() => {
-                          const { path, subordinates } = getAllSubordinateNodes(selectedNode?.id, treeData);
+                          const { path, subordinates } = getAllSubordinateNodes(selectedNode?.id, visibleTreeData);
                           
                           // Get all subordinates without filtering to calculate the difference
-                          const getAllSubordinatesWithoutFilter = (nodeId, nodes = treeData) => {
+                          const getAllSubordinatesWithoutFilter = (nodeId, nodes = visibleTreeData) => {
                             const findNode = (nodeList, targetId) => {
                               for (const node of nodeList) {
                                 if (node.id === targetId) {

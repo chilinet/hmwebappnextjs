@@ -7,6 +7,14 @@ import { Tree } from '@minoru/react-dnd-treeview';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 
+/** ThingsBoard: 1 = kein, 2 = externes Wandpanel, 10 = externes Thermometer. Legacy Tree-Wert 0 wie1 behandeln. */
+function normalizeStructureOperationalMode(m) {
+  if (m === undefined || m === null || m === '') return '1';
+  const s = String(m);
+  if (s === '0') return '1';
+  return s;
+}
+
 export default function Structure() {
   const router = useRouter();
   const { data: session, status } = useSession({
@@ -48,7 +56,7 @@ export default function Structure() {
   const [loadingUnassignedDevices, setLoadingUnassignedDevices] = useState(false);
   const [customerPrefix, setCustomerPrefix] = useState('');
   const [lastNodeId, setLastNodeId] = useState(0);
-  const [operationalMode, setOperationalMode] = useState('0');
+  const [operationalMode, setOperationalMode] = useState('1');
   
   // Image upload states
   const [images, setImages] = useState([]);
@@ -257,7 +265,7 @@ export default function Structure() {
         hasDevices: node.hasDevices,
         label: node.label,
         name: node.name,
-        operationalMode: node.operationalMode || '0',
+        operationalMode: normalizeStructureOperationalMode(node.operationalMode ?? node.data?.operationalMode),
         operationalDevice: node.operationalDevice || '',
         relatedDevices: node.relatedDevices || []
       };
@@ -321,13 +329,15 @@ export default function Structure() {
       name: node.name || node.text,
       label: node.label || node.text,
       type: node.type || node.data?.type || '',
-      operationalMode: node.operationalMode || node.data?.operationalMode || '0',
+      operationalMode: normalizeStructureOperationalMode(
+        node.operationalMode ?? node.data?.operationalMode
+      ),
       operationalDevice: node.operationalDevice || node.data?.operationalDevice || '',
       extTempDevice: node.operationalDevice || node.data?.operationalDevice || '',
       hasPir: node.hasPir ?? node.data?.hasPir ?? false
     };
 
-    // Bei bestehendem Asset (UUID) Attribute von der API holen (z. B. hasPir)
+    // Bei bestehendem Asset (UUID) Server-Attribute aus ThingsBoard (u. a. operationalMode, extTempDevice)
     const isExistingAsset = node.id && typeof node.id === 'string' && !node.id.startsWith('temp_') && node.id.length > 30;
     if (isExistingAsset && session?.token) {
       try {
@@ -336,17 +346,32 @@ export default function Structure() {
         });
         if (res.ok) {
           const data = await res.json();
-          if (data.attributes && data.attributes.hasPir !== undefined) {
-            baseDetails.hasPir = data.attributes.hasPir === true || data.attributes.hasPir === 'true';
+          const attr = data.attributes;
+          if (attr) {
+            if (attr.hasPir !== undefined) {
+              baseDetails.hasPir = attr.hasPir === true || attr.hasPir === 'true';
+            }
+            if (attr.operationalMode !== undefined && attr.operationalMode !== null) {
+              baseDetails.operationalMode = normalizeStructureOperationalMode(attr.operationalMode);
+            }
+            const extDev =
+              attr.operationalDevice !== undefined && attr.operationalDevice !== null && attr.operationalDevice !== ''
+                ? attr.operationalDevice
+                : attr.extTempDevice;
+            if (extDev !== undefined && extDev !== null && extDev !== '') {
+              const devStr = typeof extDev === 'object' && extDev?.id?.id ? extDev.id.id : String(extDev);
+              baseDetails.operationalDevice = devStr;
+              baseDetails.extTempDevice = devStr;
+            }
           }
         }
       } catch (e) {
-        console.warn('Could not fetch asset attributes for hasPir:', e);
+        console.warn('Could not fetch asset attributes from ThingsBoard:', e);
       }
     }
 
     setNodeDetails(baseDetails);
-    setOperationalMode(baseDetails.operationalMode.toString());
+    setOperationalMode(String(baseDetails.operationalMode));
     setOperationalDevice(baseDetails.operationalDevice || '');
   };
 
@@ -376,11 +401,11 @@ export default function Structure() {
       name: generatedName,
       label: '',
       type: '',
-      operationalMode: '0',
+      operationalMode: '1',
       operationalDevice: '',
       hasPir: false
     });
-    setOperationalMode('0');
+    setOperationalMode('1');
     setOperationalDevice('');
     setIsNewNode(true);
   };
@@ -509,7 +534,6 @@ export default function Structure() {
           display: 'flex',
           alignItems: 'center',
           padding: '4px 8px',
-          backgroundColor: isSelected ? '#fd7e14' : 'transparent',
           borderRadius: '4px',
           width: '100%',
           justifyContent: 'space-between'
@@ -740,7 +764,7 @@ export default function Structure() {
         // Stelle sicher, dass operationalDevice explizit gesetzt wird (auch wenn leer)
         const updateBody = {
           ...editedDetails,
-          operationalMode: operationalMode || '0',
+          operationalMode: operationalMode || '1',
           operationalDevice: operationalDevice || ''
         };
         
@@ -1472,63 +1496,68 @@ export default function Structure() {
 
   return (
     <DndProvider backend={HTML5Backend}>
-      <div className="container-fluid px-4 mt-4">
-        <div className="d-flex justify-content-between align-items-center mb-4">
-          <div className="d-flex align-items-center">
-            <button 
-              className="btn btn-outline-light me-3"
-              onClick={() => router.push('/config')}
-            >
-              <FontAwesomeIcon icon={faArrowLeft} />
-            </button>
-            <h2 className="mb-0">Gebäudestruktur</h2>
-          </div>
+      <div className="container-fluid mt-4 px-3">
+        <div className="d-flex align-items-center mb-3">
+          <button
+            type="button"
+            className="btn btn-outline-secondary me-3"
+            onClick={() => router.push('/config')}
+          >
+            <FontAwesomeIcon icon={faArrowLeft} />
+          </button>
+          <FontAwesomeIcon icon={faSitemap} className="me-3" size="2x" style={{ color: '#fd7e14' }} />
+          <h1 className="mb-0" style={{ color: '#fd7e14', fontWeight: 'bold' }}>
+            Gebäudestruktur
+          </h1>
         </div>
 
-        <div className="d-flex gap-4">
-          {/* Tree Container */}
-          <div 
-            className="card" 
-            style={{ 
-              minWidth: '400px',
+        <div className="d-flex gap-3 flex-wrap flex-lg-nowrap align-items-stretch">
+          {/* Tree Container — Layout wie heating-schedules-asset (Struktur-Karte) */}
+          <div
+            className="flex-shrink-0"
+            style={{
               width: '400px',
-              height: windowHeight ? `${windowHeight - 80}px` : 'auto'
+              maxWidth: '100%',
+              minWidth: '280px'
             }}
           >
-            <div className="card-body" style={{ overflowY: 'auto' }}>
-              {/* Suchfeld für Tree */}
-              <div className="d-flex gap-2 mb-3">
-                <div className="input-group">
-                  <span className="input-group-text">
-                    <FontAwesomeIcon icon={faSearch} />
-                  </span>
-                  <input
-                    type="text"
-                    className="form-control"
-                    placeholder="Suchen..."
-                    value={treeSearchTerm}
-                    onChange={(e) => setTreeSearchTerm(e.target.value)}
-                  />
-                  {treeSearchTerm && (
-                    <button
-                      className="btn btn-outline-secondary"
-                      type="button"
-                      onClick={() => setTreeSearchTerm('')}
-                    >
-                      <FontAwesomeIcon icon={faTimes} />
-                    </button>
-                  )}
-                </div>
-                <button 
-                  className="btn btn-outline-light btn-sm"
+            <div className="card h-100 border">
+              <div className="card-header fw-bold d-flex align-items-center justify-content-between flex-wrap gap-2 py-2">
+                <span className="d-flex align-items-center">
+                  <FontAwesomeIcon icon={faSitemap} className="me-2 text-secondary" />
+                  Struktur
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-outline-secondary btn-sm"
                   onClick={fetchTreeData}
                   disabled={loading}
+                  title="Struktur aktualisieren"
                 >
-                  <FontAwesomeIcon 
-                    icon={faRotateRight} 
-                    className={loading ? 'fa-spin' : ''}
-                  />
+                  <FontAwesomeIcon icon={faRotateRight} className={loading ? 'fa-spin' : ''} />
                 </button>
+              </div>
+              <div className="card-body p-2" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
+              <div className="input-group input-group-sm mb-2">
+                <span className="input-group-text bg-light border">
+                  <FontAwesomeIcon icon={faSearch} />
+                </span>
+                <input
+                  type="search"
+                  className="form-control"
+                  placeholder="Knoten suchen…"
+                  value={treeSearchTerm}
+                  onChange={(e) => setTreeSearchTerm(e.target.value)}
+                />
+                {treeSearchTerm && (
+                  <button
+                    type="button"
+                    className="btn btn-outline-secondary"
+                    onClick={() => setTreeSearchTerm('')}
+                  >
+                    <FontAwesomeIcon icon={faTimes} />
+                  </button>
+                )}
               </div>
 
               {error && (
@@ -1538,9 +1567,9 @@ export default function Structure() {
               )}
 
               {loading ? (
-                <div className="text-center">
-                  <div className="spinner-border" role="status">
-                    <span className="visually-hidden">Loading...</span>
+                <div className="text-center py-4">
+                  <div className="spinner-border text-secondary" role="status">
+                    <span className="visually-hidden">Lädt…</span>
                   </div>
                 </div>
               ) : (
@@ -1594,15 +1623,16 @@ export default function Structure() {
                 />
               )}
             </div>
+            </div>
           </div>
 
           {/* Tabs Container */}
           <div 
-            className="card flex-grow-1" 
+            className="card flex-grow-1 border" 
             style={{ 
               height: windowHeight ? `${windowHeight - 80}px` : 'auto',
               display: 'flex',
-              flexDirection: 'column'  // Wichtig für die innere Flexbox-Struktur
+              flexDirection: 'column'
             }}
           >
             <div className="card-body d-flex flex-column" style={{ overflow: 'hidden' }}>  {/* overflow: hidden wichtig */}
@@ -1703,12 +1733,12 @@ export default function Structure() {
                               className="form-check-input"
                               type="radio"
                               name="operationalMode"
-                              id="operationalMode0"
-                              value="0"
-                              checked={operationalMode === '0'}
+                              id="operationalMode1"
+                              value="1"
+                              checked={operationalMode === '1'}
                               onChange={(e) => handleOperationalModeChange(e.target.value)}
                             />
-                            <label className="form-check-label text-dark" htmlFor="operationalMode0">
+                            <label className="form-check-label text-dark" htmlFor="operationalMode1">
                               Kein
                             </label>
                           </div>
@@ -2825,32 +2855,33 @@ export default function Structure() {
           background-color: rgba(0, 0, 0, 0.1);
           border-radius: 4px;
         }
-        /* Aktiver Node */
+        /* Aktiver Node — wie heating-schedules-asset (dezentes Highlight) */
         .selected-node {
-          background-color: #fd7e14 !important;
+          background-color: rgba(255, 193, 7, 0.25) !important;
           border-radius: 4px;
         }
         .selected-node:hover {
-          background-color: #fd7e14 !important;
+          background-color: rgba(255, 193, 7, 0.35) !important;
         }
         .selected-node .text-warning {
-          color: white !important;
+          color: #000 !important;
         }
         .btn-link:hover {
           opacity: 0.8;
         }
-        .tree-root ul {
-          list-style-type: none;
-          padding-left: 20px;
+        /* react-dnd-treeview: verschachtelte ul[role=list] sitzen in li[role=listitem] */
+        .tree-root[role="list"] {
+          list-style: none !important;
+          padding-left: 0 !important;
+          margin-bottom: 0;
         }
-        .tree-root > ul {
-          padding-left: 0;
+        .tree-root [role="listitem"] {
+          list-style: none !important;
         }
-        .tree-root > li {
-          list-style-type: none;
-        }
-        .tree-root div:not(:has(> div[style*="cursor: pointer"])) {
-          padding-left: 32px;
+        .tree-root [role="listitem"] > [role="list"] {
+          list-style: none !important;
+          padding-left: 1.25rem !important;
+          margin: 0 !important;
         }
         /* Tab Styles */
         .nav-tabs {

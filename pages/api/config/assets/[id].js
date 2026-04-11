@@ -14,6 +14,7 @@ const ASSET_ATTRIBUTE_KEYS = [
   'extTempDevice',
   'overruleMinutes',
   'runStatus',
+  'heatingPlans',
   'schedulerPlan',
   'schedulerPlanPIR',
   'windowSensor',
@@ -83,6 +84,44 @@ async function fetchAssetAttributes(assetId, tbToken) {
     }
     return {};
   }
+}
+
+/**
+ * ThingsBoard 3.x: Der Asset-Typ in der UI entspricht dem Asset-Profil; Persistenz läuft über assetProfileId.
+ * Nur das Feld `type` zu setzen reicht oft nicht — TB ignoriert es zugunsten des Profils.
+ */
+async function resolveAssetProfileEntityId(tbToken, profileName) {
+  const TB = process.env.THINGSBOARD_URL;
+  const name = (profileName || '').trim();
+  if (!name) return null;
+  const res = await fetch(
+    `${TB}/api/assetProfiles?pageSize=500&page=0&sortProperty=name&sortOrder=ASC`,
+    {
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Authorization': `Bearer ${tbToken}`
+      }
+    }
+  );
+  if (!res.ok) {
+    console.warn('[assets] Could not list assetProfiles:', res.status);
+    return null;
+  }
+  const body = await res.json();
+  const list = Array.isArray(body?.data) ? body.data : [];
+  const found = list.find((p) => p && String(p.name || '').trim() === name);
+  if (!found) {
+    console.warn('[assets] Asset profile not found for name:', name);
+    return null;
+  }
+  const raw = found.id;
+  if (raw && typeof raw === 'object' && raw.entityType && raw.id) {
+    return raw;
+  }
+  if (typeof raw === 'string') {
+    return { entityType: 'ASSET_PROFILE', id: raw };
+  }
+  return null;
 }
 
 // Funktion zum Entfernen eines Assets aus dem Tree (rekursiv)
@@ -238,11 +277,76 @@ export default async function handler(req, res) {
         attributes: attributes
       });
     } else if (req.method === 'PUT') {
-      const { minTemp, maxTemp, overruleMinutes, runStatus, fixValue, schedulerPlan, schedulerPlanPIR, childLock, windowSensor, operationalMode, operationalDevice, extTempDevice, hasPir, occupied, occupiedTemp } = req.body;
+      const {
+        name,
+        label,
+        type,
+        minTemp,
+        maxTemp,
+        overruleMinutes,
+        runStatus,
+        fixValue,
+        heatingPlans,
+        schedulerPlan,
+        schedulerPlanPIR,
+        childLock,
+        windowSensor,
+        operationalMode,
+        operationalDevice,
+        extTempDevice,
+        hasPir,
+        occupied,
+        occupiedTemp
+      } = req.body;
 
       // Wenn es ein Tree-Only-Update ist, überspringe ThingsBoard Update
       if (isTreeOnlyUpdate) {
         return res.status(200).json({ message: 'Tree-only update skipped' });
+      }
+
+      const TB = process.env.THINGSBOARD_URL;
+      let savedTbEntity = false;
+
+      // Asset-Metadaten (Name, Label, Typ) sind ThingsBoard-Entität, nicht SERVER_SCOPE-Attribute
+      if (name !== undefined || label !== undefined || type !== undefined) {
+        const detailsResult = await fetchAssetDetails(id, tbToken);
+        const current = detailsResult?.asset;
+        if (!current) {
+          return res.status(404).json({
+            message: 'Asset not found in ThingsBoard',
+            tbStatus: detailsResult?.tbStatus ?? null,
+            tbDetail: detailsResult?.tbDetail ?? null
+          });
+        }
+        const payload = {
+          ...current,
+          name: name !== undefined ? name : current.name,
+          label: label !== undefined ? label : current.label,
+          type: type !== undefined ? type : current.type
+        };
+        if (type !== undefined) {
+          const profileEntityId = await resolveAssetProfileEntityId(tbToken, type);
+          if (profileEntityId) {
+            payload.assetProfileId = profileEntityId;
+          }
+        }
+        const entityRes = await fetch(`${TB}/api/asset`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Authorization': `Bearer ${tbToken}`
+          },
+          body: JSON.stringify(payload)
+        });
+        if (!entityRes.ok) {
+          const errorText = await entityRes.text();
+          console.error(`Failed to update ThingsBoard asset entity: ${entityRes.status} - ${errorText}`);
+          return res.status(entityRes.status).json({
+            message: 'Failed to update asset in ThingsBoard',
+            error: errorText
+          });
+        }
+        savedTbEntity = true;
       }
 
       // Aktualisiere Attribute in ThingsBoard
@@ -253,6 +357,7 @@ export default async function handler(req, res) {
       if (overruleMinutes !== undefined) attributesToUpdate.overruleMinutes = overruleMinutes;
       if (runStatus !== undefined) attributesToUpdate.runStatus = runStatus;
       if (fixValue !== undefined) attributesToUpdate.fixValue = fixValue;
+      if (heatingPlans !== undefined) attributesToUpdate.heatingPlans = heatingPlans;
       if (schedulerPlan !== undefined) attributesToUpdate.schedulerPlan = schedulerPlan;
       if (schedulerPlanPIR !== undefined) attributesToUpdate.schedulerPlanPIR = schedulerPlanPIR;
       if (childLock !== undefined) attributesToUpdate.childLock = childLock;
@@ -268,12 +373,19 @@ export default async function handler(req, res) {
       if (occupiedTemp !== undefined) attributesToUpdate.occupiedTemp = occupiedTemp;
 
       if (Object.keys(attributesToUpdate).length === 0) {
-        return res.status(400).json({ message: 'No attributes to update' });
+        if (!savedTbEntity) {
+          return res.status(400).json({ message: 'No attributes to update' });
+        }
+        const updatedAttributesOnly = await fetchAssetAttributes(id, tbToken);
+        return res.status(200).json({
+          success: true,
+          attributes: updatedAttributesOnly
+        });
       }
 
       // Sende Attribute an ThingsBoard (als JSON-Objekt, nicht als Array)
       const response = await fetch(
-        `${process.env.THINGSBOARD_URL}/api/plugins/telemetry/ASSET/${id}/attributes/SERVER_SCOPE`,
+        `${TB}/api/plugins/telemetry/ASSET/${id}/attributes/SERVER_SCOPE`,
         {
           method: 'POST',
           headers: {
