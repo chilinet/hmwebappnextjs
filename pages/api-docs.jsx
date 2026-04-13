@@ -8,21 +8,33 @@ function ApiDocs() {
     <div className="swagger-container">
       <SwaggerUI url="/swagger.json" />
       <style jsx global>{`
+        /* Vollständig weiß: globales Hintergrundbild/Overlay aus globals.css abschalten */
+        html {
+          background: #ffffff !important;
+          background-image: none !important;
+        }
+        body {
+          background: #ffffff !important;
+          background-color: #ffffff !important;
+          background-image: none !important;
+          background-size: auto !important;
+          background-attachment: scroll !important;
+        }
+        body::before {
+          display: none !important;
+          content: none !important;
+        }
         .swagger-container {
           margin: 0;
           padding: 0;
-          height: 100vh;
-          background-color: white;
+          min-height: 100vh;
+          background-color: #ffffff;
         }
         .swagger-ui {
           max-width: 1460px;
           margin: 0 auto;
           padding: 20px;
-          background-color: white;
-        }
-        /* Override default dark theme colors */
-        body {
-          background-color: white !important;
+          background-color: #ffffff;
         }
         .swagger-ui .info .title,
         .swagger-ui .info p,

@@ -34,7 +34,7 @@ export default async function handler(req, res) {
       `client_id=${process.env.OAUTH_CLIENT_ID}&` +
       `response_type=code&` +
       `redirect_uri=${encodeURIComponent(process.env.OAUTH_REDIRECT_URI)}&` +
-      `scope=${encodeURIComponent('https://outlook.office.com/SMTP.Send offline_access')}&` +
+      `scope=${encodeURIComponent('https://graph.microsoft.com/Mail.Send offline_access')}&` +
       `state=${Date.now()}`;
 
     return res.status(200).json({

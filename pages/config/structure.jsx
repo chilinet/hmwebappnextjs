@@ -2,7 +2,7 @@ import { useRouter } from 'next/router';
 import { useSession } from 'next-auth/react';
 import { useState, useEffect } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faArrowLeft, faBuilding, faIndustry, faMicrochip, faChevronDown, faChevronRight, faRotateRight, faPlus, faCheck, faXmark, faMinus, faSearch, faTimes, faImage, faUpload, faTrash, faEye, faStar, faEdit } from '@fortawesome/free-solid-svg-icons';
+import { faArrowLeft, faBuilding, faIndustry, faMicrochip, faChevronDown, faChevronRight, faRotateRight, faPlus, faCheck, faXmark, faMinus, faSearch, faTimes, faImage, faUpload, faTrash, faEye, faStar, faEdit, faSitemap } from '@fortawesome/free-solid-svg-icons';
 import { Tree } from '@minoru/react-dnd-treeview';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';

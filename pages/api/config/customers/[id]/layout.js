@@ -1,22 +1,7 @@
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../../auth/[...nextauth]";
 import sql from 'mssql';
-
-// Determine if this is a local connection
-const isLocalConnection = process.env.MSSQL_SERVER === '127.0.0.1' || 
-                          process.env.MSSQL_SERVER === 'localhost' ||
-                          process.env.MSSQL_SERVER?.includes('localhost');
-
-const config = {
-  user: process.env.MSSQL_USER,
-  password: process.env.MSSQL_PASSWORD,
-  database: process.env.MSSQL_DATABASE,
-  server: process.env.MSSQL_SERVER,
-  options: {
-    encrypt: !isLocalConnection,
-    trustServerCertificate: true
-  }
-};
+import { getConnection } from '../../../../../lib/db';
 
 export default async function handler(req, res) {
   const session = await getServerSession(req, res, authOptions);
@@ -27,9 +12,8 @@ export default async function handler(req, res) {
 
   const { id } = req.query;
 
-  let pool;
   try {
-    pool = await sql.connect(config);
+    const pool = await getConnection();
 
     switch (req.method) {
       case 'GET':
@@ -90,14 +74,6 @@ export default async function handler(req, res) {
       message: 'Datenbankfehler',
       error: error.message 
     });
-  } finally {
-    if (pool) {
-      try {
-        await pool.close();
-      } catch (err) {
-        console.error('Error closing connection:', err);
-      }
-    }
   }
 }
 

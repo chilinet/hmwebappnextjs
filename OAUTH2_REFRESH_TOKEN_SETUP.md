@@ -42,15 +42,25 @@
    node test-simple-oauth2-only.js
    ```
 
-4. **Schauen Sie in die Server-Logs** - Sie sollten sehen:
+4. **Refresh Token beschaffen** (eine der folgenden Methoden):
+
+   **A) Server-Log** (nur wenn beim ersten Code-Exchange **noch kein** `OAUTH_REFRESH_TOKEN` in `.env` steht):
    ```
    Refresh token received - you can now add OAUTH_REFRESH_TOKEN to your .env file
    Refresh token: eyJhbGciOiJIUzUxMiJ9...
    ```
+   Wenn dort **nichts** erscheint, liegt das meist an:
+   - `OAUTH_REFRESH_TOKEN` ist **bereits gesetzt** → die App loggt den Wert absichtlich nicht erneut.
+   - Es wird **nur** der Refresh-Grant genutzt → Microsoft liefert oft **keinen** neuen Refresh-Token im Body (dann keine „Refresh token received“-Zeile).
+   - Der Authorization Code ist **abgelaufen** (ca. 10 Minuten) oder `OAUTH_REDIRECT_URI` stimmt nicht mit Azure überein.
+
+   **B) JSON ohne E-Mail (empfohlen):** Als angemeldeter Benutzer `POST /api/email/exchange-auth-code` aufrufen (z. B. aus dem Admin-Bereich oder mit curl + Session-Cookie). Die Antwort enthält **`refresh_token`** im Body – kein Suchen in Logs.
+
+   **C) Entwicklung:** Beim erfolgreichen Aufruf von `POST /api/email/send-simple-oauth2` liefert die Antwort in **development** (oder wenn `OAUTH_EXPOSE_REFRESH_TOKEN=true`) das Feld **`newRefreshToken`**, sofern Microsoft einen Refresh-Token zurückgibt und noch keiner in `.env` steht.
 
 ### **Schritt 3: Refresh Token speichern**
 
-1. **Kopieren Sie den Refresh Token** aus den Server-Logs
+1. **Kopieren Sie den Refresh Token** aus der API-Antwort (B/C) oder aus den Server-Logs (A)
 2. **Fügen Sie ihn in `.env` hinzu:**
    ```bash
    OAUTH_REFRESH_TOKEN=ihr_refresh_token_hier

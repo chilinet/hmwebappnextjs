@@ -2,18 +2,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "../auth/[...nextauth]";
 import thingsboardAuth from '../thingsboard/auth';
 import axios from 'axios';
-import sql from 'mssql';
-
-const config = {
-  user: 'hmroot',
-  password: '9YJLpf6CfyteKzoN',
-  server: 'hmcdev01.database.windows.net',
-  database: 'hmcdev',
-  options: {
-    encrypt: !isLocalConnection, // Disable encryption for local connections
-    trustServerCertificate: true
-  }
-};
+import { getConnection } from '../../../lib/db';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -27,9 +16,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Hole die Thingsboard-Credentials des Benutzers aus der Datenbank
-    await sql.connect(config);
-    const result = await sql.query`
+    const pool = await getConnection();
+    const result = await pool.request().query`
       SELECT tb_username, tb_password
       FROM hm_users
       WHERE userid = ${session.user.id}
@@ -47,7 +35,7 @@ export default async function handler(req, res) {
     const baseUrl = `${process.env.THINGSBOARD_URL}/api`;
 
     // Erstelle die customers-Tabelle falls sie nicht existiert
-    await sql.query`
+    await pool.request().query`
       IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='customers' AND xtype='U')
       CREATE TABLE customers (
         id NVARCHAR(36) PRIMARY KEY,
@@ -83,13 +71,13 @@ export default async function handler(req, res) {
     for (const customer of customers) {
       try {
         // Prüfe ob Customer bereits existiert
-        const existingCustomer = await sql.query`
+        const existingCustomer = await pool.request().query`
           SELECT id FROM customers WHERE id = ${customer.id.id || customer.id}
         `;
 
         if (existingCustomer.recordset.length > 0) {
           // Update existierenden Customer
-          await sql.query`
+          await pool.request().query`
             UPDATE customers 
             SET name = ${customer.name || ''},
                 title = ${customer.title || ''},
@@ -110,7 +98,7 @@ export default async function handler(req, res) {
           updatedCount++;
         } else {
           // Füge neuen Customer hinzu
-          await sql.query`
+          await pool.request().query`
             INSERT INTO customers (
               id, name, title, email, phone, address, address2, city, country, state, zip, 
               additional_info, created_time, updated_time, last_sync
@@ -155,7 +143,5 @@ export default async function handler(req, res) {
       message: 'Fehler bei der Customer-Synchronisation',
       error: error.response?.data || error.message 
     });
-  } finally {
-    await sql.close();
   }
 }

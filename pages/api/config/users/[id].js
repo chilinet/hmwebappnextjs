@@ -2,22 +2,7 @@ import { getServerSession } from 'next-auth/next';
 import sql from 'mssql';
 import { authOptions } from '../../../../lib/authOptions';
 import { convertToTreeViewFormat, normAssetId } from '../../../../lib/heating-control/treeUtils';
-
-// Determine if this is a local connection
-const isLocalConnection = process.env.MSSQL_SERVER === '127.0.0.1' || 
-                          process.env.MSSQL_SERVER === 'localhost' ||
-                          process.env.MSSQL_SERVER?.includes('localhost');
-
-const config = {
-  user: process.env.MSSQL_USER,
-  password: process.env.MSSQL_PASSWORD,
-  server: process.env.MSSQL_SERVER,
-  database: process.env.MSSQL_DATABASE,
-  options: {
-    encrypt: !isLocalConnection, // Disable encryption for local connections
-    trustServerCertificate: true
-  }
-}
+import { withPoolRetry } from '../../../../lib/db';
 
 export default async function handler(req, res) {
   const { id } = req.query
@@ -41,12 +26,9 @@ export default async function handler(req, res) {
   console.log('************************************************');
   console.log(req.method);
   console.log('************************************************');
-  
-  let pool;
-  try {
-    pool = await sql.connect(config)
-    console.log('sql.connect');
 
+  try {
+    await withPoolRetry(async (pool) => {
     switch (req.method) {
       case 'GET':
         // Einzelnen Benutzer laden
@@ -300,6 +282,7 @@ export default async function handler(req, res) {
         res.setHeader('Allow', ['GET', 'PUT', 'DELETE'])
         res.status(405).end(`Method ${req.method} Not Allowed`)
     }
+    }, { attempts: 3 });
   } catch (error) {
     console.error('User API error:', error)
     return res.status(500).json({ 
@@ -311,9 +294,5 @@ export default async function handler(req, res) {
         hasToken: !!tbToken
       }
     })
-  } finally {
-    if (pool) {
-      await pool.close()
-    }
   }
 } 

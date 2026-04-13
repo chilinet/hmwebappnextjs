@@ -1,6 +1,6 @@
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../auth/[...nextauth]";
-import { getConnection } from "../../../../lib/db";
+import { withPoolRetry } from "../../../../lib/db";
 import sql from 'mssql';
 
 async function fetchWithRetry(url, options, retries = 3, delay = 1000) {
@@ -107,55 +107,37 @@ async function getAssetHierarchy(deviceId, tbToken, session) {
   }
 }
 
-async function getSerialNumberFromInventory(deviceId) {
-  try {
-    const pool = await getConnection();
-    
-    // Versuche zuerst die direkte Verknüpfung über tbconnectionid
-    let result = await pool.request()
-      .input('deviceId', sql.VarChar, deviceId)
-      .query(`
-        SELECT serialnbr, deveui, deviceLabel
-        FROM hmcdev.dbo.inventory 
-        WHERE tbconnectionid = @deviceId
+/** Eine Abfrage pro Chunk — vermeidet Dutzende parallele getConnection/Pulse-Stürme (Pool max 10). */
+async function getSerialNumbersByTbConnectionIds(deviceIds) {
+  const uniqueIds = [...new Set((deviceIds || []).filter(Boolean).map((id) => String(id)))];
+  if (uniqueIds.length === 0) {
+    return new Map();
+  }
+
+  return withPoolRetry(async (pool) => {
+    const map = new Map();
+    const chunkSize = 400;
+    for (let i = 0; i < uniqueIds.length; i += chunkSize) {
+      const chunk = uniqueIds.slice(i, i + chunkSize);
+      const request = pool.request();
+      const placeholders = chunk.map((_, idx) => {
+        const name = `id${i + idx}`;
+        request.input(name, sql.VarChar, chunk[idx]);
+        return `@${name}`;
+      });
+      const result = await request.query(`
+        SELECT tbconnectionid, serialnbr
+        FROM dbo.inventory
+        WHERE tbconnectionid IN (${placeholders.join(', ')})
       `);
-    
-    if (result.recordset.length > 0) {
-      console.log(`Found serial number for device ${deviceId}:`, result.recordset[0].serialnbr);
-      return result.recordset[0].serialnbr;
-    }
-    
-    // Fallback: Suche über DevEUI (falls verfügbar)
-    // Hier müssten wir die DevEUI aus den ThingsBoard-Attributen holen
-    console.log(`No inventory record found for device ${deviceId} with tbconnectionid`);
-    return null;
-    
-  } catch (error) {
-    console.error('Error getting serial number from inventory:', error);
-    if (error.code === 'ECONNCLOSED' || error.code === 'ECONNRESET') {
-      console.log('Database connection lost, retrying...');
-      // Kurz warten und nochmal versuchen
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      try {
-        const pool = await getConnection();
-        let result = await pool.request()
-          .input('deviceId', sql.VarChar, deviceId)
-          .query(`
-            SELECT serialnbr, deveui, deviceLabel
-            FROM hmcdev.dbo.inventory 
-            WHERE tbconnectionid = @deviceId
-          `);
-        
-        if (result.recordset.length > 0) {
-          console.log(`Found serial number for device ${deviceId} on retry:`, result.recordset[0].serialnbr);
-          return result.recordset[0].serialnbr;
+      for (const row of result.recordset) {
+        if (row.tbconnectionid != null && row.serialnbr != null) {
+          map.set(String(row.tbconnectionid), row.serialnbr);
         }
-      } catch (retryError) {
-        console.error('Retry failed:', retryError);
       }
     }
-    return null;
-  }
+    return map;
+  });
 }
 
 async function getLatestTelemetry(deviceId, tbToken) {
@@ -307,14 +289,18 @@ export default async function handler(req, res) {
     
     console.log(`Total devices fetched: ${allDevices.length}`);
 
+    const serialByDeviceId = await getSerialNumbersByTbConnectionIds(
+      allDevices.map((d) => d.id.id)
+    );
+
     // Hole Asset-, Telemetrie- und Seriennummer-Informationen für jedes Gerät
     const devicesWithData = await Promise.all(
       allDevices.map(async device => {
-        const [asset, telemetry, serialNumber] = await Promise.all([
+        const [asset, telemetry] = await Promise.all([
           getAssetHierarchy(device.id.id, session.tbToken, session),
           getLatestTelemetry(device.id.id, session.tbToken),
-          getSerialNumberFromInventory(device.id.id)
         ]);
+        const serialNumber = serialByDeviceId.get(String(device.id.id)) ?? null;
        // console.log('device: ' + JSON.stringify(device, null, 2));
        // console.log('asset: ' + JSON.stringify(asset, null, 2));
         //console.log('telemetry: ' + JSON.stringify(telemetry, null, 2));

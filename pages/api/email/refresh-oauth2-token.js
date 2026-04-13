@@ -41,7 +41,6 @@ export default async function handler(req, res) {
       body: new URLSearchParams({
         client_id: process.env.OAUTH_CLIENT_ID,
         client_secret: process.env.OAUTH_CLIENT_SECRET,
-        scope: 'https://outlook.office.com/SMTP.Send offline_access',
         grant_type: 'refresh_token',
         refresh_token: process.env.OAUTH_REFRESH_TOKEN,
       }),

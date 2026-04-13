@@ -32,31 +32,29 @@ export default async function handler(req, res) {
       html: html,
     };
 
-    console.log('Sending email via OAuth2:', {
+    console.log('Sending email via Microsoft Graph:', {
       from: mailOptions.from,
       to: mailOptions.to,
       subject: mailOptions.subject
     });
 
-    // E-Mail über OAuth2 versenden
     const result = await oauth2Helper.sendMail(mailOptions);
 
-    console.log('Email sent successfully via OAuth2:', result.messageId);
+    console.log('Email sent successfully via Microsoft Graph:', result.status);
 
     return res.status(200).json({
       success: true,
       message: 'Email sent successfully',
       messageId: result.messageId,
-      method: 'OAuth2'
+      method: 'Microsoft Graph',
     });
-
   } catch (error) {
-    console.error('Error sending email via OAuth2:', error);
-    
+    console.error('Error sending email via Microsoft Graph:', error);
+
     return res.status(500).json({
       error: 'Failed to send email',
       details: error.message,
-      method: 'OAuth2'
+      method: 'Microsoft Graph',
     });
   }
 }

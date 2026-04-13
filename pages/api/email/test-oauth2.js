@@ -42,7 +42,7 @@ export default async function handler(req, res) {
         body: new URLSearchParams({
           client_id: process.env.OAUTH_CLIENT_ID,
           client_secret: process.env.OAUTH_CLIENT_SECRET,
-          scope: 'https://outlook.office.com/SMTP.Send offline_access',
+          scope: 'https://graph.microsoft.com/Mail.Send offline_access',
           grant_type: 'authorization_code',
           code: process.env.OAUTH_AUTHORIZATION_CODE,
           redirect_uri: process.env.OAUTH_REDIRECT_URI,

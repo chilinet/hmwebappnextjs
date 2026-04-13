@@ -28,9 +28,8 @@ export default async function handler(req, res) {
   switch (req.method) {
     case 'GET':
       try {
-        const database = process.env.MSSQL_DATABASE || 'hmdev02';
         const query = `
-          SELECT * FROM ${database}.dbo.roles 
+          SELECT * FROM dbo.roles 
           WHERE roleid = @id`;
         
         const result = await executeQuery(query, { id });
@@ -47,9 +46,8 @@ export default async function handler(req, res) {
     case 'PUT':
       try {
         const { rolename, adminrole, descrlong } = req.body;
-        const database = process.env.MSSQL_DATABASE || 'hmdev02';
         const query = `
-          UPDATE ${database}.dbo.roles 
+          UPDATE dbo.roles 
           SET rolename = @rolename,
               adminrole = @adminrole,
               descrlong = @descrlong,
@@ -76,9 +74,8 @@ export default async function handler(req, res) {
 
     case 'DELETE':
       try {
-        const database = process.env.MSSQL_DATABASE || 'hmdev02';
         const query = `
-          DELETE FROM ${database}.dbo.roles 
+          DELETE FROM dbo.roles 
           OUTPUT DELETED.*
           WHERE roleid = @id`;
         

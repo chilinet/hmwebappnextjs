@@ -17,10 +17,10 @@ export default async function handler(req, res) {
                  i.updated_at, i.status, i.contractId, i.deviceLabel, i.deviceProfileId, i.offerName,
                  c.name as customer_name, c.title as customer_title,
                  CASE WHEN i.hasrelation = 1 THEN 1 ELSE 0 END as hasrelation
-          FROM hmcdev.dbo.inventory i
-          LEFT JOIN hmcdev.dbo.brand b ON i.brand_id = b.id
-          LEFT JOIN hmcdev.dbo.model m ON i.model_id = m.id
-          LEFT JOIN hmcdev.dbo.distributor d ON i.distributor_id = d.id
+          FROM dbo.inventory i
+          LEFT JOIN dbo.brand b ON i.brand_id = b.id
+          LEFT JOIN dbo.model m ON i.model_id = m.id
+          LEFT JOIN dbo.distributor d ON i.distributor_id = d.id
           LEFT JOIN customers c ON i.customerid = c.id
           ORDER BY i.id DESC
         `;
@@ -98,7 +98,7 @@ export default async function handler(req, res) {
           .input('created_at', sql.DateTime, now)
           .input('updated_at', sql.DateTime, now)
           .query(`
-            INSERT INTO hmcdev.dbo.inventory (
+            INSERT INTO dbo.inventory (
               devicenbr, devicename, deveui, joineui, serialnbr, appkey,
               loraversion, regionalversion, customerid, tbconnectionid, nwconnectionid,
               brand_id, model_id, hardwareversion, firmwareversion, owner_id, group_id,
@@ -163,7 +163,7 @@ export default async function handler(req, res) {
           .input('offerName', sql.VarChar(100), data.offerName)
           .input('updated_at', sql.DateTime, now)
           .query(`
-            UPDATE hmcdev.dbo.inventory
+            UPDATE dbo.inventory
             SET devicenbr = @devicenbr,
                 devicename = @devicename,
                 deveui = @deveui,
@@ -216,7 +216,7 @@ export default async function handler(req, res) {
         
         const result = await pool.request()
           .input('id', sql.BigInt, id)
-          .query('DELETE FROM hmcdev.dbo.inventory WHERE id = @id');
+          .query('DELETE FROM dbo.inventory WHERE id = @id');
         
         if (result.rowsAffected[0] === 0) {
           res.status(404).json({ error: 'Device not found' });

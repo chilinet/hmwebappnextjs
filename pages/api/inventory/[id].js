@@ -47,8 +47,8 @@ export default async function handler(req, res) {
                i.owner_id, i.group_id, i.distributor_id, i.status_id, i.invoicenbr, i.ordernbr, 
                i.orderdate, i.installed_at, i.tbconnected_at, i.nwconnected_at, i.created_at, 
                i.updated_at, i.status, i.contractId, i.deviceLabel, i.deviceProfileId, i.offerName
-        FROM hmcdev.dbo.inventory i
-        LEFT JOIN hmcdev.dbo.brand b ON i.brand_id = b.id
+        FROM dbo.inventory i
+        LEFT JOIN dbo.brand b ON i.brand_id = b.id
         WHERE i.deviceid = @deviceid
       `);
     

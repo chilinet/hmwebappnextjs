@@ -73,7 +73,8 @@ import {
   getTemperatureChartOption,
   mergeRoomTimeseriesPoints,
   findFlatTreeNodeByAssetId,
-  extractSubtreeRootedAtAssetId
+  extractSubtreeRootedAtAssetId,
+  mergeCustomerPlansWithAssetPlans
 } from '../lib/heating-control';
 import TreeNode from '../components/HeatingControl/TreeNode';
 
@@ -297,6 +298,12 @@ export default function HeatingControl() {
     }
   };
 
+  /** Kunden-`plans` + Asset-`heatingPlans` für Wochenplan-Auswahl und Anzeige */
+  const mergedScheduleData = useMemo(
+    () => mergeCustomerPlansWithAssetPlans(scheduleData, nodeDetails?.attributes?.heatingPlans),
+    [scheduleData, nodeDetails?.attributes?.heatingPlans]
+  );
+
   const handlePlanChange = (dayIndex, planIndex) => {
     setSelectedDayPlans(prev => ({
       ...prev,
@@ -338,7 +345,7 @@ export default function HeatingControl() {
       const schedulerPlanValue = isPirRunStatus(runStatus)
         ? nodeDetails.attributes.schedulerPlanPIR
         : nodeDetails.attributes.schedulerPlan;
-      if (!schedulerPlanValue || !scheduleData || !Array.isArray(scheduleData)) {
+      if (!schedulerPlanValue || !mergedScheduleData || !Array.isArray(mergedScheduleData)) {
         setPlannedTargetTemperature(null);
         return;
       }
@@ -372,8 +379,8 @@ export default function HeatingControl() {
           return;
         }
 
-        // Plan aus scheduleData finden
-        const plan = scheduleData.find(p => Array.isArray(p) && p[0] === planName);
+        // Plan aus Mandanten- + Asset-Plänen (heatingPlans)
+        const plan = mergedScheduleData.find(p => Array.isArray(p) && p[0] === planName);
         if (!plan || !Array.isArray(plan[1]) || plan[1].length !== 24) {
           setPlannedTargetTemperature(null);
           return;
@@ -397,7 +404,7 @@ export default function HeatingControl() {
 
     // Wenn weder fix noch schedule
     setPlannedTargetTemperature(null);
-  }, [nodeDetails, pendingRunStatus, pendingFixValue, scheduleData]);
+  }, [nodeDetails, pendingRunStatus, pendingFixValue, mergedScheduleData]);
 
   // Berechne geplante Zieltemperatur wenn sich relevante Daten ändern
   useEffect(() => {
@@ -448,17 +455,17 @@ export default function HeatingControl() {
 
       // Handle schedulerPlan changes - always save if switching to schedule mode or if there are plan changes
       if (pendingRunStatus === 'schedule' || Object.keys(selectedDayPlans).length > 0) {
-        if (Array.isArray(scheduleData)) {
+        if (Array.isArray(mergedScheduleData) && mergedScheduleData.length > 0) {
           let planArray = [...originalSchedulerPlan];
           
           // Ensure we have 7 days (one for each day of the week)
           while (planArray.length < 7) {
-            planArray.push(scheduleData[0]?.[0] || '');
+            planArray.push(mergedScheduleData[0]?.[0] || '');
           }
 
           // Apply any plan changes
           Object.entries(selectedDayPlans).forEach(([dayIndex, planIndex]) => {
-            const newPlanName = scheduleData[planIndex]?.[0] || '';
+            const newPlanName = mergedScheduleData[planIndex]?.[0] || '';
             planArray[parseInt(dayIndex)] = newPlanName;
           });
 
@@ -468,13 +475,13 @@ export default function HeatingControl() {
 
       // Handle schedulerPlanPIR changes - when PIR mode or PIR plan changes
       if (isPirRunStatus(pendingRunStatus) || Object.keys(selectedDayPlansPIR).length > 0) {
-        if (Array.isArray(scheduleData)) {
+        if (Array.isArray(mergedScheduleData) && mergedScheduleData.length > 0) {
           let planArrayPIR = [...originalSchedulerPlanPIR];
           while (planArrayPIR.length < 7) {
-            planArrayPIR.push(scheduleData[0]?.[0] || '');
+            planArrayPIR.push(mergedScheduleData[0]?.[0] || '');
           }
           Object.entries(selectedDayPlansPIR).forEach(([dayIndex, planIndex]) => {
-            const newPlanName = scheduleData[planIndex]?.[0] || '';
+            const newPlanName = mergedScheduleData[planIndex]?.[0] || '';
             planArrayPIR[parseInt(dayIndex)] = newPlanName;
           });
           updateData.schedulerPlanPIR = JSON.stringify(planArrayPIR);
@@ -485,7 +492,7 @@ export default function HeatingControl() {
       debugLog('🔵 [DEBUG] pendingRunStatus before save:', pendingRunStatus);
       debugLog('🔵 [DEBUG] Selected day plans:', selectedDayPlans);
       debugLog('🔵 [DEBUG] Original scheduler plan:', originalSchedulerPlan);
-      debugLog('🔵 [DEBUG] Schedule data:', scheduleData);
+      debugLog('🔵 [DEBUG] Merged schedule data:', mergedScheduleData);
 
       const response = await fetch(`/api/config/assets/${selectedNode.id}`, {
         method: 'PUT',
@@ -3946,7 +3953,7 @@ if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runS
                                         </div>
                                         <p className="mt-2 text-muted">Lade Wochenplan...</p>
                                       </div>
-                                    ) : scheduleData && Array.isArray(scheduleData) && scheduleData.length > 0 ? (
+                                    ) : mergedScheduleData && Array.isArray(mergedScheduleData) && mergedScheduleData.length > 0 ? (
                                       <div className="table-responsive">
                                         <table className="table table-sm table-bordered">
                                           <thead className="table-warning">
@@ -3967,12 +3974,12 @@ if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runS
                                                           return selectedDayPlans[dayIndex];
                                                         }
                                                         const schedulerPlanValue = nodeDetails?.attributes?.schedulerPlan;
-                                                        if (schedulerPlanValue && Array.isArray(scheduleData)) {
+                                                        if (schedulerPlanValue && Array.isArray(mergedScheduleData)) {
                                                           try {
                                                             const planArray = JSON.parse(schedulerPlanValue);
                                                             if (Array.isArray(planArray) && planArray[dayIndex]) {
                                                               const planNameForDay = planArray[dayIndex];
-                                                              const foundIndex = scheduleData.findIndex(plan => plan[0] === planNameForDay);
+                                                              const foundIndex = mergedScheduleData.findIndex(plan => plan[0] === planNameForDay);
                                                               return foundIndex !== -1 ? foundIndex : 0;
                                                             }
                                                           } catch (error) {
@@ -3987,7 +3994,7 @@ if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runS
                                                         border: '1px solid #dee2e6'
                                                       }}
                                                     >
-                                                      {Array.isArray(scheduleData) ? scheduleData.map((plan, planIndex) => (
+                                                      {Array.isArray(mergedScheduleData) ? mergedScheduleData.map((plan, planIndex) => (
                                                         <option key={planIndex} value={planIndex}>
                                                           {plan[0]}
                                                         </option>
@@ -4008,18 +4015,18 @@ if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runS
                                                   {hour.toString().padStart(2, '0')}
                                                 </td>
                                                 {['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map((day, dayIndex) => {
-                                                  const availablePlans = Array.isArray(scheduleData) ? scheduleData : [];
+                                                  const availablePlans = Array.isArray(mergedScheduleData) ? mergedScheduleData : [];
                                                   let selectedPlanIndex;
                                                   if (selectedDayPlans[dayIndex] !== undefined) {
                                                     selectedPlanIndex = selectedDayPlans[dayIndex];
                                                   } else {
                                                     const schedulerPlanValue = nodeDetails?.attributes?.schedulerPlan;
-                                                    if (schedulerPlanValue && Array.isArray(scheduleData)) {
+                                                    if (schedulerPlanValue && Array.isArray(mergedScheduleData)) {
                                                       try {
                                                         const planArray = JSON.parse(schedulerPlanValue);
                                                         if (Array.isArray(planArray) && planArray[dayIndex]) {
                                                           const planNameForDay = planArray[dayIndex];
-                                                          const foundIndex = scheduleData.findIndex(plan => plan[0] === planNameForDay);
+                                                          const foundIndex = mergedScheduleData.findIndex(plan => plan[0] === planNameForDay);
                                                           selectedPlanIndex = foundIndex !== -1 ? foundIndex : 0;
                                                         } else {
                                                           selectedPlanIndex = 0;
@@ -4059,7 +4066,7 @@ if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runS
                                           <strong>Kein Wochenplan verfügbar.</strong>
                                           <br />
                                           <small>
-                                            {scheduleData ? 
+                                            {mergedScheduleData ? 
                                               'Keine gültigen Plan-Daten gefunden.' : 
                                               'Plan-Daten werden geladen oder sind nicht verfügbar.'
                                             }
@@ -4127,7 +4134,7 @@ if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runS
                                         </div>
                                         <p className="mt-2 text-muted">Lade Wochenplan...</p>
                                       </div>
-                                    ) : scheduleData && Array.isArray(scheduleData) && scheduleData.length > 0 ? (
+                                    ) : mergedScheduleData && Array.isArray(mergedScheduleData) && mergedScheduleData.length > 0 ? (
                                       <div className="table-responsive">
                                         <table className="table table-sm table-bordered">
                                           <thead className="table-info">
@@ -4144,11 +4151,11 @@ if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runS
                                                           return selectedDayPlansPIR[dayIndex];
                                                         }
                                                         const val = nodeDetails?.attributes?.schedulerPlanPIR;
-                                                        if (val && Array.isArray(scheduleData)) {
+                                                        if (val && Array.isArray(mergedScheduleData)) {
                                                           try {
                                                             const arr = JSON.parse(val);
                                                             if (Array.isArray(arr) && arr[dayIndex]) {
-                                                              const foundIndex = scheduleData.findIndex(plan => plan[0] === arr[dayIndex]);
+                                                              const foundIndex = mergedScheduleData.findIndex(plan => plan[0] === arr[dayIndex]);
                                                               return foundIndex !== -1 ? foundIndex : 0;
                                                             }
                                                           } catch (e) { /* ignore */ }
@@ -4158,7 +4165,7 @@ if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runS
                                                       onChange={(e) => handlePlanChangePIR(dayIndex, parseInt(e.target.value))}
                                                       style={{ fontSize: '0.7rem', border: '1px solid #dee2e6' }}
                                                     >
-                                                      {Array.isArray(scheduleData) ? scheduleData.map((plan, planIndex) => (
+                                                      {Array.isArray(mergedScheduleData) ? mergedScheduleData.map((plan, planIndex) => (
                                                         <option key={planIndex} value={planIndex}>{plan[0]}</option>
                                                       )) : null}
                                                     </select>
@@ -4177,17 +4184,17 @@ if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runS
                                                   {hour.toString().padStart(2, '0')}
                                                 </td>
                                                 {['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map((day, dayIndex) => {
-                                                  const availablePlans = Array.isArray(scheduleData) ? scheduleData : [];
+                                                  const availablePlans = Array.isArray(mergedScheduleData) ? mergedScheduleData : [];
                                                   let selectedPlanIndex;
                                                   if (selectedDayPlansPIR[dayIndex] !== undefined) {
                                                     selectedPlanIndex = selectedDayPlansPIR[dayIndex];
                                                   } else {
                                                     const val = nodeDetails?.attributes?.schedulerPlanPIR;
-                                                    if (val && Array.isArray(scheduleData)) {
+                                                    if (val && Array.isArray(mergedScheduleData)) {
                                                       try {
                                                         const arr = JSON.parse(val);
                                                         if (Array.isArray(arr) && arr[dayIndex]) {
-                                                          const foundIndex = scheduleData.findIndex(plan => plan[0] === arr[dayIndex]);
+                                                          const foundIndex = mergedScheduleData.findIndex(plan => plan[0] === arr[dayIndex]);
                                                           selectedPlanIndex = foundIndex !== -1 ? foundIndex : 0;
                                                         } else {
                                                           selectedPlanIndex = 0;
@@ -4225,7 +4232,7 @@ if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runS
                                         <strong>Kein Wochenplan verfügbar.</strong>
                                         <br />
                                         <small>
-                                          {scheduleData ? 'Keine gültigen Plan-Daten gefunden.' : 'Plan-Daten werden geladen oder sind nicht verfügbar.'}
+                                          {mergedScheduleData ? 'Keine gültigen Plan-Daten gefunden.' : 'Plan-Daten werden geladen oder sind nicht verfügbar.'}
                                         </small>
                                         {nodeDetails?.attributes?.schedulerPlanPIR && (
                                           <div className="mt-2">

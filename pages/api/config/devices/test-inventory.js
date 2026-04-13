@@ -19,7 +19,7 @@ export default async function handler(req, res) {
     // Hole alle Einträge aus der Inventory-Tabelle mit tbconnectionid
     const result = await pool.request().query(`
       SELECT id, deviceLabel, serialnbr, deveui, tbconnectionid, customerid
-      FROM hmcdev.dbo.inventory 
+      FROM dbo.inventory 
       WHERE tbconnectionid IS NOT NULL
       ORDER BY id DESC
     `);
@@ -73,7 +73,7 @@ export default async function handler(req, res) {
         
         const result = await pool.request().query(`
           SELECT id, deviceLabel, serialnbr, deveui, tbconnectionid, customerid
-          FROM hmcdev.dbo.inventory 
+          FROM dbo.inventory 
           WHERE tbconnectionid IS NOT NULL
           ORDER BY id DESC
         `);

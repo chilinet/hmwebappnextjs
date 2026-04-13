@@ -1,10 +1,18 @@
 import Head from "next/head";
+import { useRouter } from "next/router";
 import Navigation from "../components/Navigation";
 import Footer from "../components/Footer";
 
 export default function Layout({ children }) {
+  const router = useRouter();
+  const isApiDocs = router.pathname === "/api-docs";
+  const hideFooter = isApiDocs;
+  const surfaceBg = isApiDocs
+    ? "#ffffff"
+    : "var(--custom-bg-color, #fff3e0)";
+
   return (
-    <div className="light-theme min-vh-100 d-flex flex-column" style={{ backgroundColor: 'var(--custom-bg-color, #fff3e0)' }}>
+    <div className="light-theme min-vh-100 d-flex flex-column" style={{ backgroundColor: surfaceBg }}>
       <Head>
         <title>HeatManager - Intelligente Heizungssteuerung</title>
         <meta name="description" content="HeatManager - Ihr intelligentes System zur Heizungssteuerung und -überwachung" />
@@ -15,11 +23,11 @@ export default function Layout({ children }) {
       
       <Navigation />
       
-      <main className="flex-grow-1" style={{ backgroundColor: 'var(--custom-bg-color, #fff3e0)' }}>
+      <main className="flex-grow-1" style={{ backgroundColor: surfaceBg }}>
         {children}
       </main>
       
-      <Footer />
+      {!hideFooter && <Footer />}
     </div>
   );
 }

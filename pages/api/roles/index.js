@@ -25,7 +25,6 @@ export default async function handler(req, res) {
   switch (req.method) {
     case 'GET':
       try {
-        const database = process.env.MSSQL_DATABASE || 'hmdev02';
         const query = `
           SELECT 
             roleid,
@@ -34,7 +33,7 @@ export default async function handler(req, res) {
             descrlong,
             createdttm,
             updatedttm
-          FROM ${database}.dbo.roles
+          FROM dbo.roles
           ORDER BY roleid`;
         
         const result = await executeQuery(query);
@@ -48,9 +47,8 @@ export default async function handler(req, res) {
     case 'POST':
       try {
         const { rolename, adminrole, descrlong } = req.body;
-        const database = process.env.MSSQL_DATABASE || 'hmdev02';
         const query = `
-          INSERT INTO ${database}.dbo.roles (rolename, adminrole, descrlong, createdttm)
+          INSERT INTO dbo.roles (rolename, adminrole, descrlong, createdttm)
           OUTPUT INSERTED.*
           VALUES (@rolename, @adminrole, @descrlong, GETDATE())`;
         
