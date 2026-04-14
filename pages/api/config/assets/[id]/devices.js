@@ -417,8 +417,7 @@ export default async function handler(req, res) {
             return device; // Device hat bereits Attribute, keine erneute Abfrage nötig
           }
           
-          // Hole alle Attribute für das Device (mit eigener Fehlerbehandlung)
-          //const allAttributes = await fetchAllDeviceAttributes(device.id.id);
+          const allAttributes = await fetchAllDeviceAttributes(device.id.id);
 
           return {
             ...device,
