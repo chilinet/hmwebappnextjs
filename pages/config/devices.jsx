@@ -4,7 +4,6 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faEdit, faTrash, faPlus, faSearch, faSync, faDownload, faUpload, faArrowUp } from "@fortawesome/free-solid-svg-icons";
 import Layout from "@/components/Layout";
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
-import { useThingsboard } from '@/contexts/ThingsboardContext';
 import * as XLSX from 'xlsx';
 
 // Local storage keys
@@ -16,8 +15,7 @@ const SHOW_ACTIONS = false; // Aktionen-Spalte (Reset, Rekalibrierung, etc.) ein
 const SHOW_AUTO_REFRESH_AND_CACHE = false; // Auto-Refresh und Cache löschen ein-/ausblenden
 
 function Devices() {
-  const { data: session } = useSession();
-  const { tbToken, isLoading } = useThingsboard();
+  const { data: session, status } = useSession();
   
   // Local state for devices
   const [devices, setDevices] = useState([]);
@@ -33,7 +31,6 @@ function Devices() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedType, setSelectedType] = useState('all');
   const [selectedStatus, setSelectedStatus] = useState('all');
-  const [selectedGateway, setSelectedGateway] = useState('all');
   const [selectedPathLevel1, setSelectedPathLevel1] = useState('');
   const [selectedPathLevel2, setSelectedPathLevel2] = useState('');
   const [selectedPathLevel3, setSelectedPathLevel3] = useState('');
@@ -89,13 +86,6 @@ function Devices() {
     loadCachedDevices();
   }, []);
 
-  // Fetch devices when tbToken is available
-  useEffect(() => {
-    if (tbToken && session?.token) {
-      fetchDevices();
-    }
-  }, [tbToken, session?.token]);
-
   // Load tree data for path display (same pattern as window-status)
   useEffect(() => {
     if (session?.user?.customerid) {
@@ -108,7 +98,7 @@ function Devices() {
 
   // Auto-refresh functionality
   useEffect(() => {
-    if (autoRefresh && tbToken) {
+    if (autoRefresh && session?.user?.customerid) {
       const interval = setInterval(() => {
         refreshDevices();
       }, 30000); // Refresh every 30 seconds
@@ -121,7 +111,7 @@ function Devices() {
       clearInterval(refreshInterval);
       setRefreshInterval(null);
     }
-  }, [autoRefresh, tbToken]);
+  }, [autoRefresh, session?.user?.customerid]);
 
   // Update cache when new devices data is available
   useEffect(() => {
@@ -226,110 +216,31 @@ function Devices() {
   }, []);
 
   const fetchDevices = useCallback(async () => {
-    if (!tbToken || !session?.token) return;
-    
+    if (!session?.user?.customerid) return;
+
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch('/api/config/devices', {
-        headers: {
-          'Authorization': `Bearer ${session.token}`
-        }
-      });
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch devices');
-      }
-      
-      const data = await response.json();
-      
+      const response = await fetch('/api/config/devices-sql');
 
-      
-      // Hole Seriennummern aus der Inventory-API für jedes Device
-      const devicesWithSerialNumbers = await Promise.all(
-        data.map(async (device) => {
-          // Extrahiere die korrekte Device-ID
-          let deviceId;
-          if (typeof device.id === 'string') {
-            deviceId = device.id;
-          } else if (device.id && typeof device.id === 'object' && device.id.id) {
-            deviceId = device.id.id;
-          } else if (device.id) {
-            deviceId = device.id;
-          } else {
-            console.warn('No valid device ID found for device:', device);
-            return device;
-          }
-          
-          try {
-            // Hole Seriennummer aus der Inventory-API
-            const inventoryResponse = await fetch(`/api/inventory/${deviceId}`);
-            let serialNumber = '-';
-            if (inventoryResponse.ok) {
-              const inventoryData = await inventoryResponse.json();
-              serialNumber = inventoryData.serialnbr || '-';
-            }
-            
-            // Verbessere den Asset-Pfad, falls er nur eine ID ist
-            let improvedAsset = device.asset;
-            // Nur verbessern, wenn asset ein Objekt ist und pathString vorhanden ist
-            if (device.asset && typeof device.asset === 'object' && device.asset.pathString && device.asset.pathString.startsWith('Asset ')) {
-              const assetId = device.asset.pathString.replace('Asset ', '');
-              try {
-                // Versuche den Asset-Pfad zu verbessern
-                const treepathResponse = await fetch(`/api/treepath/${assetId}?customerId=${session.user.customerid}`);
-                if (treepathResponse.ok) {
-                  const treepathData = await treepathResponse.json();
-                  improvedAsset = {
-                    ...device.asset,
-                    pathString: treepathData.pathString || device.asset.pathString,
-                    fullPath: treepathData.fullPath || device.asset.fullPath || null
-                  };
-                } else if (treepathResponse.status === 404) {
-                  // Wenn Asset nicht im Tree gefunden wird, setze pathString auf null, damit "-" angezeigt wird
-                  // statt der UUID
-                  improvedAsset = {
-                    ...device.asset,
-                    pathString: null,
-                    fullPath: null
-                  };
-                }
-              } catch (treepathError) {
-                console.warn(`Could not improve asset path for ${assetId}:`, treepathError);
-                // Setze pathString auf null, damit "-" angezeigt wird
-                improvedAsset = {
-                  ...device.asset,
-                  pathString: null,
-                  fullPath: null
-                };
-              }
-            }
-            
-            return {
-              ...device,
-              serialNumber: serialNumber,
-              asset: improvedAsset
-            };
-          } catch (error) {
-            console.error(`Error fetching data for device ${deviceId}:`, error);
-          }
-          return device;
-        })
-      );
-      
-      setDevices(devicesWithSerialNumbers);
-      cacheDevices(devicesWithSerialNumbers);
+      if (!response.ok) {
+        const errJson = await response.json().catch(() => ({}));
+        const parts = [errJson.message, errJson.error, errJson.detail, errJson.hint].filter(Boolean);
+        throw new Error(parts.length ? parts.join(' — ') : 'Failed to fetch devices');
+      }
+
+      const data = await response.json();
+      setDevices(data);
+      cacheDevices(data);
     } catch (error) {
       console.error('Error fetching devices:', error);
       setError(error.message);
     } finally {
       setLoading(false);
     }
-  }, [tbToken, session?.token, cacheDevices]);
+  }, [session?.user?.customerid, cacheDevices]);
 
   const refreshDevices = useCallback(async () => {
-    if (!tbToken) return;
-    
     setIsRefreshing(true);
     try {
       await fetchDevices();
@@ -338,7 +249,13 @@ function Devices() {
     } finally {
       setIsRefreshing(false);
     }
-  }, [tbToken, fetchDevices]);
+  }, [fetchDevices]);
+
+  useEffect(() => {
+    if (session?.user?.customerid) {
+      fetchDevices();
+    }
+  }, [session?.user?.customerid, fetchDevices]);
 
   const clearCache = useCallback(() => {
     try {
@@ -350,113 +267,6 @@ function Devices() {
       console.error('Error clearing cache:', error);
     }
   }, []);
-
-  // Hilfsfunktion zum Finden des SerialNbr-Attributs (muss vor exportDevices definiert werden)
-  const getSerialNumber = (device) => {
-    // Priorität: 1. Lokale Seriennummer aus inventory-Tabelle über API
-    if (device.serialNumber) {
-      return device.serialNumber;
-    }
-    
-    // Fallback: ThingsBoard-Attribute (falls keine lokale Seriennummer verfügbar ist)
-    const attributes = device.serverAttributes || device.telemetry || {};
-    return attributes.serialNbr || 
-           attributes.serialNumber || 
-           attributes.SerialNbr || 
-           attributes.SerialNumber || 
-           attributes.serial || 
-           attributes.Serial || 
-           '-';
-  };
-
-  const exportDevices = useCallback(() => {
-    try {
-      // Bereite Daten für Excel vor
-      const excelData = cachedDevices.map(device => {
-        const serialNumber = getSerialNumber(device);
-        const assetPath = (device.asset?.id && getAssetPathString(device.asset.id))
-          || (device.asset?.fullPath?.labels?.length > 0 ? device.asset.fullPath.labels.join(' → ') : null)
-          || (device.asset?.pathString && !device.asset.pathString.startsWith('Asset ') ? device.asset.pathString : null)
-          || '-';
-        
-        const lastActivity = device.telemetry?.lastActivityTime ? 
-          new Date(parseInt(device.telemetry.lastActivityTime)).toLocaleString('de-DE', {
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit'
-          }) : 
-          device.lastActivityTime ? 
-            new Date(parseInt(device.lastActivityTime)).toLocaleString('de-DE', {
-              day: '2-digit',
-              month: '2-digit',
-              year: 'numeric',
-              hour: '2-digit',
-              minute: '2-digit',
-              second: '2-digit'
-            }) : 
-            'Nie';
-
-        return {
-          'Name': device.name || '-',
-          'Label': device.label || '-',
-          'Typ': device.type || '-',
-          'SerialNbr': serialNumber,
-          'Gateway': device.telemetry?.gatewayId || '-',
-          'Pfad': assetPath,
-          'Batterie (V)': device.telemetry?.batteryVoltage || '-',
-          'FCnt': device.telemetry?.fCnt || '-',
-          'Ventil (%)': device.telemetry?.PercentValveOpen !== undefined ? Math.round(device.telemetry.PercentValveOpen) : '-',
-          'Motor Position': device.telemetry?.motorPosition !== undefined ? Math.round(device.telemetry.motorPosition) : '-',
-          'Motor Range': device.telemetry?.motorRange !== undefined ? Math.round(device.telemetry.motorRange) : '-',
-          'RSSI (dBm)': device.telemetry?.rssi || '-',
-          'SF': device.telemetry?.sf || '-',
-          'SNR (dB)': device.telemetry?.snr ? `${device.telemetry.snr}dB` : '-',
-          'Signal Quality': device.telemetry?.signalQuality || '-',
-          'Status': device.active ? 'Aktiv' : 'Inaktiv',
-          'Letzte Aktivität': lastActivity,
-          'Device ID': typeof device.id === 'string' ? device.id : (device.id?.id || '-')
-        };
-      });
-
-      // Erstelle Workbook und Worksheet
-      const worksheet = XLSX.utils.json_to_sheet(excelData);
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, 'Geräte');
-
-      // Setze Spaltenbreiten
-      const columnWidths = [
-        { wch: 20 }, // Name
-        { wch: 20 }, // Label
-        { wch: 15 }, // Typ
-        { wch: 15 }, // SerialNbr
-        { wch: 20 }, // Gateway
-        { wch: 40 }, // Pfad
-        { wch: 12 }, // Batterie
-        { wch: 10 }, // FCnt
-        { wch: 12 }, // Ventil
-        { wch: 15 }, // Motor Position
-        { wch: 15 }, // Motor Range
-        { wch: 12 }, // RSSI
-        { wch: 8 },  // SF
-        { wch: 12 }, // SNR
-        { wch: 15 }, // Signal Quality
-        { wch: 10 }, // Status
-        { wch: 20 }, // Letzte Aktivität
-        { wch: 40 }  // Device ID
-      ];
-      worksheet['!cols'] = columnWidths;
-
-      // Exportiere als Excel-Datei
-      const fileName = `devices_${new Date().toISOString().split('T')[0]}.xlsx`;
-      XLSX.writeFile(workbook, fileName);
-    } catch (error) {
-      console.error('Error exporting devices:', error);
-      alert('Fehler beim Exportieren der Geräte: ' + error.message);
-    }
-  }, [cachedDevices, getAssetPathString]);
 
   const scrollToTop = () => {
     // Scroll page to top
@@ -474,22 +284,85 @@ function Devices() {
     }
   };
 
-  // Use cached devices if available, otherwise use live data
-  const displayDevices = cachedDevices.length > 0 ? cachedDevices : (devices || []);
+  const displayDevices = useMemo(() => {
+    return cachedDevices.length > 0 ? cachedDevices : (devices || []);
+  }, [cachedDevices, devices]);
 
-  // Neue Funktion: Hole Seriennummer direkt aus der Inventory-API
-  const fetchSerialNumberFromInventory = async (deviceId) => {
+  const exportDevices = useCallback(() => {
     try {
-      const response = await fetch(`/api/inventory/${deviceId}`);
-      if (response.ok) {
-        const inventoryData = await response.json();
-        return inventoryData.serialnbr || '-';
-      }
+      const excelData = displayDevices.map(device => {
+        const assetPath = (device.asset?.id && getAssetPathString(device.asset.id))
+          || (device.asset?.fullPath?.labels?.length > 0 ? device.asset.fullPath.labels.join(' → ') : null)
+          || (device.asset?.pathString && !device.asset.pathString.startsWith('Asset ') ? device.asset.pathString : null)
+          || '-';
+
+        const lastActivity = device.telemetry?.lastActivityTime ?
+          new Date(parseInt(device.telemetry.lastActivityTime)).toLocaleString('de-DE', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+          }) :
+          device.lastActivityTime ?
+            new Date(parseInt(device.lastActivityTime)).toLocaleString('de-DE', {
+              day: '2-digit',
+              month: '2-digit',
+              year: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit'
+            }) :
+            'Nie';
+
+        return {
+          'Name': device.name || '-',
+          'Label': device.label || '-',
+          'Typ': device.type || '-',
+          'Pfad': assetPath,
+          'Batterie (V)': device.telemetry?.batteryVoltage || '-',
+          'FCnt': device.telemetry?.fCnt || '-',
+          'Ventil (%)': device.telemetry?.PercentValveOpen !== undefined ? Math.round(device.telemetry.PercentValveOpen) : '-',
+          'RSSI (dBm)': device.telemetry?.rssi || '-',
+          'SF': device.telemetry?.sf || '-',
+          'SNR (dB)': device.telemetry?.snr ? `${device.telemetry.snr}dB` : '-',
+          'Signal Quality': device.telemetry?.signalQuality || '-',
+          'Status': device.active ? 'Aktiv' : 'Inaktiv',
+          'Letzte Aktivität': lastActivity,
+          'Device ID': typeof device.id === 'string' ? device.id : (device.id?.id || '-')
+        };
+      });
+
+      const worksheet = XLSX.utils.json_to_sheet(excelData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Geräte');
+
+      const columnWidths = [
+        { wch: 20 },
+        { wch: 20 },
+        { wch: 15 },
+        { wch: 40 },
+        { wch: 12 },
+        { wch: 10 },
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 8 },
+        { wch: 12 },
+        { wch: 15 },
+        { wch: 10 },
+        { wch: 20 },
+        { wch: 40 }
+      ];
+      worksheet['!cols'] = columnWidths;
+
+      const fileName = `devices_${new Date().toISOString().split('T')[0]}.xlsx`;
+      XLSX.writeFile(workbook, fileName);
     } catch (error) {
-      console.error('Error fetching serial number from inventory:', error);
+      console.error('Error exporting devices:', error);
+      alert('Fehler beim Exportieren der Geräte: ' + error.message);
     }
-    return '-';
-  };
+  }, [displayDevices, getAssetPathString]);
 
   // Kaskadierte Optionen für Pfad-Level 1–5 (Level 2 nur unter gewähltem Level 1, etc.)
   const pathLevelOptions = useMemo(() => {
@@ -515,38 +388,30 @@ function Devices() {
   // Filter devices based on search term and filters (incl. Pfad Level 1–5)
   const filteredDevices = useMemo(() => {
     if (!displayDevices) return [];
-    if (!searchTerm && selectedType === 'all' && selectedStatus === 'all' && selectedGateway === 'all' && !pathLevelFiltersActive) return displayDevices;
+    if (!searchTerm && selectedType === 'all' && selectedStatus === 'all' && !pathLevelFiltersActive) return displayDevices;
 
     const searchLower = (searchTerm || '').toLowerCase();
     const pathFilters = [selectedPathLevel1, selectedPathLevel2, selectedPathLevel3, selectedPathLevel4, selectedPathLevel5];
     return displayDevices.filter(device => {
       if (!device) return false;
-      const serialNumber = getSerialNumber(device).toLowerCase();
       const pathStr = (device.asset?.id && getAssetPathString(device.asset.id)) || device.asset?.pathString || '';
-      const matchesSearch = !searchTerm || 
+      const matchesSearch = !searchTerm ||
         (device.name || '').toLowerCase().includes(searchLower) ||
         (device.label || '').toLowerCase().includes(searchLower) ||
         (device.type || '').toLowerCase().includes(searchLower) ||
-        pathStr.toLowerCase().includes(searchLower) ||
-        serialNumber.includes(searchLower) ||
-        (device.telemetry?.gatewayId || '').toLowerCase().includes(searchLower);
+        pathStr.toLowerCase().includes(searchLower);
 
       const matchesType = selectedType === 'all' || device.type === selectedType;
       const matchesStatus = selectedStatus === 'all' || 
         (selectedStatus === 'active' && device.active) ||
         (selectedStatus === 'inactive' && !device.active);
-      const matchesGateway = selectedGateway === 'all' || 
-        (selectedGateway === 'withGateway' && device.telemetry?.gatewayId) ||
-        (selectedGateway === 'withoutGateway' && !device.telemetry?.gatewayId) ||
-        (selectedGateway !== 'all' && selectedGateway !== 'withGateway' && selectedGateway !== 'withoutGateway' && 
-         device.telemetry?.gatewayId === selectedGateway);
 
       const seg = getPathSegments(device);
       const matchesPath = pathFilters.every((sel, i) => !sel || seg[i] === sel);
 
-      return matchesSearch && matchesType && matchesStatus && matchesGateway && matchesPath;
+      return matchesSearch && matchesType && matchesStatus && matchesPath;
     });
-  }, [displayDevices, searchTerm, selectedType, selectedStatus, selectedGateway, selectedPathLevel1, selectedPathLevel2, selectedPathLevel3, selectedPathLevel4, selectedPathLevel5, pathLevelFiltersActive, getAssetPathString, getPathSegments]);
+  }, [displayDevices, searchTerm, selectedType, selectedStatus, selectedPathLevel1, selectedPathLevel2, selectedPathLevel3, selectedPathLevel4, selectedPathLevel5, pathLevelFiltersActive, getAssetPathString, getPathSegments]);
 
   const handleClose = () => {
     setShowModal(false);
@@ -745,7 +610,7 @@ function Devices() {
     return new Date(timestamp).toLocaleString('de-DE');
   };
 
-  if (isLoading || !tbToken || !session) {
+  if (status === 'loading' || !session) {
     return (
       <div className="d-flex justify-content-center align-items-center" style={{ height: '100vh' }}>
         <Spinner animation="border" />
@@ -780,7 +645,7 @@ function Devices() {
             variant="outline-info"
             size="sm"
             onClick={exportDevices}
-            disabled={cachedDevices.length === 0}
+            disabled={displayDevices.length === 0}
           >
             <FontAwesomeIcon icon={faDownload} className="me-2" />
             Export
@@ -813,7 +678,7 @@ function Devices() {
 
       {error && (
         <Alert variant="danger" className="mb-3">
-          Fehler beim Laden der Geräte: {error.message}
+          Fehler beim Laden der Geräte: {typeof error === 'string' ? error : error?.message}
           {cachedDevices.length > 0 && (
             <div className="mt-2">
               <small>Zeige gecachte Daten ({cachedDevices.length} Geräte)</small>
@@ -829,7 +694,7 @@ function Devices() {
             <FontAwesomeIcon icon={faSearch} />
           </InputGroup.Text>
           <Form.Control
-            placeholder="Suche nach Gerät, Label, Typ, SerialNbr, Gateway oder Pfad..."
+            placeholder="Suche nach Gerät, Label, Typ oder Pfad..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
@@ -859,26 +724,6 @@ function Devices() {
             <option value="all">Alle Status</option>
             <option value="active">Aktiv</option>
             <option value="inactive">Inaktiv</option>
-          </Form.Select>
-        </div>
-        <div className="col-md-2">
-          <Form.Select 
-            value={selectedGateway} 
-            onChange={(e) => setSelectedGateway(e.target.value)}
-            className="form-select-sm"
-          >
-            <option value="all">Alle Gateways</option>
-            <option value="withGateway">Mit Gateway</option>
-            <option value="withoutGateway">Ohne Gateway</option>
-            {Array.from(new Set(displayDevices
-              .map(d => d.telemetry?.gatewayId)
-              .filter(Boolean)))
-              .sort()
-              .map(gatewayId => (
-                <option key={gatewayId} value={gatewayId}>
-                  Gateway: {gatewayId}
-                </option>
-              ))}
           </Form.Select>
         </div>
         <div className="col-12 col-lg">
@@ -965,7 +810,6 @@ function Devices() {
               setSearchTerm('');
               setSelectedType('all');
               setSelectedStatus('all');
-              setSelectedGateway('all');
               setSelectedPathLevel1('');
               setSelectedPathLevel2('');
               setSelectedPathLevel3('');
@@ -1006,14 +850,10 @@ function Devices() {
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Name</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Label</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Typ</th>
-                <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>SerialNbr</th>
-                <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Gateway</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Pfad</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Batterie</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>FCnt</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Ventil</th>
-                <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Motor Position</th>
-                <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Motor Range</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>RSSI</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>SF</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>SNR</th>
@@ -1033,10 +873,6 @@ function Devices() {
                   <td>{device.name}</td>
                   <td>{device.label}</td>
                   <td>{device.type}</td>
-                  <td>{getSerialNumber(device)}</td>
-                  <td>
-                    {device.telemetry?.gatewayId || '-'}
-                  </td>
                   <td>
                     {(() => {
                       const pathFromTree = device.asset?.id && getAssetPathString(device.asset.id);
@@ -1061,16 +897,6 @@ function Devices() {
                       <div>
                         {Math.round(device.telemetry.PercentValveOpen)}%
                       </div>
-                    ) : '-'}
-                  </td>
-                  <td>
-                    {device.telemetry?.motorPosition !== undefined ? (
-                      <div>{Math.round(device.telemetry.motorPosition)}</div>
-                    ) : '-'}
-                  </td>
-                  <td>
-                    {device.telemetry?.motorRange !== undefined ? (
-                      <div>{Math.round(device.telemetry.motorRange)}</div>
                     ) : '-'}
                   </td>
                   <td>

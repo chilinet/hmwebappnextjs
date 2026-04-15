@@ -1,6 +1,12 @@
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]';
 import { getConnection } from '../../../lib/db';
+import { getPgConnection } from '../../../lib/pgdb.js';
+import {
+  normalizeUuid,
+  fetchDefaultEntryAssetId,
+  getDeviceSqlCountsQuery
+} from '../../../lib/config/devicesSqlShared.js';
 import sql from 'mssql';
 
 export default async function handler(req, res) {
@@ -103,6 +109,33 @@ async function fetchAllDevices(customerId, tbToken) {
   return allDevices;
 }
 
+async function fetchThingsBoardAlarmCount(tbToken, customerId) {
+  if (!tbToken || !process.env.THINGSBOARD_URL) return 0;
+  try {
+    const alarmsResponse = await fetch(`${process.env.THINGSBOARD_URL}/api/alarm/query`, {
+      method: 'POST',
+      headers: {
+        'X-Authorization': `Bearer ${tbToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        customerId,
+        pageSize: 1,
+        page: 0
+      })
+    });
+    if (alarmsResponse.ok) {
+      const alarmsData = await alarmsResponse.json();
+      const n = alarmsData.totalElements || 0;
+      console.log(`Successfully fetched ${n} alarms`);
+      return n;
+    }
+  } catch (alarmError) {
+    console.log('Failed to fetch alarms:', alarmError.message);
+  }
+  return 0;
+}
+
 async function getDashboardStats(pool, customerId, session) {
   try {
     let devicesCount = 0;
@@ -110,55 +143,60 @@ async function getDashboardStats(pool, customerId, session) {
     let inactiveDevices = 0;
     let alarmsCount = 0;
     let heatDemand = '85%'; // Fallback-Wert
-    
-    // Verwende direkt die ThingsBoard Devices API Logik
-    if (session?.tbToken && process.env.THINGSBOARD_URL) {
+    let deviceStatsFromSql = false;
+
+    // Gerätezahlen wie /api/config/devices-sql (PostgreSQL ThingsBoard-DB + optional Teilbaum)
+    const pgCustomerId = normalizeUuid(customerId);
+    if (pgCustomerId && session?.user) {
       try {
-        console.log('Attempting to fetch devices from ThingsBoard...');
-        
-        // Alle Devices des Kunden von ThingsBoard abrufen (mit Pagination)
+        const startId = await fetchDefaultEntryAssetId(session.user.userid);
+        const pgPool = await getPgConnection();
+        const pgClient = await pgPool.connect();
+        try {
+          const { text, values } = getDeviceSqlCountsQuery(startId, pgCustomerId);
+          const countResult = await pgClient.query(text, values);
+          const row = countResult.rows[0];
+          if (row) {
+            devicesCount = Number(row.devices) || 0;
+            activeDevices = Number(row.active_devices) || 0;
+            inactiveDevices = Number(row.inactive_devices) || 0;
+            deviceStatsFromSql = true;
+            console.log(
+              `Dashboard stats: device counts from SQL (${devicesCount} total, ${activeDevices} active, ${inactiveDevices} inactive)`
+            );
+          }
+        } finally {
+          pgClient.release();
+        }
+      } catch (pgErr) {
+        console.warn('Dashboard stats: PostgreSQL device counts failed:', pgErr.message);
+      }
+    }
+
+    // ThingsBoard: nur noch Fallback für Gerätezahlen, weiterhin Quelle für Alarme
+    if (!deviceStatsFromSql && session?.tbToken && process.env.THINGSBOARD_URL) {
+      try {
+        console.log('Dashboard stats: attempting ThingsBoard device counts (fallback)...');
         const devices = await fetchAllDevices(customerId, session.tbToken);
         devicesCount = devices.length;
-        
-        // Zähle aktive und inaktive Geräte
-        activeDevices = devices.filter(device => device.active === true).length;
-        inactiveDevices = devices.filter(device => device.active === false).length;
-        
-        console.log(`Successfully fetched ${devicesCount} devices from ThingsBoard (${activeDevices} active, ${inactiveDevices} inactive)`);
+        activeDevices = devices.filter((device) => device.active === true).length;
+        inactiveDevices = devices.filter((device) => device.active === false).length;
+        console.log(
+          `Successfully fetched ${devicesCount} devices from ThingsBoard (${activeDevices} active, ${inactiveDevices} inactive)`
+        );
       } catch (apiError) {
         console.error('Internal API error:', apiError);
       }
-
-        // Versuche Alarme abzurufen (direkt von ThingsBoard)
-        try {
-          const alarmsResponse = await fetch(`${process.env.THINGSBOARD_URL}/api/alarm/query`, {
-            method: 'POST',
-            headers: {
-              'X-Authorization': `Bearer ${session.tbToken}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              customerId: customerId,
-              pageSize: 1,
-              page: 0
-            })
-          });
-
-          if (alarmsResponse.ok) {
-            const alarmsData = await alarmsResponse.json();
-            alarmsCount = alarmsData.totalElements || 0;
-            console.log(`Successfully fetched ${alarmsCount} alarms`);
-          }
-        } catch (alarmError) {
-          console.log('Failed to fetch alarms:', alarmError.message);
-        }
     }
 
-    // Fallback auf lokale Datenbank falls API nicht verfügbar oder keine Geräte gefunden
-    if (devicesCount === 0) {
-      console.log('Falling back to local database...');
+    if (session?.tbToken && process.env.THINGSBOARD_URL) {
+      alarmsCount = await fetchThingsBoardAlarmCount(session.tbToken, customerId);
+    }
+
+    // MSSQL-Fallback nur wenn weder SQL noch TB Gerätezahlen geliefert haben
+    if (!deviceStatsFromSql && devicesCount === 0 && !(session?.tbToken && process.env.THINGSBOARD_URL)) {
+      console.log('Falling back to local database (assets count)...');
       try {
-        // Einfachere Abfrage - zähle alle Assets des Kunden
         const totalDevicesResult = await pool.request()
           .input('customerId', sql.UniqueIdentifier, customerId)
           .query(`
@@ -167,7 +205,7 @@ async function getDashboardStats(pool, customerId, session) {
             WHERE a.customer_id = @customerId
           `);
         devicesCount = totalDevicesResult.recordset[0]?.totalDevices || 0;
-        console.log(`Found ${devicesCount} devices in local database`);
+        console.log(`Found ${devicesCount} assets in local database`);
       } catch (dbError) {
         console.error('Database error:', dbError);
       }
