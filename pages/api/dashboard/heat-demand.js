@@ -22,7 +22,7 @@ export default async function handler(req, res) {
   }
   
   try {
-    const { customer_id, start_date, end_date, limit = 24 } = req.query;
+    const { customer_id, start_date, end_date, limit = 24, start_id } = req.query;
     
     // Parameter validieren
     if (!customer_id) {
@@ -48,6 +48,9 @@ export default async function handler(req, res) {
       limit: limit.toString(),
       key: PRESHARED_KEY
     });
+    if (start_id != null && String(start_id).trim() !== '') {
+      queryParams.set('start_id', String(start_id).trim());
+    }
     
     const fullUrl = `${reportingApiUrl}?${queryParams.toString()}`;
     

@@ -44,6 +44,8 @@ export default function Home() {
   const [selectedTimePeriod, setSelectedTimePeriod] = useState('24h');
   const [loadingHeatDemand, setLoadingHeatDemand] = useState(false);
   const [heatDemandError, setHeatDemandError] = useState(null);
+  /** default_entry_asset_id für Reporting (Fenster + Wärmeanforderung / customer-hourly-avg) */
+  const [reportingSubtreeStartId, setReportingSubtreeStartId] = useState(null);
 
   // Time period options
   const timePeriodOptions = [
@@ -97,7 +99,18 @@ export default function Home() {
         
         console.log('Fetching data for period:', period, 'startDate:', startDate, 'endDate:', endDate, 'limit:', limit);
         
-        const heatDemandResponse = await fetch(`/api/dashboard/heat-demand?customer_id=${session.user.customerid}&start_date=${startDate}&end_date=${endDate}&limit=${limit}`);
+        const heatParams = new URLSearchParams({
+          customer_id: String(session.user.customerid),
+          start_date: startDate,
+          end_date: endDate,
+          limit: String(limit)
+        });
+        if (reportingSubtreeStartId) {
+          heatParams.set('start_id', reportingSubtreeStartId);
+        }
+        const heatDemandResponse = await fetch(
+          `/api/dashboard/heat-demand?${heatParams.toString()}`
+        );
         
         if (heatDemandResponse.ok) {
           const heatDemandData = await heatDemandResponse.json();
@@ -364,14 +377,39 @@ export default function Home() {
           console.log('Dashboard stats received:', statsData);
           setDashboardData(statsData);
 
+          let reportingStartId = null;
+          try {
+            const meRes = await fetch('/api/config/users/me');
+            if (meRes.ok) {
+              const me = await meRes.json();
+              if (me.defaultEntryAssetId) {
+                reportingStartId = me.defaultEntryAssetId;
+              }
+            }
+          } catch (e) {
+            console.warn('index: /api/config/users/me failed', e);
+          }
+          setReportingSubtreeStartId(reportingStartId);
+
           // Fetch heat demand data for last 24 hours (rolling window)
           const now = new Date();
           const startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000); // 24 hours ago
-          
-          const startDate = startTime.toISOString(); // Full UTC timestamp
-          const endDate = now.toISOString(); // Full UTC timestamp
-          
-          const heatDemandResponse = await fetch(`/api/dashboard/heat-demand?customer_id=${session.user.customerid}&start_date=${startDate}&end_date=${endDate}&limit=24`);
+
+          const startDate = startTime.toISOString();
+          const endDate = now.toISOString();
+
+          const heatParamsInitial = new URLSearchParams({
+            customer_id: String(session.user.customerid),
+            start_date: startDate,
+            end_date: endDate,
+            limit: '24'
+          });
+          if (reportingStartId) {
+            heatParamsInitial.set('start_id', reportingStartId);
+          }
+          const heatDemandResponse = await fetch(
+            `/api/dashboard/heat-demand?${heatParamsInitial.toString()}`
+          );
           
           if (heatDemandResponse.ok) {
             const heatDemandData = await heatDemandResponse.json();
@@ -488,27 +526,13 @@ export default function Home() {
             setBatteryData(combinedBatteryData);
           }
 
-          // Fenster-Reporting: start_id aus DB (nicht nur Session-JWT — kann nach Login-Änderung fehlen)
-          let windowStartId = null;
-          try {
-            const meRes = await fetch('/api/config/users/me');
-            if (meRes.ok) {
-              const me = await meRes.json();
-              if (me.defaultEntryAssetId) {
-                windowStartId = me.defaultEntryAssetId;
-              }
-            }
-          } catch (e) {
-            console.warn('index: /api/config/users/me for window-status failed', e);
-          }
-
           const windowParams = new URLSearchParams({
             key: 'QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD',
             customer_id: String(session.user.customerid),
             limit: '5000'
           });
-          if (windowStartId) {
-            windowParams.set('start_id', windowStartId);
+          if (reportingStartId) {
+            windowParams.set('start_id', reportingStartId);
           }
           const windowStatusUrl = `${reportingUrl}/api/reporting/window-status?${windowParams.toString()}`;
           console.log('[index] reporting window-status URL:', windowStatusUrl);
