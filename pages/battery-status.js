@@ -17,6 +17,7 @@ import {
   faTimes
 } from '@fortawesome/free-solid-svg-icons';
 import Head from 'next/head';
+import { getReportingPublicBaseUrl } from '@/lib/reportingPublicUrl';
 
 export default function BatteryStatus() {
   const { data: session, status } = useSession();
@@ -118,7 +119,7 @@ export default function BatteryStatus() {
           setLoading(true);
           
           // Fetch all battery status data with pagination
-          const reportingUrl = process.env.REPORTING_URL || 'https://webapptest.heatmanager.cloud';
+          const reportingUrl = getReportingPublicBaseUrl();
           const allBatteryData = [];
           let offset = 0;
           const limit = 1000; // Max limit allowed by API

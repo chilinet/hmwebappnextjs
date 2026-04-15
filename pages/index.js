@@ -26,6 +26,7 @@ import {
   faInfoCircle
 } from '@fortawesome/free-solid-svg-icons';
 import Head from 'next/head';
+import { getReportingPublicBaseUrl } from '@/lib/reportingPublicUrl';
 
 export default function Home() {
   const { data: session, status } = useSession();
@@ -438,7 +439,7 @@ export default function Home() {
           }
 
           // Load battery status data with pagination to get all devices
-          const reportingUrl = process.env.REPORTING_URL || 'https://webapptest.heatmanager.cloud';
+          const reportingUrl = getReportingPublicBaseUrl();
           const allBatteryData = [];
           let offset = 0;
           const limit = 1000; // Max limit allowed by API
@@ -487,8 +488,31 @@ export default function Home() {
             setBatteryData(combinedBatteryData);
           }
 
-          // Fetch window status data
-          const windowResponse = await fetch(`${reportingUrl}/api/reporting/window-status?key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD&customer_id=${session.user.customerid}&limit=5000`);
+          // Fenster-Reporting: start_id aus DB (nicht nur Session-JWT — kann nach Login-Änderung fehlen)
+          let windowStartId = null;
+          try {
+            const meRes = await fetch('/api/config/users/me');
+            if (meRes.ok) {
+              const me = await meRes.json();
+              if (me.defaultEntryAssetId) {
+                windowStartId = me.defaultEntryAssetId;
+              }
+            }
+          } catch (e) {
+            console.warn('index: /api/config/users/me for window-status failed', e);
+          }
+
+          const windowParams = new URLSearchParams({
+            key: 'QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD',
+            customer_id: String(session.user.customerid),
+            limit: '5000'
+          });
+          if (windowStartId) {
+            windowParams.set('start_id', windowStartId);
+          }
+          const windowStatusUrl = `${reportingUrl}/api/reporting/window-status?${windowParams.toString()}`;
+          console.log('[index] reporting window-status URL:', windowStatusUrl);
+          const windowResponse = await fetch(windowStatusUrl);
 
           if (windowResponse.ok) {
             const windowData = await windowResponse.json();
