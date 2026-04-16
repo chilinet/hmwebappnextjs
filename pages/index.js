@@ -484,8 +484,17 @@ export default function Home() {
           let hasMore = true;
           
           while (hasMore) {
+            const batteryParams = new URLSearchParams({
+              key: 'QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD',
+              customer_id: String(session.user.customerid),
+              limit: String(limit),
+              offset: String(offset)
+            });
+            if (reportingStartId) {
+              batteryParams.set('start_id', reportingStartId);
+            }
             const batteryResponse = await fetch(
-              `${reportingUrl}/api/reporting/battery-status?key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD&customer_id=${session.user.customerid}&limit=${limit}&offset=${offset}`
+              `${reportingUrl}/api/reporting/battery-status?${batteryParams.toString()}`
             );
 
             if (batteryResponse.ok) {

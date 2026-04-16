@@ -27,34 +27,92 @@ function authenticateRequest(req) {
   return false;
 }
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function trimQueryParam(v) {
+  if (v == null) return null;
+  const s = String(v).trim();
+  return s === '' ? null : s;
+}
+
+/** Batterie-Status nur für Geräte im Asset-Teilbaum ab start_id (analog window-status). */
+function buildBatteryStatusSubtreeQuery() {
+  return `
+WITH RECURSIVE asset_tree AS (
+    SELECT a.id
+    FROM asset a
+    WHERE a.id = $1::uuid
+
+    UNION ALL
+
+    SELECT child.id
+    FROM relation r
+    JOIN asset child
+        ON r.to_id = child.id
+       AND r.to_type = 'ASSET'
+    JOIN asset_tree at
+        ON r.from_id = at.id
+       AND r.from_type = 'ASSET'
+    WHERE r.relation_type = 'Contains'
+      AND r.relation_type_group = 'COMMON'
+),
+
+asset_devices AS (
+    SELECT DISTINCT
+        r.to_id AS device_id
+    FROM asset_tree at
+    JOIN relation r
+        ON r.from_id = at.id
+       AND r.from_type = 'ASSET'
+       AND r.to_type = 'DEVICE'
+       AND r.relation_type = 'Contains'
+       AND r.relation_type_group = 'COMMON'
+)
+
+SELECT v.*
+FROM hmreporting.v_device_battery_latest v
+JOIN asset_devices ad
+    ON ad.device_id = v.device_id
+WHERE v.customer_id = $2::uuid
+ORDER BY v.asset_name, v.device_name
+LIMIT $3
+OFFSET $4
+`;
+}
+
 // Hilfsfunktion zur Validierung der Query-Parameter
 function validateQueryParams(query) {
   const errors = [];
-  
-  // Customer ID validieren (UUID Format)
-  if (query.customer_id) {
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (!uuidRegex.test(query.customer_id)) {
-      errors.push('Customer ID muss ein gültiges UUID-Format haben');
-    }
+
+  const startId = trimQueryParam(query.start_id);
+  const customerId = trimQueryParam(query.customer_id);
+
+  if (!customerId) {
+    errors.push('Customer ID ist erforderlich');
+  } else if (!UUID_REGEX.test(customerId)) {
+    errors.push('Customer ID muss ein gültiges UUID-Format haben');
+  }
+
+  if (startId && !UUID_REGEX.test(startId)) {
+    errors.push('start_id muss ein gültiges UUID-Format haben');
   }
   
   // Limit validieren (max 1000 Datensätze)
   if (query.limit) {
-    const limit = parseInt(query.limit);
+    const limit = parseInt(query.limit, 10);
     if (isNaN(limit) || limit < 1 || limit > 1000) {
       errors.push('Limit muss zwischen 1 und 1000 liegen');
     }
   }
-  
+
   // Offset validieren
   if (query.offset) {
-    const offset = parseInt(query.offset);
+    const offset = parseInt(query.offset, 10);
     if (isNaN(offset) || offset < 0) {
       errors.push('Offset muss eine positive Zahl sein');
     }
   }
-  
+
   return errors;
 }
 
@@ -102,77 +160,108 @@ export default async function handler(req, res) {
     const client = await pool.connect();
     
     try {
-      // SQL Query zusammenbauen
-      let query = 'SELECT * FROM hmreporting.v_device_battery_latest';
-      const queryParams = [];
-      let paramIndex = 1;
-      const conditions = [];
-      
-      // Customer ID Filter (erforderlich)
-      if (req.query.customer_id) {
-        conditions.push(`customer_id = $${paramIndex}`);
-        queryParams.push(req.query.customer_id);
-        paramIndex++;
-      } else {
+      const startId = trimQueryParam(req.query.start_id);
+      const customerId = trimQueryParam(req.query.customer_id);
+      const limit = parseInt(req.query.limit, 10) || 100;
+      const offset = parseInt(req.query.offset, 10) || 0;
+
+      if (!customerId) {
         return res.status(400).json({
           error: 'Bad Request',
           message: 'Customer ID ist erforderlich'
         });
       }
-      
-      // WHERE Klausel hinzufügen
-      if (conditions.length > 0) {
-        query += ' WHERE ' + conditions.join(' AND ');
+
+      let query;
+      let queryParams;
+      let countQuery;
+      let countParams;
+      let metadataExtra = {};
+
+      if (startId) {
+        query = buildBatteryStatusSubtreeQuery();
+        queryParams = [startId, customerId, limit, offset];
+        countQuery = `
+WITH RECURSIVE asset_tree AS (
+    SELECT a.id
+    FROM asset a
+    WHERE a.id = $1::uuid
+    UNION ALL
+    SELECT child.id
+    FROM relation r
+    JOIN asset child
+        ON r.to_id = child.id
+       AND r.to_type = 'ASSET'
+    JOIN asset_tree at
+        ON r.from_id = at.id
+       AND r.from_type = 'ASSET'
+    WHERE r.relation_type = 'Contains'
+      AND r.relation_type_group = 'COMMON'
+),
+asset_devices AS (
+    SELECT DISTINCT
+        r.to_id AS device_id
+    FROM asset_tree at
+    JOIN relation r
+        ON r.from_id = at.id
+       AND r.from_type = 'ASSET'
+       AND r.to_type = 'DEVICE'
+       AND r.relation_type = 'Contains'
+       AND r.relation_type_group = 'COMMON'
+)
+SELECT COUNT(*)::bigint AS total
+FROM hmreporting.v_device_battery_latest v
+JOIN asset_devices ad
+    ON ad.device_id = v.device_id
+WHERE v.customer_id = $2::uuid
+`;
+        countParams = [startId, customerId];
+        metadataExtra = {
+          query_mode: 'asset_subtree',
+          start_id: startId
+        };
+      } else {
+        query = `
+SELECT * FROM hmreporting.v_device_battery_latest
+WHERE customer_id = $1::uuid
+ORDER BY asset_name, device_name
+LIMIT $2
+OFFSET $3
+`;
+        queryParams = [customerId, limit, offset];
+        countQuery =
+          'SELECT COUNT(*)::bigint AS total FROM hmreporting.v_device_battery_latest WHERE customer_id = $1::uuid';
+        countParams = [customerId];
+        metadataExtra = {
+          query_mode: 'customer',
+          customer_id: customerId
+        };
       }
-      
-      // ORDER BY hinzufügen
-      query += ' ORDER BY asset_name, device_name';
-      
-      // LIMIT und OFFSET hinzufügen
-      const limit = parseInt(req.query.limit) || 100;
-      const offset = parseInt(req.query.offset) || 0;
-      
-      // Zuerst die Gesamtanzahl ermitteln (vor ORDER BY, LIMIT, OFFSET)
-      let countQuery = 'SELECT COUNT(*) as total FROM hmreporting.v_device_battery_latest';
-      if (conditions.length > 0) {
-        countQuery += ' WHERE ' + conditions.join(' AND ');
-      }
-      const countResult = await client.query(countQuery, queryParams.slice(0, conditions.length));
-      const totalCount = parseInt(countResult.rows[0].total) || 0;
-      
-      query += ` LIMIT $${paramIndex}`;
-      queryParams.push(limit);
-      paramIndex++;
-      
-      if (offset > 0) {
-        query += ` OFFSET $${paramIndex}`;
-        queryParams.push(offset);
-      }
-      
+
+      const countResult = await client.query(countQuery, countParams);
+      const totalCount = parseInt(countResult.rows[0].total, 10) || 0;
+
       console.log('Battery Status API Query:', query);
-      console.log('Query Parameters:', queryParams);
-      
-      // Query ausführen
+      console.log('Battery Status API Query Parameters:', queryParams);
+
       const result = await client.query(query, queryParams);
-      
-      // Metadaten für die Antwort
+
       const metadata = {
         total_records: result.rows.length,
         total_count: totalCount,
-        limit: limit,
-        offset: offset,
-        has_more: (offset + result.rows.length) < totalCount,
+        limit,
+        offset,
+        has_more: offset + result.rows.length < totalCount,
         query_time: new Date().toISOString(),
-        view_name: 'hmreporting.v_device_battery_latest'
+        view_name: 'hmreporting.v_device_battery_latest',
+        ...metadataExtra
       };
-      
-      // Antwort senden
+
       res.status(200).json({
         success: true,
-        metadata: metadata,
+        metadata,
         data: result.rows
       });
-      
     } finally {
       client.release();
     }
@@ -220,6 +309,7 @@ AUTHENTICATION OPTIONS:
 
 QUERY PARAMETERS:
 - customer_id (required): UUID des Kunden für Filterung
+- start_id (optional): Asset-UUID — nur Geräte im Teilbaum ab diesem Asset (wie window-status); erfordert customer_id
 - limit (optional): Anzahl der Datensätze (1-1000, default: 100)
 - offset (optional): Anzahl der zu überspringenden Datensätze (default: 0)
 

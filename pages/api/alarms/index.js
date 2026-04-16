@@ -2,6 +2,18 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "../auth/[...nextauth]";
 import { makeThingsBoardRequest } from "../../../lib/utils/thingsboardRequest";
 
+/**
+ * Parallele Alarm-Anreicherung begrenzen: jeder Alarm triggert MSSQL (TB-Token) + internes treepath (wieder MSSQL).
+ * Stoßlast + Pool-Reset führt sonst zu Tarn „aborted“ (PendingOperation.abort).
+ */
+const ALARM_DEVICE_ENRICH_CONCURRENCY = Math.max(
+  1,
+  Math.min(
+    12,
+    parseInt(process.env.ALARM_DEVICE_ENRICH_CONCURRENCY || '4', 10) || 4
+  )
+);
+
 /** Holt den Asset-Pfad für ein Gerät (wie config/devices getAssetHierarchy). */
 async function getDevicePath(deviceId, tbToken, customer_id) {
   if (!deviceId || !tbToken) return null;
@@ -172,7 +184,9 @@ export default async function handler(req, res) {
     // Device-Informationen und Geräte-Pfad für jeden Alarm laden
     if (alarms.length > 0) {
       try {
-        const enrichedAlarms = await Promise.all(alarms.map(async (alarm) => {
+        const pathByDeviceId = new Map();
+
+        async function enrichOneAlarm(alarm) {
           const o = alarm.originator;
           const rawId = o?.id;
           const deviceId = (rawId && typeof rawId === 'object' && rawId.entityType === 'DEVICE' ? rawId.id : null)
@@ -189,12 +203,17 @@ export default async function handler(req, res) {
 
           if (deviceIdStr) {
             try {
+              let pathPromise = pathByDeviceId.get(deviceIdStr);
+              if (!pathPromise) {
+                pathPromise = getDevicePath(deviceIdStr, tbToken, customer_id);
+                pathByDeviceId.set(deviceIdStr, pathPromise);
+              }
               const [deviceResponse, path] = await Promise.all([
                 makeThingsBoardRequest(`${thingsboardUrl}/api/device/${deviceIdStr}`, {
                   method: 'GET',
                   headers: { 'Content-Type': 'application/json' }
                 }, customer_id),
-                getDevicePath(deviceIdStr, tbToken, customer_id)
+                pathPromise
               ]);
               if (deviceResponse?.ok) {
                 const deviceData = await deviceResponse.json();
@@ -207,7 +226,15 @@ export default async function handler(req, res) {
               }
               if (path) devicePath = path;
             } catch (deviceError) {
-              console.error('Error fetching device info:', deviceError);
+              const msg = deviceError?.message || String(deviceError);
+              if (/^aborted$/i.test(msg.trim())) {
+                console.warn(
+                  '[alarms] device enrich skipped (pool pressure / aborted), device',
+                  deviceIdStr
+                );
+              } else {
+                console.error('Error fetching device info:', deviceError);
+              }
             }
           }
 
@@ -216,7 +243,13 @@ export default async function handler(req, res) {
             device,
             devicePath
           };
-        }));
+        }
+
+        const enrichedAlarms = [];
+        for (let i = 0; i < alarms.length; i += ALARM_DEVICE_ENRICH_CONCURRENCY) {
+          const chunk = alarms.slice(i, i + ALARM_DEVICE_ENRICH_CONCURRENCY);
+          enrichedAlarms.push(...(await Promise.all(chunk.map(enrichOneAlarm))));
+        }
 
         alarms = enrichedAlarms;
       } catch (error) {
