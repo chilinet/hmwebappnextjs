@@ -419,8 +419,16 @@ export default function Home() {
             console.warn('Failed to fetch heat demand data, using fallback');
           }
 
-          // Fetch all active alarms for statistics
-          const alarmsResponse = await fetch(`/api/alarms?customer_id=${session.user.customerid}&status=ACTIVE&limit=100`);
+          // Fetch all active alarms for statistics (optional Teilbaum wie Heat-Demand)
+          const alarmsParams = new URLSearchParams({
+            customer_id: String(session.user.customerid),
+            status: 'ACTIVE',
+            limit: '100',
+          });
+          if (reportingStartId) {
+            alarmsParams.set('start_id', reportingStartId);
+          }
+          const alarmsResponse = await fetch(`/api/alarms?${alarmsParams.toString()}`);
           
           if (alarmsResponse.ok) {
             const alarmsData = await alarmsResponse.json();

@@ -231,7 +231,15 @@ export default function Alarms() {
 
     try {
       setLoading(true);
-      const response = await fetch(`/api/alarms?customer_id=${session.user.customerid}&status=${status}&limit=100`);
+      const alarmParams = new URLSearchParams({
+        customer_id: session.user.customerid,
+        status: String(status),
+        limit: '100',
+      });
+      if (session.user.defaultEntryAssetId) {
+        alarmParams.set('start_id', String(session.user.defaultEntryAssetId));
+      }
+      const response = await fetch(`/api/alarms?${alarmParams.toString()}`);
       
       if (!response.ok) {
         const errorData = await response.json();

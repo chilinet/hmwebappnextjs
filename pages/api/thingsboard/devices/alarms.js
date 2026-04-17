@@ -1,5 +1,9 @@
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../auth/[...nextauth]';
+import {
+  loadCustomerSettingsTree,
+  resolveDevicePathFromCustomerTree,
+} from '../../../../lib/customerTreeDevicePath';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -423,6 +427,40 @@ export default async function handler(req, res) {
           
           console.log(`Final alarm ${alarm.id}: deviceId=${lookupDeviceId}, deviceName=${alarm.deviceName}, deviceLabel=${alarm.deviceLabel}`);
         });
+
+        try {
+          const treeData = await loadCustomerSettingsTree(session.user.customerid);
+          if (treeData?.length) {
+            const pathByDeviceId = new Map();
+            for (const alarm of transformedAlarms) {
+              let did = alarm.deviceId;
+              if (typeof did === 'object' && did != null) {
+                did = did.id || did.entityId || String(did);
+              }
+              did = did != null ? String(did).trim() : '';
+              if (!did) {
+                alarm.devicePath = null;
+                continue;
+              }
+              let path = pathByDeviceId.get(did);
+              if (path === undefined) {
+                path =
+                  resolveDevicePathFromCustomerTree(treeData, did, null) || null;
+                pathByDeviceId.set(did, path);
+              }
+              alarm.devicePath = path;
+            }
+          } else {
+            transformedAlarms.forEach((a) => {
+              a.devicePath = null;
+            });
+          }
+        } catch (pathErr) {
+          console.warn('Alarm device path enrichment failed:', pathErr?.message);
+          transformedAlarms.forEach((a) => {
+            a.devicePath = null;
+          });
+        }
       } catch (deviceError) {
         console.error('Error fetching device names for alarms:', deviceError);
         // Continue without device names
