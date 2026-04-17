@@ -4,6 +4,7 @@ import { getConnection, getMssqlConfig } from '../../../../lib/db';
 import sql from 'mssql';
 
 const FETCH_TIMEOUT_MS = 5000;
+const THINGSSTACK_TENANT_HOST = 'hm01.eu1.cloud.thethings.industries';
 
 async function loadThingsstackConnection(pool, db) {
   const tableVariants = [
@@ -106,6 +107,23 @@ function normalizeHex(value) {
   return String(value || '').trim().replace(/[-:\s]/g, '').toLowerCase();
 }
 
+function sanitizeHostOnly(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return '';
+  if (raw.includes('://') || raw.includes('/') || raw.includes('?') || raw.includes('#')) return '';
+  return /^[a-z0-9.-]+$/.test(raw) ? raw : '';
+}
+
+function resolveTenantHost(baseUrl) {
+  const preferredHost = sanitizeHostOnly(THINGSSTACK_TENANT_HOST);
+  if (preferredHost) return preferredHost;
+  try {
+    return sanitizeHostOnly(new URL(normalizeBaseUrl(baseUrl)).hostname);
+  } catch (_) {
+    return '';
+  }
+}
+
 function toDeviceId(raw) {
   let id = String(raw || '').trim().toLowerCase();
   id = id.replace(/[^a-z0-9-]/g, '-');
@@ -169,6 +187,10 @@ async function createThingsstackDevice({ baseUrl, apiKey, applicationId, device,
   }
 
   const loRaSettings = deriveLoRaSettingsFromDevice(device, thingsstackConfig);
+  const tenantHost = resolveTenantHost(baseUrl);
+  if (!tenantHost) {
+    return { ok: false, error: 'Thingstack Tenant-Host ungültig oder nicht gesetzt.' };
+  }
 
   const payload = {
     end_device: {
@@ -181,6 +203,9 @@ async function createThingsstackDevice({ baseUrl, apiKey, applicationId, device,
         },
       },
       name: (device.deviceLabel || device.deveui || `Device ${device.id}`).trim(),
+      join_server_address: tenantHost,
+      network_server_address: tenantHost,
+      application_server_address: tenantHost,
       supports_join: true,
       root_keys: {
         app_key: { key: appKey },
@@ -198,6 +223,9 @@ async function createThingsstackDevice({ baseUrl, apiKey, applicationId, device,
         'ids.join_eui',
         'ids.application_ids.application_id',
         'name',
+        'join_server_address',
+        'network_server_address',
+        'application_server_address',
         'supports_join',
         'root_keys.app_key.key',
         'frequency_plan_id',
@@ -251,7 +279,13 @@ async function createThingsstackDevice({ baseUrl, apiKey, applicationId, device,
         lastStatus = response.status;
         lastText = text || response.statusText;
         if (![400, 401, 403, 404, 405].includes(response.status)) {
-          return { ok: false, error: `Thingsstack ${lastStatus} ${lastText}`.trim(), tried };
+          return {
+            ok: false,
+            error: `Thingsstack ${lastStatus} ${lastText}`.trim(),
+            tried,
+            tenantHost,
+            addressFieldsApplied: true,
+          };
         }
       } catch (err) {
         lastErr = err?.name === 'AbortError'
@@ -265,6 +299,8 @@ async function createThingsstackDevice({ baseUrl, apiKey, applicationId, device,
     ok: false,
     error: lastStatus ? `Thingsstack ${lastStatus} ${lastText}`.trim() : `Fetch failed: ${lastErr?.message || 'unknown error'}`,
     tried,
+    tenantHost,
+    addressFieldsApplied: true,
   };
 }
 

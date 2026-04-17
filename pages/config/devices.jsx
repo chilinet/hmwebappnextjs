@@ -1127,7 +1127,6 @@ function Devices() {
               >
                 <option value="reset">Reset</option>
                 <option value="recalibrate">Rekalibrierung</option>
-                <option value="requestParameters">Parameter abfragen</option>
               </Form.Select>
               <Form.Text className="text-muted">
                 Das Backend löst das passende Payload je Sensor/LNS auf.

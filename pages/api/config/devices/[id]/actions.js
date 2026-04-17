@@ -2,7 +2,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../../auth/[...nextauth]";
 import { getConnection, getMssqlConfig } from "../../../../../lib/db";
 
-const ALLOWED_ACTIONS = ['reset', 'recalibrate', 'requestParameters'];
+const ALLOWED_ACTIONS = ['reset', 'recalibrate'];
 const SUPPORTED_INTEGRATIONS = new Set(['ttn', 'melita']);
 const COMMAND_CATALOG = {
   default: {
@@ -13,22 +13,26 @@ const COMMAND_CATALOG = {
   vicki: {
     any: {
       reset: { payloadHex: '30', fPort: 2, confirmed: false, priority: 'HIGH' },
+      recalibrate: { payloadHex: '03', fPort: 2, confirmed: false, priority: 'HIGH' }
     },
   },
   // DNT placeholders: replace payloadHex/fPort with vendor-confirmed values per model.
   'dnt-lw-wsci': {
     any: {
-      reset: { payloadHex: '', fPort: null, confirmed: false, priority: 'HIGH' },
+      reset: { payloadHex: '7E', fPort: 10, confirmed: false, priority: 'HIGH' },
+      recalibrate: { payloadHex: '03', fPort: 10, confirmed: false, priority: 'HIGH' }
     },
   },
   'dnt-lw-etrv-c': {
     any: {
-      reset: { payloadHex: '', fPort: null, confirmed: false, priority: 'HIGH' },
+      reset: { payloadHex: '7E', fPort: 10, confirmed: false, priority: 'HIGH' },
+      recalibrate: { payloadHex: '03', fPort: 10, confirmed: false, priority: 'HIGH' }
     },
   },
   'dnt-lw-etrv': {
     any: {
-      reset: { payloadHex: '', fPort: null, confirmed: false, priority: 'HIGH' },
+      reset: { payloadHex: '7E', fPort: 10, confirmed: false, priority: 'HIGH' },
+      recalibrate: { payloadHex: '03', fPort: 10, confirmed: false, priority: 'HIGH' }
     },
   },
 };
