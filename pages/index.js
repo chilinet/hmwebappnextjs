@@ -28,6 +28,9 @@ import {
 import Head from 'next/head';
 import { getReportingPublicBaseUrl } from '@/lib/reportingPublicUrl';
 
+/** Vorschau im Bereich „ALARME & MELDUNGEN“; die volle Liste lädt nur /alarms. */
+const HOME_ALARMS_PREVIEW_LIMIT = 3;
+
 export default function Home() {
   const { data: session, status } = useSession();
   const router = useRouter();
@@ -191,7 +194,7 @@ export default function Home() {
     });
   };
 
-  // Helper function to calculate alarm statistics (same logic as alarms page)
+  // Nur sinnvoll, falls irgendwo genutzt: Daten auf Startseite = Vorschau (max. HOME_ALARMS_PREVIEW_LIMIT).
   const getAlarmStats = () => {
     if (!alarmsData?.data || alarmsData.data.length === 0) {
       return { 
@@ -325,10 +328,9 @@ export default function Home() {
       return [];
     }
 
-    // Sort by createdTime descending (newest first) and take first 3
     const sortedAlarms = [...alarmsData.data]
       .sort((a, b) => new Date(b.createdTime || b.startTs) - new Date(a.createdTime || a.startTs))
-      .slice(0, 3);
+      .slice(0, HOME_ALARMS_PREVIEW_LIMIT);
 
     return sortedAlarms.map(alarm => {
       const alarmTime = new Date(alarm.createdTime || alarm.startTs);
@@ -342,11 +344,20 @@ export default function Home() {
         year: 'numeric'
       });
 
+      const labelRaw = alarm.device?.label;
+      const deviceLabel =
+        labelRaw != null && String(labelRaw).trim() !== ''
+          ? String(labelRaw).trim()
+          : null;
+
       return {
         id: alarm.id?.id,
+        deviceId: alarm.device?.id != null ? String(alarm.device.id) : null,
         type: alarm.type || 'Unbekannter Alarm',
         severity: alarm.severity || 'UNKNOWN',
         device: alarm.originatorLabel || alarm.device?.name || 'Unbekanntes Gerät',
+        deviceLabel,
+        devicePath: alarm.devicePath || null,
         time: timeString,
         date: dateString,
         acknowledged: !!alarm.ackTs,
@@ -419,11 +430,12 @@ export default function Home() {
             console.warn('Failed to fetch heat demand data, using fallback');
           }
 
-          // Fetch all active alarms for statistics (optional Teilbaum wie Heat-Demand)
+          // Nur die neuesten Alarme für die Startseiten-Vorschau (Kunde + optional start_id)
           const alarmsParams = new URLSearchParams({
             customer_id: String(session.user.customerid),
             status: 'ACTIVE',
-            limit: '100',
+            limit: String(HOME_ALARMS_PREVIEW_LIMIT),
+            offset: '0',
           });
           if (reportingStartId) {
             alarmsParams.set('start_id', reportingStartId);
@@ -432,7 +444,11 @@ export default function Home() {
           
           if (alarmsResponse.ok) {
             const alarmsData = await alarmsResponse.json();
-            console.log('All alarms data received:', alarmsData);
+            console.log(
+              `Home: ${HOME_ALARMS_PREVIEW_LIMIT} Alarm-Vorschau (customer + optional start_id):`,
+              alarmsData?.data?.length ?? 0,
+              'Einträge'
+            );
             setAlarmsData(alarmsData);
           } else {
             console.warn('Failed to fetch alarms data, using fallback');
@@ -998,6 +1014,14 @@ export default function Home() {
                                 <small className="text-muted">
                                   Gerät: {alarm.device}
                                 </small>
+                                <br />
+                                <small className={alarm.deviceLabel ? 'text-dark' : 'text-muted'}>
+                                  Label: {alarm.deviceLabel || '–'}
+                                </small>
+                                <br />
+                                <small className={alarm.devicePath ? 'text-dark' : 'text-muted'}>
+                                  Pfad: {alarm.devicePath || '–'}
+                                </small>
                                 {alarm.acknowledged && (
                                   <Badge bg="success" className="ms-2">Bestätigt</Badge>
                                 )}
@@ -1007,7 +1031,17 @@ export default function Home() {
                               </div>
                               <button 
                                 className={`btn btn-outline-${getAlarmColor(alarm.severity)} btn-sm`}
-                                onClick={() => router.push('/alarms')}
+                                onClick={() => {
+                                  const params = new URLSearchParams();
+                                  if (alarm.id) {
+                                    params.set('focusAlarmId', String(alarm.id));
+                                  }
+                                  if (alarm.deviceId) {
+                                    params.set('focusDeviceId', alarm.deviceId);
+                                  }
+                                  const qs = params.toString();
+                                  router.push(qs ? `/alarms?${qs}` : '/alarms');
+                                }}
                               >
                                 Details
                               </button>
