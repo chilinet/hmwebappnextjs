@@ -298,13 +298,33 @@ export default function Alarms() {
 
     try {
       setLoading(true);
+      let startId = null;
+      try {
+        const meRes = await fetch('/api/config/users/me');
+        if (meRes.ok) {
+          const me = await meRes.json();
+          if (me.defaultEntryAssetId && String(me.defaultEntryAssetId).trim()) {
+            startId = String(me.defaultEntryAssetId).trim();
+          }
+        }
+      } catch (e) {
+        console.warn('alarms: /api/config/users/me failed', e);
+      }
+      if (
+        !startId &&
+        session.user.defaultEntryAssetId &&
+        String(session.user.defaultEntryAssetId).trim()
+      ) {
+        startId = String(session.user.defaultEntryAssetId).trim();
+      }
+
       const alarmParams = new URLSearchParams({
         customer_id: session.user.customerid,
         status: String(status),
         limit: '100',
       });
-      if (session.user.defaultEntryAssetId) {
-        alarmParams.set('start_id', String(session.user.defaultEntryAssetId));
+      if (startId) {
+        alarmParams.set('start_id', startId);
       }
       const response = await fetch(`/api/alarms?${alarmParams.toString()}`);
       
