@@ -2,7 +2,7 @@
   "openapi": "3.0.0",
   "info": {
     "title": "HeatManager API",
-    "version": "1.0.0",
+    "version": "1.09.0",
     "description": "API für das HeatManager System"
   },
   "servers": [

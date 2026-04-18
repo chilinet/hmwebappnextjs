@@ -1,6 +1,7 @@
 import { getConnection } from '../../../lib/db';
 import sql from 'mssql';
 import bcrypt from 'bcryptjs';
+import { debugLog, debugWarn } from '../../../lib/appDebug';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -83,7 +84,7 @@ export default async function handler(req, res) {
         WHERE userid = @userId
       `);
 
-    console.log(`Password reset successful for user ID: ${user.userid}`);
+    debugLog(`Password reset successful for user ID: ${user.userid}`);
 
     return res.status(200).json({
       success: true,

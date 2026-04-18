@@ -4,6 +4,7 @@ import { getConnection } from '../../../../lib/db';
 import sql from 'mssql';
 import { invalidateCache, invalidateUnassignedCache } from '../../../../lib/utils/deviceCache';
 import { removeUnassignedDeviceFromDb, invalidateUnassignedDevicesCache } from '../../../../lib/utils/unassignedDevicesDb';
+import { debugLog, debugWarn } from '../../../../lib/appDebug';
 
 export default async function handler(req, res) {
   const session = await getServerSession(req, res, authOptions);
@@ -72,10 +73,10 @@ export default async function handler(req, res) {
             invalidateUnassignedCache(customerId);
             // Entferne Device aus Datenbank-Cache (wurde zugeordnet)
             await removeUnassignedDeviceFromDb(toId, customerId);
-            console.log(`Cache invalidated for customer ${customerId} after device ${toId} assignment`);
+            debugLog(`Cache invalidated for customer ${customerId} after device ${toId} assignment`);
           }
         } catch (error) {
-          console.warn('Failed to invalidate cache after relation creation:', error);
+          debugWarn('Failed to invalidate cache after relation creation:', error);
           // Nicht kritisch, Cache wird automatisch nach TTL ablaufen
         }
       }
@@ -137,10 +138,10 @@ export default async function handler(req, res) {
             invalidateUnassignedCache(customerId);
             // Invalidiere Datenbank-Cache (Device könnte wieder nicht zugeordnet sein)
             await invalidateUnassignedDevicesCache(customerId);
-            console.log(`Cache invalidated for customer ${customerId} after device ${toId} unassignment`);
+            debugLog(`Cache invalidated for customer ${customerId} after device ${toId} unassignment`);
           }
         } catch (error) {
-          console.warn('Failed to invalidate cache after relation deletion:', error);
+          debugWarn('Failed to invalidate cache after relation deletion:', error);
           // Nicht kritisch, Cache wird automatisch nach TTL ablaufen
         }
       }

@@ -1,8 +1,9 @@
 import axios from 'axios';
+import { debugLog, debugWarn } from '../../../lib/appDebug';
 
 const thingsboardAuth = async (username, password) => {
   try {
-    console.log('Attempting ThingsBoard login:', {
+    debugLog('Attempting ThingsBoard login:', {
       url: `${process.env.THINGSBOARD_URL}/api/auth/login`,
       username: username
     });

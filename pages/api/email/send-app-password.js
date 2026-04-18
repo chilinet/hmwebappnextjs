@@ -1,6 +1,7 @@
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]';
 import nodemailer from 'nodemailer';
+import { debugLog, debugWarn } from '../../../lib/appDebug';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -45,7 +46,7 @@ export default async function handler(req, res) {
       html: html,
     };
 
-    console.log('Sending email via App Password:', {
+    debugLog('Sending email via App Password:', {
       from: mailOptions.from,
       to: mailOptions.to,
       subject: mailOptions.subject
@@ -69,7 +70,7 @@ export default async function handler(req, res) {
     // E-Mail senden
     const result = await transporter.sendMail(mailOptions);
 
-    console.log('Email sent successfully via App Password:', result.messageId);
+    debugLog('Email sent successfully via App Password:', result.messageId);
 
     return res.status(200).json({
       success: true,

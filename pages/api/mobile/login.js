@@ -1,6 +1,7 @@
 import sql from 'mssql'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
+import { debugLog, debugWarn } from '../../../lib/appDebug';
 
 const sqlConfig = {
   user: process.env.MSSQL_USER,
@@ -24,10 +25,10 @@ export default async function handler(req, res) {
 
   const { username, password } = req.body;
 
-  console.log('Mobile login attempt:', { username, password: password ? '***' : 'missing' });
+  debugLog('Mobile login attempt:', { username, password: password ? '***' : 'missing' });
 
   if (!username || !password) {
-    console.log('Missing credentials');
+    debugLog('Missing credentials');
     return res.status(400).json({
       success: false,
       error: 'Missing credentials',
@@ -59,10 +60,10 @@ export default async function handler(req, res) {
 
     await pool.close()
 
-    console.log('Database query result:', result.recordset.length, 'users found');
+    debugLog('Database query result:', result.recordset.length, 'users found');
 
     if (result.recordset.length === 0) {
-      console.log('No user found for username:', username);
+      debugLog('No user found for username:', username);
       return res.status(401).json({
         success: false,
         error: 'Invalid credentials',
@@ -71,14 +72,14 @@ export default async function handler(req, res) {
     }
 
     const user = result.recordset[0]
-    console.log('User found:', { username: user.username, email: user.email, role: user.role });
+    debugLog('User found:', { username: user.username, email: user.email, role: user.role });
 
     // Passwort überprüfen
     const passwordMatch = await bcrypt.compare(password, user.password)
-    console.log('Password match:', passwordMatch);
+    debugLog('Password match:', passwordMatch);
     
     if (!passwordMatch) {
-      console.log('Password does not match for user:', username);
+      debugLog('Password does not match for user:', username);
       return res.status(401).json({
         success: false,
         error: 'Invalid credentials',

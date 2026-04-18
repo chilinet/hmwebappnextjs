@@ -1,4 +1,5 @@
 import { getPgConnection } from '../../../lib/pgdb.js';
+import { debugLog, debugWarn } from '../../../lib/appDebug';
 
 // Preshared Key für Authentifizierung
 const PRESHARED_KEY = process.env.REPORTING_PRESHARED_KEY || 'default-reporting-key-2024';
@@ -221,8 +222,8 @@ export default async function handler(req, res) {
         };
       }
 
-      console.log('Window Status API Query:', query);
-      console.log('Window Status API Query Parameters:', queryParams);
+      debugLog('Window Status API Query:', query);
+      debugLog('Window Status API Query Parameters:', queryParams);
 
       const result = await client.query(query, queryParams);
 

@@ -1,5 +1,6 @@
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../../auth/[...nextauth]';
+import { debugLog, debugWarn } from '../../../../../../lib/appDebug';
 
 export default async function handler(req, res) {
   const session = await getServerSession(req, res, authOptions);
@@ -31,7 +32,7 @@ export default async function handler(req, res) {
         }
 
         const attributes = await response.json();
-        //console.log(attributes);
+        //debugLog(attributes);
         // Look for the plans attribute
         const plansAttribute = attributes.find(attr => attr.key === 'plans');
         if (!plansAttribute) {

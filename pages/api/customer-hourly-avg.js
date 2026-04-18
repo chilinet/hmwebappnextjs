@@ -1,4 +1,5 @@
 import { getPgConnection } from '../../lib/pgdb.js';
+import { debugLog, debugWarn } from '../../lib/appDebug';
 
 // Preshared Key für Authentifizierung
 const PRESHARED_KEY = process.env.REPORTING_PRESHARED_KEY || 'default-reporting-key-2024';
@@ -272,8 +273,8 @@ export default async function handler(req, res) {
         };
       }
 
-      console.log('Customer Hourly Avg API Query:', query);
-      console.log('Query Parameters:', queryParams);
+      debugLog('Customer Hourly Avg API Query:', query);
+      debugLog('Query Parameters:', queryParams);
 
       const result = await client.query(query, queryParams);
 

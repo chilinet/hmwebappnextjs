@@ -2,6 +2,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../auth/[...nextauth]";
 import { getConnection } from "../../../../lib/db";
 import sql from 'mssql';
+import { debugLog, debugWarn } from '../../../../lib/appDebug';
 
 // Gewünschte Asset-Attribute (SERVER_SCOPE) – für Lesen und keys-Parameter
 const ASSET_ATTRIBUTE_KEYS = [
@@ -54,7 +55,7 @@ async function fetchAssetAttributes(assetId, tbToken) {
       });
       clearTimeout(timeoutId);
       if (!response.ok) {
-        console.log(`[fetchAssetAttributes] ${scopeLabel} failed for asset ${assetId}: ${response.status}`);
+        debugLog(`[fetchAssetAttributes] ${scopeLabel} failed for asset ${assetId}: ${response.status}`);
         return {};
       }
       const attributes = await response.json();
@@ -62,7 +63,7 @@ async function fetchAssetAttributes(assetId, tbToken) {
     } catch (fetchError) {
       clearTimeout(timeoutId);
       if (fetchError.name !== 'AbortError' && !fetchError.message?.includes('timeout')) {
-        console.warn(`[fetchAssetAttributes] ${scopeLabel} error for asset ${assetId}:`, fetchError.message || fetchError);
+        debugWarn(`[fetchAssetAttributes] ${scopeLabel} error for asset ${assetId}:`, fetchError.message || fetchError);
       }
       return {};
     }
@@ -80,7 +81,7 @@ async function fetchAssetAttributes(assetId, tbToken) {
     return merged;
   } catch (error) {
     if (!error.message?.includes('timeout') && !error.message?.includes('aborted')) {
-      console.warn(`Error fetching attributes for asset ${assetId}:`, error.message || error);
+      debugWarn(`Error fetching attributes for asset ${assetId}:`, error.message || error);
     }
     return {};
   }
@@ -104,14 +105,14 @@ async function resolveAssetProfileEntityId(tbToken, profileName) {
     }
   );
   if (!res.ok) {
-    console.warn('[assets] Could not list assetProfiles:', res.status);
+    debugWarn('[assets] Could not list assetProfiles:', res.status);
     return null;
   }
   const body = await res.json();
   const list = Array.isArray(body?.data) ? body.data : [];
   const found = list.find((p) => p && String(p.name || '').trim() === name);
   if (!found) {
-    console.warn('[assets] Asset profile not found for name:', name);
+    debugWarn('[assets] Asset profile not found for name:', name);
     return null;
   }
   const raw = found.id;
@@ -211,7 +212,7 @@ async function fetchAssetDetails(assetId, tbToken) {
         } catch {
           errDetail = body || response.statusText;
         }
-        console.warn(`[assets/${assetId}] ThingsBoard asset request failed: status=${response.status}, url=${url}, detail=`, errDetail);
+        debugWarn(`[assets/${assetId}] ThingsBoard asset request failed: status=${response.status}, url=${url}, detail=`, errDetail);
         return { asset: null, tbStatus: response.status, tbDetail: errDetail };
       }
 
@@ -220,13 +221,13 @@ async function fetchAssetDetails(assetId, tbToken) {
     } catch (fetchError) {
       clearTimeout(timeoutId);
       if (fetchError.name !== 'AbortError' && !fetchError.message?.includes('timeout')) {
-        console.warn(`[assets/${assetId}] Error fetching asset details:`, fetchError.message || fetchError);
+        debugWarn(`[assets/${assetId}] Error fetching asset details:`, fetchError.message || fetchError);
       }
       return { asset: null, tbStatus: null, tbDetail: fetchError?.message || 'Request failed' };
     }
   } catch (error) {
     if (!error.message?.includes('timeout') && !error.message?.includes('aborted')) {
-      console.warn(`[assets/${assetId}] Error:`, error.message || error);
+      debugWarn(`[assets/${assetId}] Error:`, error.message || error);
     }
     return { asset: null, tbStatus: null, tbDetail: error?.message || 'Unknown error' };
   }
@@ -429,7 +430,7 @@ export default async function handler(req, res) {
         
         // Wenn Asset nicht gefunden wurde, ist es bereits in ThingsBoard gelöscht
         if (deleteResponse.status === 404) {
-          console.log(`Asset ${id} not found in ThingsBoard, removing from tree only...`);
+          debugLog(`Asset ${id} not found in ThingsBoard, removing from tree only...`);
           
           // Nur aus dem Tree entfernen, nicht aus ThingsBoard löschen
           try {
@@ -448,10 +449,10 @@ export default async function handler(req, res) {
                   .input('assetId', sql.NVarChar, id)
                   .query('DELETE FROM asset_images WHERE asset_id = @assetId');
                 
-                console.log(`Deleted ${deleteImagesResult.rowsAffected[0]} image(s) for asset ${id}`);
+                debugLog(`Deleted ${deleteImagesResult.rowsAffected[0]} image(s) for asset ${id}`);
               }
             } catch (dbError) {
-              console.warn(`Failed to clean up asset images from database:`, dbError.message);
+              debugWarn(`Failed to clean up asset images from database:`, dbError.message);
             }
 
             return res.status(200).json({
@@ -481,11 +482,11 @@ export default async function handler(req, res) {
         const customerId = session.user?.customerid;
         if (customerId) {
           await removeAssetFromTree(customerId, id);
-          console.log(`Asset ${id} removed from tree after successful ThingsBoard deletion`);
+          debugLog(`Asset ${id} removed from tree after successful ThingsBoard deletion`);
         }
       } catch (treeError) {
         // Logge Fehler, aber breche nicht ab, da ThingsBoard-Löschung erfolgreich war
-        console.warn(`Failed to remove asset from tree:`, treeError.message);
+        debugWarn(`Failed to remove asset from tree:`, treeError.message);
       }
 
       // Bereinige zugehörige Bilder aus der Datenbank
@@ -496,11 +497,11 @@ export default async function handler(req, res) {
             .input('assetId', sql.NVarChar, id)
             .query('DELETE FROM asset_images WHERE asset_id = @assetId');
           
-          console.log(`Deleted ${deleteImagesResult.rowsAffected[0]} image(s) for asset ${id}`);
+          debugLog(`Deleted ${deleteImagesResult.rowsAffected[0]} image(s) for asset ${id}`);
         }
       } catch (dbError) {
         // Logge Datenbankfehler, aber breche nicht ab, wenn ThingsBoard-Löschung erfolgreich war
-        console.warn(`Failed to clean up asset images from database:`, dbError.message);
+        debugWarn(`Failed to clean up asset images from database:`, dbError.message);
       }
 
       return res.status(200).json({

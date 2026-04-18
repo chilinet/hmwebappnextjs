@@ -1,3 +1,5 @@
+import { debugLog, debugWarn } from '../../../lib/appDebug';
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({
@@ -18,10 +20,10 @@ export default async function handler(req, res) {
       });
     }
 
-    console.log(`Testing password reset flow for email: ${email}`);
+    debugLog(`Testing password reset flow for email: ${email}`);
 
     // Schritt 1: Passwort-Reset-E-Mail anfordern
-    console.log('Step 1: Requesting password reset email...');
+    debugLog('Step 1: Requesting password reset email...');
     const forgotPasswordResponse = await fetch(`${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/auth/forgot-password`, {
       method: 'POST',
       headers: {
@@ -41,10 +43,10 @@ export default async function handler(req, res) {
     }
 
     const forgotPasswordResult = await forgotPasswordResponse.json();
-    console.log('Step 1 completed:', forgotPasswordResult);
+    debugLog('Step 1 completed:', forgotPasswordResult);
 
     // Schritt 2: Token aus der Datenbank abrufen (für Testzwecke)
-    console.log('Step 2: Retrieving token from database...');
+    debugLog('Step 2: Retrieving token from database...');
     const tokenResponse = await fetch(`${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/auth/get-reset-token`, {
       method: 'POST',
       headers: {
@@ -63,10 +65,10 @@ export default async function handler(req, res) {
     }
 
     const tokenResult = await tokenResponse.json();
-    console.log('Step 2 completed:', { token: tokenResult.token ? '✓ Present' : '✗ Missing' });
+    debugLog('Step 2 completed:', { token: tokenResult.token ? '✓ Present' : '✗ Missing' });
 
     // Schritt 3: Token validieren
-    console.log('Step 3: Validating token...');
+    debugLog('Step 3: Validating token...');
     const validateResponse = await fetch(`${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/auth/validate-reset-token`, {
       method: 'POST',
       headers: {
@@ -86,10 +88,10 @@ export default async function handler(req, res) {
     }
 
     const validateResult = await validateResponse.json();
-    console.log('Step 3 completed:', validateResult);
+    debugLog('Step 3 completed:', validateResult);
 
     // Schritt 4: Passwort zurücksetzen
-    console.log('Step 4: Resetting password...');
+    debugLog('Step 4: Resetting password...');
     const resetResponse = await fetch(`${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/auth/reset-password`, {
       method: 'POST',
       headers: {
@@ -112,7 +114,7 @@ export default async function handler(req, res) {
     }
 
     const resetResult = await resetResponse.json();
-    console.log('Step 4 completed:', resetResult);
+    debugLog('Step 4 completed:', resetResult);
 
     return res.status(200).json({
       success: true,

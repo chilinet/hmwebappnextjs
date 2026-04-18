@@ -1,5 +1,6 @@
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]';
+import { debugLog, debugWarn } from '../../../lib/appDebug';
 import {
   getMailAccessTokenFromEnvironment,
   sendMailViaMicrosoftGraph,
@@ -63,7 +64,7 @@ export default async function handler(req, res) {
       html,
     };
 
-    console.log('Sending email via Microsoft Graph:', {
+    debugLog('Sending email via Microsoft Graph:', {
       from: mailOptions.from,
       to: mailOptions.to,
       subject: mailOptions.subject,
@@ -81,10 +82,10 @@ export default async function handler(req, res) {
     }
 
     if (tokenData.refresh_token && !process.env.OAUTH_REFRESH_TOKEN) {
-      console.log(
+      debugLog(
         'Refresh token received - add OAUTH_REFRESH_TOKEN to .env and remove OAUTH_AUTHORIZATION_CODE'
       );
-      console.log('Refresh token:', tokenData.refresh_token);
+      debugLog('Refresh token:', tokenData.refresh_token);
     }
 
     const result = await sendMailViaMicrosoftGraph(

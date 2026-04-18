@@ -2,6 +2,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../auth/[...nextauth]";
 import sql from 'mssql'
 import bcrypt from 'bcryptjs'
+import { debugLog, debugWarn } from '../../../../lib/appDebug';
 
 const JWT_SECRET = process.env.NEXTAUTH_SECRET
 
@@ -49,7 +50,7 @@ export default async function handler(req, res) {
       } = req.body;
 
       // Debug-Info
-      console.log('Received user data:', {
+      debugLog('Received user data:', {
         username,
         email,
         firstName,

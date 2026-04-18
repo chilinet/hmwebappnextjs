@@ -1,6 +1,7 @@
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../auth/[...nextauth]';
 import sql from 'mssql';
+import { debugLog, debugWarn } from '../../../../lib/appDebug';
 
 // Determine if this is a local connection
 const isLocalConnection = process.env.MSSQL_SERVER === '127.0.0.1' || 
@@ -29,9 +30,9 @@ export default async function handler(req, res) {
     try {
       // Hole die TB Customer ID aus der Datenbank
         pool = await sql.connect(config);
-        //console.log('session:', session);
+        //debugLog('session:', session);
         //userid = session.user.userid;
-        //console.log('Userid', userid);
+        //debugLog('Userid', userid);
       const result = await pool.request()
         .input('userid', sql.Int, session.user.userid)
         .query(`
@@ -82,7 +83,7 @@ export default async function handler(req, res) {
             attributesBody.operationalDevice = req.body.operationalDevice;
           }
           
-          console.log('Setting operational attributes for new asset:', attributesBody);
+          debugLog('Setting operational attributes for new asset:', attributesBody);
           
           const attributesResponse = await fetch(`${TB_API_URL}/api/plugins/telemetry/ASSET/${asset.id.id}/attributes/SERVER_SCOPE`, {
             method: 'POST',
@@ -97,7 +98,7 @@ export default async function handler(req, res) {
             console.error('Error setting operational attributes:', attributesResponse.status);
             // Nicht kritisch - das Asset wurde bereits erstellt
           } else {
-            console.log('Operational attributes set successfully for new asset');
+            debugLog('Operational attributes set successfully for new asset');
           }
         } catch (error) {
           console.error('Error setting operational attributes for new asset:', error);
@@ -120,9 +121,9 @@ export default async function handler(req, res) {
           });
 
           if (!extTempDeviceResponse.ok) {
-            console.warn('Failed to save extTempDevice attribute for new asset, but asset was created');
+            debugWarn('Failed to save extTempDevice attribute for new asset, but asset was created');
           } else {
-            console.log('extTempDevice attribute set successfully for new asset');
+            debugLog('extTempDevice attribute set successfully for new asset');
           }
         } catch (error) {
           console.error('Error setting extTempDevice attribute for new asset:', error);

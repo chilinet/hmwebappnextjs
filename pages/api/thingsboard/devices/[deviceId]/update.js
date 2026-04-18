@@ -3,6 +3,7 @@ import { authOptions } from "../../../auth/[...nextauth]";
 import thingsboardAuth from '../../auth';
 import axios from 'axios';
 import { getConnection } from '../../../../../lib/db';
+import { debugLog, debugWarn } from '../../../../../lib/appDebug';
 
 export default async function handler(req, res) {
   if (req.method !== 'PUT') {
@@ -87,7 +88,7 @@ export default async function handler(req, res) {
         throw new Error(`ThingsBoard Update fehlgeschlagen: ${updateResponse.statusText}`);
       }
 
-      console.log(`Gerät ${deviceId} erfolgreich in ThingsBoard auf Customer ${customerId} aktualisiert`);
+      debugLog(`Gerät ${deviceId} erfolgreich in ThingsBoard auf Customer ${customerId} aktualisiert`);
     }
 
     // Aktualisiere auch andere Geräteeigenschaften falls vorhanden

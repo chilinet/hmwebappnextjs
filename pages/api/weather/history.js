@@ -1,3 +1,5 @@
+import { debugLog, debugWarn } from '../../../lib/appDebug';
+
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -12,7 +14,7 @@ export default async function handler(req, res) {
 
     // Get location from query parameter or default to Gelnhausen
     const location = req.query.location || 'Gelnhausen, DE';
-    console.log('Weather history requested for location:', location);
+    debugLog('Weather history requested for location:', location);
 
     // Default coordinates for Gelnhausen, Germany
     let lat = 50.2014;
@@ -43,7 +45,7 @@ export default async function handler(req, res) {
               lon = geocodeData[0].lon;
               cityName = geocodeData[0].name;
               country = geocodeData[0].country;
-              console.log(`Successfully geocoded customer location: ${cityName}, ${country} (${lat}, ${lon})`);
+              debugLog(`Successfully geocoded customer location: ${cityName}, ${country} (${lat}, ${lon})`);
               geocodeSuccess = true;
               break;
             }
@@ -51,15 +53,15 @@ export default async function handler(req, res) {
         }
         
         if (!geocodeSuccess) {
-          console.warn(`Could not geocode location: ${location}, using default Gelnhausen`);
+          debugWarn(`Could not geocode location: ${location}, using default Gelnhausen`);
         }
       } catch (error) {
-        console.warn(`Error geocoding location: ${location}, using default Gelnhausen:`, error);
+        debugWarn(`Error geocoding location: ${location}, using default Gelnhausen:`, error);
       }
     }
     
     // Get real weather data from OpenWeatherMap for the specified location
-    console.log(`Fetching real weather data for ${cityName}, ${country}...`);
+    debugLog(`Fetching real weather data for ${cityName}, ${country}...`);
     
     let historicalData = [];
     
@@ -70,7 +72,7 @@ export default async function handler(req, res) {
       
       if (currentResponse.ok) {
         const currentData = await currentResponse.json();
-        console.log(`Current weather for ${currentData.name}:`, currentData.main.temp + '°C');
+        debugLog(`Current weather for ${currentData.name}:`, currentData.main.temp + '°C');
         
         // Use current weather as baseline and generate historical data backwards
         const now = new Date();
@@ -131,16 +133,16 @@ export default async function handler(req, res) {
         // Sort chronologically (oldest first, newest last)
         historicalData.sort((a, b) => a.dt - b.dt);
         
-        console.log(`Generated historical weather data for ${cityName}:`);
-        console.log('First (oldest):', new Date(historicalData[0].dt * 1000).toLocaleString('de-DE'), historicalData[0].main.temp + '°C');
-        console.log('Last (newest):', new Date(historicalData[historicalData.length - 1].dt * 1000).toLocaleString('de-DE'), historicalData[historicalData.length - 1].main.temp + '°C');
+        debugLog(`Generated historical weather data for ${cityName}:`);
+        debugLog('First (oldest):', new Date(historicalData[0].dt * 1000).toLocaleString('de-DE'), historicalData[0].main.temp + '°C');
+        debugLog('Last (newest):', new Date(historicalData[historicalData.length - 1].dt * 1000).toLocaleString('de-DE'), historicalData[historicalData.length - 1].main.temp + '°C');
         
       } else {
         throw new Error('Failed to fetch current weather data');
       }
     } catch (error) {
       console.error(`Error fetching real weather data for ${cityName}:`, error);
-      console.log(`Falling back to simulated data for ${cityName}...`);
+      debugLog(`Falling back to simulated data for ${cityName}...`);
       
       // Fallback to simulated data specific to the location's climate
       const now = new Date();
@@ -200,7 +202,7 @@ export default async function handler(req, res) {
       }
     }
 
-    console.log(`Generated weather history: ${historicalData.length} data points for last 24 hours`);
+    debugLog(`Generated weather history: ${historicalData.length} data points for last 24 hours`);
 
     return res.status(200).json({
       success: true,

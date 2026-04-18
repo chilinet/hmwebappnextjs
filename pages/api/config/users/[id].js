@@ -3,6 +3,7 @@ import sql from 'mssql';
 import { authOptions } from '../../../../lib/authOptions';
 import { convertToTreeViewFormat, normAssetId } from '../../../../lib/heating-control/treeUtils';
 import { withPoolRetry } from '../../../../lib/db';
+import { debugLog, debugWarn } from '../../../../lib/appDebug';
 
 export default async function handler(req, res) {
   const { id } = req.query
@@ -23,16 +24,16 @@ export default async function handler(req, res) {
     });
   }
 
-  console.log('************************************************');
-  console.log(req.method);
-  console.log('************************************************');
+  debugLog('************************************************');
+  debugLog(req.method);
+  debugLog('************************************************');
 
   try {
     await withPoolRetry(async (pool) => {
     switch (req.method) {
       case 'GET':
         // Einzelnen Benutzer laden
-        console.log('GET');
+        debugLog('GET');
         const userResult = await pool.request()
           .input('id', sql.Int, id)
           .query(`
@@ -63,7 +64,7 @@ export default async function handler(req, res) {
         }
 
         const userData = user.recordset[0]
-        console.log('Raw user data from DB:', userData) // Debug Log
+        debugLog('Raw user data from DB:', userData) // Debug Log
 
         // Wenn ein Customer ID vorhanden ist, hole die Daten von ThingsBoard
         if (userData.customerid) {
@@ -84,7 +85,7 @@ export default async function handler(req, res) {
           }
         }
 
-        console.log('Processed user data:', userData) // Debug Log
+        debugLog('Processed user data:', userData) // Debug Log
 
         return res.status(200).json({
           success: true,
@@ -111,7 +112,7 @@ export default async function handler(req, res) {
           email, firstName, lastName, role, customerid, status,
           defaultEntryAssetId, defaultEntryOverrideUser
         } = req.body;
-        console.log('Updating user:', { id, email, firstName, lastName, role, customerid, status, defaultEntryAssetId, defaultEntryOverrideUser });
+        debugLog('Updating user:', { id, email, firstName, lastName, role, customerid, status, defaultEntryAssetId, defaultEntryOverrideUser });
 
         const wantsEntryUpdate = defaultEntryAssetId !== undefined || defaultEntryOverrideUser !== undefined;
 
@@ -264,7 +265,7 @@ export default async function handler(req, res) {
 
       case 'DELETE':
         // Benutzer löschen
-        console.log('DELETE');
+        debugLog('DELETE');
         await pool.request()
           .input('id', sql.Int, id)
           .query(`
@@ -278,7 +279,7 @@ export default async function handler(req, res) {
         })
 
       default:
-        console.log('default');
+        debugLog('default');
         res.setHeader('Allow', ['GET', 'PUT', 'DELETE'])
         res.status(405).end(`Method ${req.method} Not Allowed`)
     }

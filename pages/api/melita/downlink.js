@@ -1,5 +1,6 @@
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../auth/[...nextauth]";
+import { debugLog, debugWarn } from '../../../lib/appDebug';
 
 // Melita.io Konfiguration
 const MELITA_API_KEY = process.env.MELITA_API_KEY;
@@ -26,14 +27,14 @@ async function getMelitaToken() {
   
   // Prüfen ob der Cache-Token noch gültig ist
   if (melitaTokenCache.authToken && melitaTokenCache.expiry > now) {
-    console.log('[MELITA] Using cached token, expires in', melitaTokenCache.expiry - now, 'seconds');
+    debugLog('[MELITA] Using cached token, expires in', melitaTokenCache.expiry - now, 'seconds');
     return melitaTokenCache.authToken;
   }
 
   try {
-    console.log('[MELITA] Generating new auth token...');
-    console.log('[MELITA] Using API Key:', MELITA_API_KEY ? 'Present' : 'Missing');
-    console.log('[MELITA] Using Base URL:', MELITA_BASE_URL);
+    debugLog('[MELITA] Generating new auth token...');
+    debugLog('[MELITA] Using API Key:', MELITA_API_KEY ? 'Present' : 'Missing');
+    debugLog('[MELITA] Using Base URL:', MELITA_BASE_URL);
     
     // Base-URL korrekt formatieren (keine doppelten Slashes)
     const baseUrl = MELITA_BASE_URL.endsWith('/') ? MELITA_BASE_URL.slice(0, -1) : MELITA_BASE_URL;
@@ -42,7 +43,7 @@ async function getMelitaToken() {
     for (const endpoint of POSSIBLE_AUTH_ENDPOINTS) {
       try {
         const authUrl = `${baseUrl}${endpoint}`;
-        console.log(`[MELITA] Trying auth endpoint: ${authUrl}`);
+        debugLog(`[MELITA] Trying auth endpoint: ${authUrl}`);
         
         const response = await fetch(authUrl, {
           method: 'POST',
@@ -53,11 +54,11 @@ async function getMelitaToken() {
           }
         });
 
-        console.log(`[MELITA] Endpoint ${endpoint} response status:`, response.status);
+        debugLog(`[MELITA] Endpoint ${endpoint} response status:`, response.status);
         
         if (response.ok) {
           const authData = await response.json();
-          console.log(`[MELITA] Success with endpoint ${endpoint}:`, authData);
+          debugLog(`[MELITA] Success with endpoint ${endpoint}:`, authData);
           
           // Token im Cache speichern
           melitaTokenCache = {
@@ -65,14 +66,14 @@ async function getMelitaToken() {
             expiry: authData.expiry
           };
 
-          console.log('[MELITA] New token generated, expires at', new Date(authData.expiry * 1000).toISOString());
+          debugLog('[MELITA] New token generated, expires at', new Date(authData.expiry * 1000).toISOString());
           return authData.authToken;
         } else {
           const errorText = await response.text();
-          console.log(`[MELITA] Endpoint ${endpoint} failed: ${response.status} - ${errorText}`);
+          debugLog(`[MELITA] Endpoint ${endpoint} failed: ${response.status} - ${errorText}`);
         }
       } catch (error) {
-        console.log(`[MELITA] Endpoint ${endpoint} error:`, error.message);
+        debugLog(`[MELITA] Endpoint ${endpoint} error:`, error.message);
       }
     }
 
@@ -91,11 +92,11 @@ async function sendDownlinkToMelita(deviceEui, payload, authToken, confirmed, fP
   
   // Device EUI Format validieren (sollte 16 Zeichen Hex-String sein)
   if (!/^[0-9a-fA-F]{16}$/.test(deviceEui)) {
-    console.log(`[MELITA] Device EUI format validation failed: ${deviceEui}`);
-    console.log(`[MELITA] Expected: 16 character hex string, got: ${deviceEui.length} characters`);
+    debugLog(`[MELITA] Device EUI format validation failed: ${deviceEui}`);
+    debugLog(`[MELITA] Expected: 16 character hex string, got: ${deviceEui.length} characters`);
     
     // Versuche es trotzdem, falls es ein gültiges Format ist
-    console.log(`[MELITA] Proceeding with device EUI: ${deviceEui}`);
+    debugLog(`[MELITA] Proceeding with device EUI: ${deviceEui}`);
   }
   
   // Verschiedene Downlink-Endpunkte testen
@@ -104,7 +105,7 @@ async function sendDownlinkToMelita(deviceEui, payload, authToken, confirmed, fP
       const endpoint = endpointTemplate.replace('{deviceEui}', deviceEui);
       const downlinkUrl = `${baseUrl}${endpoint}`;
       
-      console.log(`[MELITA] Trying downlink endpoint: ${downlinkUrl}`);
+      debugLog(`[MELITA] Trying downlink endpoint: ${downlinkUrl}`);
       
       const response = await fetch(downlinkUrl, {
         method: 'POST',
@@ -121,15 +122,15 @@ async function sendDownlinkToMelita(deviceEui, payload, authToken, confirmed, fP
         })
       });
 
-      console.log(`[MELITA] Endpoint ${endpoint} response status:`, response.status);
+      debugLog(`[MELITA] Endpoint ${endpoint} response status:`, response.status);
       
       if (response.ok) {
         const result = await response.json();
-        console.log(`[MELITA] Downlink sent successfully via ${endpoint}:`, result);
+        debugLog(`[MELITA] Downlink sent successfully via ${endpoint}:`, result);
         return result;
       } else {
         const errorText = await response.text();
-        console.log(`[MELITA] Endpoint ${endpoint} failed: ${response.status} - ${errorText}`);
+        debugLog(`[MELITA] Endpoint ${endpoint} failed: ${response.status} - ${errorText}`);
         
         // Spezielle Behandlung für 404 (Device EUI nicht gefunden)
         if (response.status === 404) {
@@ -144,7 +145,7 @@ async function sendDownlinkToMelita(deviceEui, payload, authToken, confirmed, fP
         }
       }
     } catch (error) {
-      console.log(`[MELITA] Endpoint ${endpointTemplate} error:`, error.message);
+      debugLog(`[MELITA] Endpoint ${endpointTemplate} error:`, error.message);
     }
   }
 

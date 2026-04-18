@@ -2,6 +2,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../auth/[...nextauth]";
 import sql from "mssql";
 import { getConnection } from "../../../../lib/db";
+import { debugLog, debugWarn } from '../../../../lib/appDebug';
 
 export default async function handler(req, res) {
   const session = await getServerSession(req, res, authOptions);
@@ -26,7 +27,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ message: 'Type must be a string' });
     }
 
-    //console.log(session);
+    //debugLog(session);
 
     try {
       // Load user data from database to get tenantId and customerId
@@ -39,7 +40,7 @@ export default async function handler(req, res) {
         throw new Error('User data not found');
       }
       
-      //console.log(userResult.recordset[0]);
+      //debugLog(userResult.recordset[0]);
 
       // Prepare device data with correct structure
       const deviceData = {
@@ -50,9 +51,9 @@ export default async function handler(req, res) {
         label: label,
         type: type
       };
-      //console.log('++++++++++++++++++++++++++++++++++++');
-      //console.log(deviceData);
-      //console.log('++++++++++++++++++++++++++++++++++++');
+      //debugLog('++++++++++++++++++++++++++++++++++++');
+      //debugLog(deviceData);
+      //debugLog('++++++++++++++++++++++++++++++++++++');
 
       const response = await fetch(
         `${process.env.THINGSBOARD_URL}/api/device`,

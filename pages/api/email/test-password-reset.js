@@ -1,3 +1,5 @@
+import { debugLog, debugWarn } from '../../../lib/appDebug';
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -57,7 +59,7 @@ export default async function handler(req, res) {
     }
 
     const emailResult = await emailResponse.json();
-    console.log('Test password reset email sent successfully:', emailResult);
+    debugLog('Test password reset email sent successfully:', emailResult);
 
     return res.status(200).json({
       success: true,

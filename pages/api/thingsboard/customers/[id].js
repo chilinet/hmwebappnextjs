@@ -3,6 +3,7 @@ import { authOptions } from "../../auth/[...nextauth]";
 import thingsboardAuth from '../auth';
 import axios from 'axios';
 import { getConnection } from '../../../../lib/db';
+import { debugLog, debugWarn } from '../../../../lib/appDebug';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -47,12 +48,12 @@ export default async function handler(req, res) {
     }
 
     // Debug: Zeige welche Credentials verwendet werden (ohne Passwort vollständig zu loggen)
-    console.log('Using ThingsBoard credentials from customer_settings:');
-    console.log('  User ID:', session.user.id);
-    console.log('  Customer ID:', customerid || 'N/A');
-    console.log('  Username:', tb_username);
-    console.log('  Password length:', tb_password ? tb_password.length : 0);
-    console.log('  Password starts with:', tb_password ? tb_password.substring(0, 3) + '...' : 'null');
+    debugLog('Using ThingsBoard credentials from customer_settings:');
+    debugLog('  User ID:', session.user.id);
+    debugLog('  Customer ID:', customerid || 'N/A');
+    debugLog('  Username:', tb_username);
+    debugLog('  Password length:', tb_password ? tb_password.length : 0);
+    debugLog('  Password starts with:', tb_password ? tb_password.substring(0, 3) + '...' : 'null');
 
     // Token von Thingsboard mit den Benutzer-Credentials holen
     const token = await thingsboardAuth(tb_username, tb_password);

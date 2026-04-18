@@ -1,4 +1,5 @@
 import { getPgConnection } from '../../../lib/pgdb.js';
+import { debugLog, debugWarn } from '../../../lib/appDebug';
 
 // Preshared Key für Authentifizierung
 const PRESHARED_KEY = process.env.REPORTING_PRESHARED_KEY || 'default-reporting-key-2024';
@@ -241,8 +242,8 @@ OFFSET $3
       const countResult = await client.query(countQuery, countParams);
       const totalCount = parseInt(countResult.rows[0].total, 10) || 0;
 
-      console.log('Battery Status API Query:', query);
-      console.log('Battery Status API Query Parameters:', queryParams);
+      debugLog('Battery Status API Query:', query);
+      debugLog('Battery Status API Query Parameters:', queryParams);
 
       const result = await client.query(query, queryParams);
 

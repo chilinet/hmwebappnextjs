@@ -2,6 +2,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../../auth/[...nextauth]";
 import { getConnection } from '../../../../../lib/db';
 import sql from 'mssql';
+import { debugLog, debugWarn } from '../../../../../lib/appDebug';
 import { 
   getCachedDevices, 
   setCachedDevices,
@@ -49,7 +50,7 @@ export default async function handler(req, res) {
     
     if (!allDevices) {
       // Cache miss - hole Devices von ThingsBoard (mit Pagination)
-      console.log(`Cache miss for customer ${customerId}, fetching from ThingsBoard...`);
+      debugLog(`Cache miss for customer ${customerId}, fetching from ThingsBoard...`);
       
       // Lade alle Devices mit Pagination und Timeouts
       allDevices = [];
@@ -87,7 +88,7 @@ export default async function handler(req, res) {
               break;
             }
             // Wenn bereits Devices geladen wurden, breche ab und verwende diese
-            console.warn(`Stopping pagination after error on page ${page}, using ${allDevices.length} already loaded devices`);
+            debugWarn(`Stopping pagination after error on page ${page}, using ${allDevices.length} already loaded devices`);
             break;
           }
 
@@ -99,7 +100,7 @@ export default async function handler(req, res) {
           hasNext = devicesData.hasNext || (devicesData.totalPages && page + 1 < devicesData.totalPages);
           page++;
           
-          console.log(`Loaded page ${page - 1}: ${pageDevices.length} devices (total so far: ${allDevices.length})`);
+          debugLog(`Loaded page ${page - 1}: ${pageDevices.length} devices (total so far: ${allDevices.length})`);
         } catch (fetchError) {
           if (timeoutId) clearTimeout(timeoutId);
           // Prüfe auf verschiedene Timeout-Fehler und Connect-Fehler
@@ -114,8 +115,8 @@ export default async function handler(req, res) {
           
           if (isTimeoutError) {
             const errorMsg = fetchError.cause?.code || fetchError.message || 'Unknown timeout';
-            console.warn(`Connection timeout/error while fetching devices (page ${page}): ${errorMsg}`);
-            console.warn(`Using ${allDevices.length} already loaded devices as fallback`);
+            debugWarn(`Connection timeout/error while fetching devices (page ${page}): ${errorMsg}`);
+            debugWarn(`Using ${allDevices.length} already loaded devices as fallback`);
             // Bei Timeout: verwende bereits geladene Devices oder setze Fehler
             if (allDevices.length === 0) {
               paginationError = new Error(`Connection timeout while fetching devices: ${errorMsg}`);
@@ -130,28 +131,28 @@ export default async function handler(req, res) {
       }
       
       if (page >= maxPages) {
-        console.warn(`Reached max pages limit (${maxPages}), loaded ${allDevices.length} devices`);
+        debugWarn(`Reached max pages limit (${maxPages}), loaded ${allDevices.length} devices`);
       }
       
       // Wenn Fehler beim Laden auftraten und keine Devices geladen wurden, versuche Fallback
       if (paginationError && allDevices.length === 0) {
-        console.warn(`Could not load devices from ThingsBoard:`, paginationError.message);
+        debugWarn(`Could not load devices from ThingsBoard:`, paginationError.message);
         
         // Versuche alten Cache zu verwenden (auch wenn abgelaufen)
         // Versuche alten Cache zu verwenden (auch wenn abgelaufen)
         const oldCached = getCachedDevicesEvenExpired(customerId);
         if (oldCached && oldCached.length > 0) {
-          console.log(`Using expired cache as fallback: ${oldCached.length} devices`);
+          debugLog(`Using expired cache as fallback: ${oldCached.length} devices`);
           allDevices = oldCached;
         } else {
           // Versuche Datenbank-Cache für unassigned devices
           const dbCached = await getUnassignedDevicesFromDb(customerId, 48); // 48 Stunden Fallback
           if (dbCached && dbCached.length > 0) {
-            console.log(`Using database cache as fallback: ${dbCached.length} devices`);
+            debugLog(`Using database cache as fallback: ${dbCached.length} devices`);
             // Konvertiere unassigned devices zu allDevices Format
             allDevices = dbCached;
           } else {
-            console.warn(`No fallback cache available, continuing with empty device list`);
+            debugWarn(`No fallback cache available, continuing with empty device list`);
             allDevices = []; // Leeres Array, damit die API weiterläuft
           }
         }
@@ -160,9 +161,9 @@ export default async function handler(req, res) {
       // Speichere im Cache (auch wenn leer, um wiederholte fetches zu vermeiden)
       // Wichtig: Nach dem Fallback, damit der Fallback-Wert gecacht wird
       setCachedDevices(customerId, allDevices, 5 * 60 * 1000);
-      console.log(`Cached ${allDevices.length} devices for customer ${customerId}`);
+      debugLog(`Cached ${allDevices.length} devices for customer ${customerId}`);
     } else {
-      console.log(`Cache hit for customer ${customerId}, using ${allDevices.length} cached devices`);
+      debugLog(`Cache hit for customer ${customerId}, using ${allDevices.length} cached devices`);
     }
 
     // Hole die zugeordneten Devices
@@ -221,14 +222,14 @@ export default async function handler(req, res) {
             clearTimeout(timeoutId);
             // Ignoriere Timeout-Fehler und Abort-Fehler stillschweigend
             if (fetchError.name !== 'AbortError' && !fetchError.message?.includes('timeout')) {
-              console.warn(`Error fetching ${scope} attributes for device ${deviceId}:`, fetchError.message || fetchError);
+              debugWarn(`Error fetching ${scope} attributes for device ${deviceId}:`, fetchError.message || fetchError);
             }
           }
         } catch (error) {
           // Ignoriere Fehler beim Abrufen einzelner Scopes
           // Nur loggen wenn es kein Timeout ist
           if (!error.message?.includes('timeout') && !error.message?.includes('aborted')) {
-            console.warn(`Error fetching ${scope} attributes for device ${deviceId}:`, error.message);
+            debugWarn(`Error fetching ${scope} attributes for device ${deviceId}:`, error.message);
           }
         }
       }
@@ -259,7 +260,7 @@ export default async function handler(req, res) {
             clearTimeout(timeoutId);
             
             if (!deviceResponse.ok) {
-              console.warn(`Failed to fetch device ${relation.to.id}:`, deviceResponse.status);
+              debugWarn(`Failed to fetch device ${relation.to.id}:`, deviceResponse.status);
               return null;
             }
 
@@ -270,7 +271,7 @@ export default async function handler(req, res) {
 
             // Debug: Log alle Attribute für das erste Device
             if (deviceRelations.indexOf(relation) === 0) {
-              console.log('All attributes for first device:', allAttributes);
+              debugLog('All attributes for first device:', allAttributes);
             }
 
             return {
@@ -280,14 +281,14 @@ export default async function handler(req, res) {
           } catch (fetchError) {
             clearTimeout(timeoutId);
             if (fetchError.name !== 'AbortError' && !fetchError.message?.includes('timeout')) {
-              console.warn(`Error fetching device ${relation.to.id}:`, fetchError.message);
+              debugWarn(`Error fetching device ${relation.to.id}:`, fetchError.message);
             }
             return null;
           }
         } catch (error) {
           // Ignoriere Fehler beim Verarbeiten einzelner Devices
           if (!error.message?.includes('timeout') && !error.message?.includes('aborted')) {
-            console.warn(`Error processing device ${relation.to.id}:`, error.message);
+            debugWarn(`Error processing device ${relation.to.id}:`, error.message);
           }
           return null;
         }
@@ -309,7 +310,7 @@ export default async function handler(req, res) {
     }
     
     if (cachedUnassigned && cachedUnassigned.length > 0) {
-      console.log(`Cache hit for unassigned devices (customer ${customerId}), using ${cachedUnassigned.length} cached devices`);
+      debugLog(`Cache hit for unassigned devices (customer ${customerId}), using ${cachedUnassigned.length} cached devices`);
       // Verwende gecachte nicht zugeordnete Devices
       // Filtere die Devices heraus, die bereits diesem Asset zugeordnet sind
       const assignedDeviceIds = validDevices.map(device => device.id.id);
@@ -321,7 +322,7 @@ export default async function handler(req, res) {
       );
     } else {
       // Cache miss - berechne nicht zugeordnete Devices neu
-      console.log(`Cache miss for unassigned devices (customer ${customerId}), calculating...`);
+      debugLog(`Cache miss for unassigned devices (customer ${customerId}), calculating...`);
       
       // Finde die nicht zugeordneten Devices
       const assignedDeviceIds = validDevices.map(device => device.id.id);
@@ -375,13 +376,13 @@ export default async function handler(req, res) {
                 return device;
               }
               // Andere Fehler: logge Warnung, aber behandle als nicht zugeordnet
-              console.warn(`Error checking relations for device ${device.id.id}:`, fetchError.message || fetchError);
+              debugWarn(`Error checking relations for device ${device.id.id}:`, fetchError.message || fetchError);
               return device;
             }
           } catch (error) {
             // Bei Fehler behandle Device als nicht zugeordnet (konservativ)
             if (!error.message?.includes('timeout') && !error.message?.includes('aborted')) {
-              console.warn(`Error checking relations for device ${device.id.id}:`, error.message || error);
+              debugWarn(`Error checking relations for device ${device.id.id}:`, error.message || error);
             }
             return device;
           }
@@ -402,7 +403,7 @@ export default async function handler(req, res) {
         await saveUnassignedDevicesToDb(customerId, filteredUnassignedDevices);
         // Speichere auch im In-Memory-Cache (5 Minuten, für schnellen Zugriff)
         setCachedUnassignedDevices(customerId, filteredUnassignedDevices, 5 * 60 * 1000);
-        console.log(`Cached ${filteredUnassignedDevices.length} unassigned devices for customer ${customerId} (DB + Memory)`);
+        debugLog(`Cached ${filteredUnassignedDevices.length} unassigned devices for customer ${customerId} (DB + Memory)`);
       }
     }
 
@@ -426,7 +427,7 @@ export default async function handler(req, res) {
         } catch (error) {
           // Bei Fehler gebe das Device ohne Attribute zurück
           if (!error.message?.includes('timeout') && !error.message?.includes('aborted')) {
-            console.warn(`Error processing unassigned device ${device.id.id}:`, error.message);
+            debugWarn(`Error processing unassigned device ${device.id.id}:`, error.message);
           }
           return {
             ...device,
