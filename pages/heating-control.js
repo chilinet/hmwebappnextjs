@@ -212,64 +212,6 @@ async function fetchReportingLatestRow(deviceId, options = {}) {
   return task;
 }
 
-/** Eine Zeile aus der Bulk-Map holen (Keys mit/ohne Großschreibung). */
-function getBulkReportingRow(bulkMap, deviceId) {
-  if (!bulkMap || deviceId == null) return null;
-  const s = String(deviceId).trim();
-  if (!s) return null;
-  return bulkMap.get(s) ?? bulkMap.get(s.toLowerCase()) ?? null;
-}
-
-/**
- * Neueste Reporting-Zeile für viele Geräte in wenigen Requests (PostgreSQL, /api/reporting/latest-bulk).
- * Bei Fehler oder leerer Map: Aufrufer nutzt Einzel-Fetch. Erfolgreiche Zeilen landen im gleichen Cache wie fetchReportingLatestRow.
- */
-async function fetchReportingLatestRowsBulk(deviceIds, options = {}) {
-  const { signal } = options;
-  const uuidRe =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const ids = [
-    ...new Set(
-      deviceIds
-        .map((id) => String(id ?? '').trim())
-        .filter((id) => uuidRe.test(id))
-    )
-  ];
-  if (ids.length === 0) {
-    return new Map();
-  }
-
-  const CHUNK = 400;
-  const map = new Map();
-  for (let i = 0; i < ids.length; i += CHUNK) {
-    const chunk = ids.slice(i, i + CHUNK);
-    const res = await fetch('/api/reporting/latest-bulk', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${REPORTING_PROXY_KEY}`
-      },
-      body: JSON.stringify({ entity_ids: chunk }),
-      signal
-    });
-    if (!res.ok) {
-      debugWarn('latest-bulk HTTP', res.status, await res.text().catch(() => ''));
-      continue;
-    }
-    const json = await res.json();
-    if (json.success && Array.isArray(json.data)) {
-      for (const row of json.data) {
-        if (row?.entity_id == null) continue;
-        const eid = String(row.entity_id);
-        storeReportingLatest(eid, row);
-        map.set(eid, row);
-        map.set(eid.toLowerCase(), row);
-      }
-    }
-  }
-  return map;
-}
-
 /** Übersicht (Unterknoten-Telemetrie): Snapshot pro Eltern-Knoten + Mandant, 5 Min gültig. */
 const OVERVIEW_TELEMETRY_TTL_MS = 5 * 60 * 1000;
 const OVERVIEW_TELEMETRY_SS_PREFIX = 'hmOverviewTel:v1:';
@@ -2327,8 +2269,7 @@ export default function HeatingControl() {
   };
 
   // Function to fetch telemetry data for a node
-  // reportingBulkByDeviceId: optional Map von deviceId → Reporting-Zeile (Übersicht-Bulk)
-  const fetchNodeTelemetry = async (node, loadGen, signal, reportingBulkByDeviceId = null) => {
+  const fetchNodeTelemetry = async (node, loadGen, signal) => {
     const stale = () =>
       loadGen !== undefined && loadGen !== roomLoadGenerationRef.current;
 
@@ -2390,13 +2331,10 @@ export default function HeatingControl() {
         };
       }
 
-      // runStatus (Asset) und Reporting-Zeilen pro Gerät parallel (oder aus Bulk-Map)
+      // runStatus (Asset) und Reporting-Zeilen pro Gerät parallel (reporting-proxy)
       const devicePromises = deviceIds.map(async (deviceId) => {
         try {
-          let latestData = getBulkReportingRow(reportingBulkByDeviceId, deviceId);
-          if (!latestData) {
-            latestData = await fetchReportingLatestRow(deviceId, { signal });
-          }
+          const latestData = await fetchReportingLatestRow(deviceId, { signal });
           if (latestData) {
             return {
               sensorTemperature: latestData.sensor_temperature,
@@ -2547,42 +2485,13 @@ export default function HeatingControl() {
         }
       }
 
-      if (!silent) setLoadingSubordinateTelemetry(true);
+      if (!silent) {
+        setSubordinateTelemetry({});
+        setLoadingSubordinateTelemetry(true);
+      }
       try {
-        const allDeviceIds = [];
-        for (const node of subordinates) {
-          const devs = node.relatedDevices;
-          if (!devs?.length) continue;
-          for (const d of devs) {
-            const id =
-              typeof d.id === 'object' && d.id?.id ? d.id.id : d.id;
-            if (id) allDeviceIds.push(String(id));
-          }
-        }
-
-        let reportingBulkByDeviceId = null;
-        if (allDeviceIds.length > 0) {
-          try {
-            reportingBulkByDeviceId = await fetchReportingLatestRowsBulk(allDeviceIds, {
-              signal
-            });
-            if (reportingBulkByDeviceId.size === 0) {
-              reportingBulkByDeviceId = null;
-            }
-          } catch (e) {
-            if (e?.name === 'AbortError') throw e;
-            debugWarn('Übersicht: Bulk-Reporting fehlgeschlagen, Einzelabfragen', e);
-            reportingBulkByDeviceId = null;
-          }
-        }
-
         const telemetryPromises = subordinates.map(async (node) => {
-          const telemetry = await fetchNodeTelemetry(
-            node,
-            loadGen,
-            signal,
-            reportingBulkByDeviceId
-          );
+          const telemetry = await fetchNodeTelemetry(node, loadGen, signal);
           return { nodeId: node.id, telemetry };
         });
 
@@ -4666,9 +4575,19 @@ if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runS
                                               </p>
                                             )}
                                             
-                                            {/* Temperature and Valve Data */}
-                                            {subordinateTelemetry[node.id] && (
-                                              <div className="mt-3">
+                                            {/* Temperature and Valve Data — Spinner pro Kachel solange Telemetrie lädt */}
+                                            <div className="mt-3" style={{ minHeight: '4.5rem' }}>
+                                              {loadingSubordinateTelemetry ? (
+                                                <div className="d-flex align-items-center justify-content-center py-3">
+                                                  <div
+                                                    className="spinner-border spinner-border-sm text-primary"
+                                                    role="status"
+                                                    aria-busy="true"
+                                                  >
+                                                    <span className="visually-hidden">Lade Daten…</span>
+                                                  </div>
+                                                </div>
+                                              ) : subordinateTelemetry[node.id] ? (
                                                 <div className="row text-center">
                                                   {subordinateTelemetry[node.id].currentTemp !== null && (
                                                     <div className="col-3">
@@ -4731,15 +4650,12 @@ if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runS
                                                     </div>
                                                   )}
                                                 </div>
-                                                {loadingSubordinateTelemetry && (
-                                                  <div className="text-center mt-2">
-                                                    <div className="spinner-border spinner-border-sm text-primary" role="status">
-                                                      <span className="visually-hidden">Laden...</span>
-                                                    </div>
-                                                  </div>
-                                                )}
-                                              </div>
-                                            )}
+                                              ) : (
+                                                <div className="text-center text-muted small py-2">
+                                                  Keine Telemetriedaten
+                                                </div>
+                                              )}
+                                            </div>
                                             
                                             <button
                                               className="btn btn-sm btn-outline-primary mt-2"
