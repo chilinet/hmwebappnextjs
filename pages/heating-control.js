@@ -2272,6 +2272,21 @@ export default function HeatingControl() {
     const stale = () =>
       loadGen !== undefined && loadGen !== roomLoadGenerationRef.current;
 
+    const fetchAssetRunStatus = async () => {
+      if (!node?.id) return null;
+      try {
+        const assetResponse = await fetch(`/api/config/assets/${node.id}`, { signal });
+        if (assetResponse.ok) {
+          const assetData = await assetResponse.json();
+          return assetData.attributes?.runStatus || null;
+        }
+      } catch (error) {
+        if (error?.name === 'AbortError') throw error;
+        debugWarn(`Error fetching runStatus for node ${node.id}:`, error);
+      }
+      return null;
+    };
+
     if (!node) {
       return {
         currentTemp: null,
@@ -2284,20 +2299,15 @@ export default function HeatingControl() {
     }
 
     if (!node.relatedDevices || node.relatedDevices.length === 0) {
-      // Fetch runStatus from ThingsBoard even if no devices
-      let runStatus = null;
-      if (node.id) {
-        try {
-          const assetResponse = await fetch(`/api/config/assets/${node.id}`, { signal });
-          if (assetResponse.ok) {
-            const assetData = await assetResponse.json();
-            runStatus = assetData.attributes?.runStatus || null;
-          }
-        } catch (error) {
-          debugWarn(`Error fetching runStatus for node ${node.id}:`, error);
-        }
-      }
-      return { currentTemp: null, targetTemp: null, valvePosition: null, batteryVoltage: null, rssi: null, runStatus: runStatus || node.runStatus || null };
+      const runStatus = await fetchAssetRunStatus();
+      return {
+        currentTemp: null,
+        targetTemp: null,
+        valvePosition: null,
+        batteryVoltage: null,
+        rssi: null,
+        runStatus: runStatus || node.runStatus || null
+      };
     }
 
     try {
@@ -2309,37 +2319,18 @@ export default function HeatingControl() {
       }).filter(id => id);
 
       if (deviceIds.length === 0) {
-        // Fetch runStatus from ThingsBoard even if no devices
-        let runStatus = null;
-        if (node.id) {
-          try {
-            const assetResponse = await fetch(`/api/config/assets/${node.id}`, { signal });
-            if (assetResponse.ok) {
-              const assetData = await assetResponse.json();
-              runStatus = assetData.attributes?.runStatus || null;
-            }
-          } catch (error) {
-            debugWarn(`Error fetching runStatus for node ${node.id}:`, error);
-          }
-        }
-        return { currentTemp: null, targetTemp: null, valvePosition: null, batteryVoltage: null, rssi: null, runStatus: runStatus || node.runStatus || null };
+        const runStatus = await fetchAssetRunStatus();
+        return {
+          currentTemp: null,
+          targetTemp: null,
+          valvePosition: null,
+          batteryVoltage: null,
+          rssi: null,
+          runStatus: runStatus || node.runStatus || null
+        };
       }
 
-      // Fetch runStatus from ThingsBoard for the asset
-      let runStatus = null;
-      if (node.id) {
-        try {
-          const assetResponse = await fetch(`/api/config/assets/${node.id}`, { signal });
-          if (assetResponse.ok) {
-            const assetData = await assetResponse.json();
-            runStatus = assetData.attributes?.runStatus || null;
-          }
-        } catch (error) {
-          debugWarn(`Error fetching runStatus for node ${node.id}:`, error);
-        }
-      }
-
-      // Fetch latest data for all devices
+      // runStatus (Asset) und Reporting-Zeilen pro Gerät parallel
       const devicePromises = deviceIds.map(async (deviceId) => {
         try {
           const latestData = await fetchReportingLatestRow(deviceId, { signal });
@@ -2359,7 +2350,10 @@ export default function HeatingControl() {
         return { sensorTemperature: null, targetTemperature: null, valvePosition: null, batteryVoltage: null, rssi: null };
       });
 
-      const deviceResults = await Promise.all(devicePromises);
+      const [runStatus, deviceResults] = await Promise.all([
+        fetchAssetRunStatus(),
+        Promise.all(devicePromises)
+      ]);
       if (stale()) {
         return {
           currentTemp: null,
