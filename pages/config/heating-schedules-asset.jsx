@@ -402,7 +402,7 @@ export default function HeatingSchedulesAsset() {
         </button>
         <FontAwesomeIcon icon={faLayerGroup} className="me-3" size="2x" style={{ color: '#fd7e14' }} />
         <h1 className="mb-0" style={{ color: '#fd7e14', fontWeight: 'bold' }}>
-          Heizpläne (Asset)
+          Heizpläne (Struktur)
         </h1>
       </div>
       <p className="text-muted small mb-4">
