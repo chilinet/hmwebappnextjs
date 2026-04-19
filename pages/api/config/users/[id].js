@@ -1,7 +1,7 @@
 import { getServerSession } from 'next-auth/next';
 import sql from 'mssql';
 import { authOptions } from '../../../../lib/authOptions';
-import { convertToTreeViewFormat, normAssetId } from '../../../../lib/heating-control/treeUtils';
+import { validateDefaultEntryAssetForCustomer } from '../../../../lib/userDefaultEntryAsset';
 import { withPoolRetry } from '../../../../lib/db';
 import { debugLog, debugWarn } from '../../../../lib/appDebug';
 
@@ -188,26 +188,18 @@ export default async function handler(req, res) {
             if (targetRow.recordset.length === 0) {
               return res.status(404).json({ success: false, error: 'Zielbenutzer nicht gefunden' });
             }
-            const cid = targetRow.recordset[0].customerid;
-            if (!cid) {
-              return res.status(400).json({ success: false, error: 'Kunde fehlt – kein Einstiegsknoten möglich' });
-            }
-            const treeRes = await pool.request()
-              .input('customer_id', sql.UniqueIdentifier, cid)
-              .query(`SELECT tree FROM customer_settings WHERE customer_id = @customer_id`);
-            if (treeRes.recordset.length === 0) {
-              return res.status(400).json({ success: false, error: 'Keine Struktur für diesen Kunden' });
-            }
-            let treeParsed;
-            try {
-              treeParsed = JSON.parse(treeRes.recordset[0].tree);
-            } catch {
-              return res.status(500).json({ success: false, error: 'Strukturdaten ungültig' });
-            }
-            const flat = convertToTreeViewFormat(Array.isArray(treeParsed) ? treeParsed : []);
-            const found = flat.some((n) => n.id && normAssetId(n.id) === normAssetId(raw));
-            if (!found) {
-              return res.status(400).json({ success: false, error: 'Knoten gehört nicht zur Mandantenstruktur' });
+            const dbCustomer = targetRow.recordset[0].customerid;
+            const effectiveCustomerId =
+              customerid !== undefined &&
+              customerid !== null &&
+              String(customerid).trim() !== ''
+                ? String(customerid).trim()
+                : dbCustomer
+                  ? String(dbCustomer).trim()
+                  : null;
+            const v = await validateDefaultEntryAssetForCustomer(pool, effectiveCustomerId, raw);
+            if (!v.ok) {
+              return res.status(v.status).json({ success: false, error: v.error });
             }
           }
           updateFields.push('default_entry_asset_id = @defaultEntryAssetId');

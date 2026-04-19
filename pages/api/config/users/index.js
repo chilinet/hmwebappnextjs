@@ -3,6 +3,7 @@ import { authOptions } from "../../auth/[...nextauth]";
 import sql from 'mssql'
 import bcrypt from 'bcryptjs'
 import { debugLog, debugWarn } from '../../../../lib/appDebug';
+import { validateDefaultEntryAssetForCustomer } from '../../../../lib/userDefaultEntryAsset';
 
 const JWT_SECRET = process.env.NEXTAUTH_SECRET
 
@@ -46,7 +47,9 @@ export default async function handler(req, res) {
         role,
         password,
         customerid,
-        tenantid
+        tenantid,
+        defaultEntryAssetId,
+        defaultEntryOverrideUser
       } = req.body;
 
       // Debug-Info
@@ -107,6 +110,23 @@ export default async function handler(req, res) {
       // Hash das Passwort
       const hashedPassword = await bcrypt.hash(password, 10);
 
+      let normalizedDefaultEntry = null;
+      const entryOverrideBit = defaultEntryOverrideUser ? 1 : 0;
+      if (customerid) {
+        const rawEntry =
+          defaultEntryAssetId == null || String(defaultEntryAssetId).trim() === ''
+            ? null
+            : String(defaultEntryAssetId).trim();
+        if (rawEntry) {
+          const v = await validateDefaultEntryAssetForCustomer(pool, customerid, rawEntry);
+          if (!v.ok) {
+            await pool.close();
+            return res.status(v.status).json({ message: v.error });
+          }
+          normalizedDefaultEntry = v.normalized;
+        }
+      }
+
       // Prüfe ob der Benutzername bereits existiert
       const checkUser = await pool.request()
         .input('username', sql.NVarChar, username)
@@ -119,7 +139,7 @@ export default async function handler(req, res) {
       }
 
       // Füge den neuen Benutzer ein
-      const result = await pool.request()
+      const insertReq = pool.request()
         .input('username', sql.NVarChar, username)
         .input('email', sql.NVarChar, email)
         .input('firstname', sql.NVarChar, firstName)
@@ -131,16 +151,26 @@ export default async function handler(req, res) {
         .input('status', sql.Int, 0)
         .input('createdttm', sql.DateTime, new Date())
         .input('updatedttm', sql.DateTime, new Date())
-        .query(`
+        .input('defaultEntryOverride', sql.Bit, entryOverrideBit);
+
+      if (normalizedDefaultEntry) {
+        insertReq.input('defaultEntryAssetId', sql.UniqueIdentifier, normalizedDefaultEntry);
+      } else {
+        insertReq.input('defaultEntryAssetId', sql.UniqueIdentifier, null);
+      }
+
+      const result = await insertReq.query(`
           INSERT INTO hm_users (
             username, email, firstname, lastname, role,
             password, customerid, tenantid, status,
-            createdttm, updatedttm
+            createdttm, updatedttm,
+            default_entry_asset_id, default_entry_override_user
           )
           VALUES (
             @username, @email, @firstname, @lastname, @role,
             @password, @customerid, @tenantid, @status,
-            @createdttm, @updatedttm
+            @createdttm, @updatedttm,
+            @defaultEntryAssetId, @defaultEntryOverride
           );
           SELECT SCOPE_IDENTITY() AS userid;
         `);

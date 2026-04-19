@@ -212,6 +212,64 @@ async function fetchReportingLatestRow(deviceId, options = {}) {
   return task;
 }
 
+/** Eine Zeile aus der Bulk-Map holen (Keys mit/ohne Großschreibung). */
+function getBulkReportingRow(bulkMap, deviceId) {
+  if (!bulkMap || deviceId == null) return null;
+  const s = String(deviceId).trim();
+  if (!s) return null;
+  return bulkMap.get(s) ?? bulkMap.get(s.toLowerCase()) ?? null;
+}
+
+/**
+ * Neueste Reporting-Zeile für viele Geräte in wenigen Requests (PostgreSQL, /api/reporting/latest-bulk).
+ * Bei Fehler oder leerer Map: Aufrufer nutzt Einzel-Fetch. Erfolgreiche Zeilen landen im gleichen Cache wie fetchReportingLatestRow.
+ */
+async function fetchReportingLatestRowsBulk(deviceIds, options = {}) {
+  const { signal } = options;
+  const uuidRe =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const ids = [
+    ...new Set(
+      deviceIds
+        .map((id) => String(id ?? '').trim())
+        .filter((id) => uuidRe.test(id))
+    )
+  ];
+  if (ids.length === 0) {
+    return new Map();
+  }
+
+  const CHUNK = 400;
+  const map = new Map();
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const chunk = ids.slice(i, i + CHUNK);
+    const res = await fetch('/api/reporting/latest-bulk', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${REPORTING_PROXY_KEY}`
+      },
+      body: JSON.stringify({ entity_ids: chunk }),
+      signal
+    });
+    if (!res.ok) {
+      debugWarn('latest-bulk HTTP', res.status, await res.text().catch(() => ''));
+      continue;
+    }
+    const json = await res.json();
+    if (json.success && Array.isArray(json.data)) {
+      for (const row of json.data) {
+        if (row?.entity_id == null) continue;
+        const eid = String(row.entity_id);
+        storeReportingLatest(eid, row);
+        map.set(eid, row);
+        map.set(eid.toLowerCase(), row);
+      }
+    }
+  }
+  return map;
+}
+
 /** Übersicht (Unterknoten-Telemetrie): Snapshot pro Eltern-Knoten + Mandant, 5 Min gültig. */
 const OVERVIEW_TELEMETRY_TTL_MS = 5 * 60 * 1000;
 const OVERVIEW_TELEMETRY_SS_PREFIX = 'hmOverviewTel:v1:';
@@ -881,6 +939,7 @@ export default function HeatingControl() {
   const fetchTreeData = useCallback(async () => {
     if (!customerData?.customerid) {
       debugLog('⏳ No customer ID available for tree data');
+      setLoading(false);
       return;
     }
     
@@ -2268,7 +2327,8 @@ export default function HeatingControl() {
   };
 
   // Function to fetch telemetry data for a node
-  const fetchNodeTelemetry = async (node, loadGen, signal) => {
+  // reportingBulkByDeviceId: optional Map von deviceId → Reporting-Zeile (Übersicht-Bulk)
+  const fetchNodeTelemetry = async (node, loadGen, signal, reportingBulkByDeviceId = null) => {
     const stale = () =>
       loadGen !== undefined && loadGen !== roomLoadGenerationRef.current;
 
@@ -2330,10 +2390,13 @@ export default function HeatingControl() {
         };
       }
 
-      // runStatus (Asset) und Reporting-Zeilen pro Gerät parallel
+      // runStatus (Asset) und Reporting-Zeilen pro Gerät parallel (oder aus Bulk-Map)
       const devicePromises = deviceIds.map(async (deviceId) => {
         try {
-          const latestData = await fetchReportingLatestRow(deviceId, { signal });
+          let latestData = getBulkReportingRow(reportingBulkByDeviceId, deviceId);
+          if (!latestData) {
+            latestData = await fetchReportingLatestRow(deviceId, { signal });
+          }
           if (latestData) {
             return {
               sensorTemperature: latestData.sensor_temperature,
@@ -2486,8 +2549,40 @@ export default function HeatingControl() {
 
       if (!silent) setLoadingSubordinateTelemetry(true);
       try {
+        const allDeviceIds = [];
+        for (const node of subordinates) {
+          const devs = node.relatedDevices;
+          if (!devs?.length) continue;
+          for (const d of devs) {
+            const id =
+              typeof d.id === 'object' && d.id?.id ? d.id.id : d.id;
+            if (id) allDeviceIds.push(String(id));
+          }
+        }
+
+        let reportingBulkByDeviceId = null;
+        if (allDeviceIds.length > 0) {
+          try {
+            reportingBulkByDeviceId = await fetchReportingLatestRowsBulk(allDeviceIds, {
+              signal
+            });
+            if (reportingBulkByDeviceId.size === 0) {
+              reportingBulkByDeviceId = null;
+            }
+          } catch (e) {
+            if (e?.name === 'AbortError') throw e;
+            debugWarn('Übersicht: Bulk-Reporting fehlgeschlagen, Einzelabfragen', e);
+            reportingBulkByDeviceId = null;
+          }
+        }
+
         const telemetryPromises = subordinates.map(async (node) => {
-          const telemetry = await fetchNodeTelemetry(node, loadGen, signal);
+          const telemetry = await fetchNodeTelemetry(
+            node,
+            loadGen,
+            signal,
+            reportingBulkByDeviceId
+          );
           return { nodeId: node.id, telemetry };
         });
 
@@ -2582,8 +2677,10 @@ export default function HeatingControl() {
     if (currentCustomerId && currentCustomerId !== lastLoadedCustomerIdRef.current) {
       lastLoadedCustomerIdRef.current = currentCustomerId;
       fetchTreeData();
+    } else if (customerData != null && !currentCustomerId) {
+      setLoading(false);
     }
-  }, [customerData?.customerid, fetchTreeData]);
+  }, [customerData?.customerid, customerData, fetchTreeData]);
 
   useEffect(() => {
     defaultEntryAppliedRef.current = false;
@@ -2834,10 +2931,18 @@ export default function HeatingControl() {
 
   if (status === 'loading') {
     return (
-      <div className="d-flex justify-content-center align-items-center" style={{ minHeight: '400px' }}>
-        <div className="spinner-border text-primary" role="status">
-          <span className="visually-hidden">Laden...</span>
+      <div
+        className="d-flex flex-column justify-content-center align-items-center bg-white"
+        style={{ minHeight: '100vh', width: '100%' }}
+      >
+        <div
+          className="spinner-border text-primary"
+          role="status"
+          style={{ width: '3rem', height: '3rem' }}
+        >
+          <span className="visually-hidden">Laden…</span>
         </div>
+        <p className="mt-3 text-muted mb-0 small">Laden…</p>
       </div>
     );
   }
@@ -2848,6 +2953,27 @@ export default function HeatingControl() {
 
   return (
     <DndProvider backend={HTML5Backend}>
+      {loading && (
+        <div
+          className="position-fixed top-0 start-0 w-100 h-100 d-flex flex-column align-items-center justify-content-center"
+          style={{
+            zIndex: 1080,
+            backgroundColor: 'rgba(255, 255, 255, 0.92)',
+            pointerEvents: 'all'
+          }}
+          aria-busy="true"
+          aria-live="polite"
+        >
+          <div
+            className="spinner-border text-primary"
+            role="status"
+            style={{ width: '3rem', height: '3rem' }}
+          >
+            <span className="visually-hidden">Struktur wird geladen…</span>
+          </div>
+          <p className="mt-3 text-muted mb-0 small">Struktur wird geladen…</p>
+        </div>
+      )}
       <style jsx>{`
         .responsive-cards {
           display: flex;
@@ -3050,22 +3176,20 @@ export default function HeatingControl() {
                overflow: 'hidden'
              }}
            >
-                  <div className="card-header bg-white border-secondary" style={{ flexShrink: 0 }}>
-                    <h5 className="mb-0 d-flex align-items-center justify-content-between">
-                      <div className="d-flex align-items-center">
-                        <FontAwesomeIcon icon={faBuilding} className="me-2 text-primary" />
-                        Heizungssteuerung
-                      </div>
-                      {isMobile && (
+                  {isMobile && (
+                    <div className="card-header bg-white border-secondary py-2" style={{ flexShrink: 0 }}>
+                      <div className="d-flex justify-content-end">
                         <button
+                          type="button"
                           className="btn btn-sm btn-outline-secondary"
                           onClick={() => setShowTree(false)}
+                          aria-label="Struktur schließen"
                         >
                           <FontAwesomeIcon icon={faTimes} />
                         </button>
-                      )}
-                    </h5>
-                  </div>
+                      </div>
+                    </div>
+                  )}
             <div className="card-body tree-container" style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
               {/* Suchfeld für Tree */}
               <div className="tree-header" style={{ flexShrink: 0 }}>
@@ -3230,18 +3354,11 @@ export default function HeatingControl() {
                 {/* Fixed Header and Tabs - not scrollable */}
                 <div className="p-4 pb-0" style={{ flexShrink: 0, backgroundColor: 'white', borderBottom: '1px solid #dee2e6' }}>
                   <div className="node-details">
-                    <div className="d-flex align-items-center mb-3">
-                      <FontAwesomeIcon 
-                        icon={getIconForType(selectedNode.type)} 
-                        className="me-3 text-primary" 
-                        size="2x"
-                      />
-                      <div>
-                        <h4 className="mb-1">{selectedNode.label || selectedNode.name}</h4>
-                        <span className="badge bg-secondary">
-                          {getNodeTypeLabel(selectedNode.type)}
-                        </span>
-                      </div>
+                    <div className="mb-3">
+                      <h4 className="mb-1">{selectedNode.label || selectedNode.name}</h4>
+                      <span className="badge bg-secondary">
+                        {getNodeTypeLabel(selectedNode.type)}
+                      </span>
                     </div>
 
                     {/* Tab Navigation */}
@@ -4423,7 +4540,12 @@ if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runS
                       <div className="tab-pane fade show active">
                         {(() => {
                           const { path, subordinates } = getAllSubordinateNodes(selectedNode?.id, visibleTreeData);
-                          
+                          const subordinatesSorted = [...subordinates].sort((a, b) => {
+                            const la = String(a.label ?? a.name ?? a.text ?? '').toLocaleLowerCase('de');
+                            const lb = String(b.label ?? b.name ?? b.text ?? '').toLocaleLowerCase('de');
+                            return la.localeCompare(lb, 'de', { sensitivity: 'base' });
+                          });
+
                           // Get all subordinates without filtering to calculate the difference
                           const getAllSubordinatesWithoutFilter = (nodeId, nodes = visibleTreeData) => {
                             const findNode = (nodeList, targetId) => {
@@ -4490,9 +4612,9 @@ if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runS
 
                               {/* Untergeordnete Nodes */}
                               <div className="mb-4">
-                                {subordinates.length > 0 ? (
+                                {subordinatesSorted.length > 0 ? (
                                   <div className="row">
-                                    {subordinates.map((node) => (
+                                    {subordinatesSorted.map((node) => (
                                       <div key={node.id} className="col-md-6 col-lg-4 mb-3">
                                         <div className="card h-100">
                                           <div className="card-body">

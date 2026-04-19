@@ -3,6 +3,7 @@ import { useSession, signIn } from 'next-auth/react'
 import { useRouter } from 'next/router'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faSave, faArrowLeft } from '@fortawesome/free-solid-svg-icons'
+import { getTopRootAssetIdFromStructureTree } from '../../../lib/heating-control/treeUtils'
 
 export default function NewUser() {
   const router = useRouter()
@@ -20,7 +21,9 @@ export default function NewUser() {
     lastName: '',
     role: '',
     password: '',
-    customerid: ''
+    customerid: '',
+    defaultEntryAssetId: '',
+    defaultEntryOverrideUser: false
   })
   const [customers, setCustomers] = useState([])
   const [loading, setLoading] = useState(true)
@@ -34,6 +37,34 @@ export default function NewUser() {
       fetchRoles();
     }
   }, [userRole]);
+
+  // Einstieg Heizungssteuerung: oberster Knoten der Mandantenstruktur (wie bei Benutzer bearbeiten)
+  useEffect(() => {
+    if (!session?.token || !user.customerid) {
+      setUser((prev) => ({ ...prev, defaultEntryAssetId: '' }));
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/config/customers/${user.customerid}/tree`, {
+      headers: { Authorization: `Bearer ${session.token}` }
+    })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => {
+        const tree = Array.isArray(data) ? data : [];
+        const root = getTopRootAssetIdFromStructureTree(tree);
+        if (!cancelled) {
+          setUser((prev) => ({ ...prev, defaultEntryAssetId: root || '' }));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setUser((prev) => ({ ...prev, defaultEntryAssetId: '' }));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.token, user.customerid]);
 
   useEffect(() => {
     if (session?.token) {
@@ -160,7 +191,9 @@ export default function NewUser() {
         ...user,
         role: selectedRole, // Verwende den bereits konvertierten Wert
         tenantid: user.tenantid,
-        customerid: userRole === 1 ? user.customerid : user.customerid
+        customerid: userRole === 1 ? user.customerid : user.customerid,
+        defaultEntryAssetId: user.customerid ? user.defaultEntryAssetId || null : null,
+        defaultEntryOverrideUser: !!user.defaultEntryOverrideUser
       };
 
       console.log('Sending user data:', userData);
