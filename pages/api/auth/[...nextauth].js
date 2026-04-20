@@ -1,8 +1,5 @@
-import NextAuth from 'next-auth'
-import CredentialsProvider from 'next-auth/providers/credentials'
-import sql from 'mssql'
-import bcrypt from 'bcryptjs'
-import jwt from 'jsonwebtoken'
+import NextAuth from 'next-auth';
+import { authOptions } from '../../../lib/authOptions';
 
 // Determine if this is a local connection
 const isLocalConnection = process.env.MSSQL_SERVER === '127.0.0.1' || 

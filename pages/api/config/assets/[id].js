@@ -2,73 +2,127 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../auth/[...nextauth]";
 import { getConnection } from "../../../../lib/db";
 import sql from 'mssql';
+import { debugLog, debugWarn } from '../../../../lib/appDebug';
 
-// Funktion zum Abrufen der Asset-Attribute mit Timeout
+// Gewünschte Asset-Attribute (SERVER_SCOPE) – für Lesen und keys-Parameter
+const ASSET_ATTRIBUTE_KEYS = [
+  'operationalMode',
+  'operationalDevice',
+  'childLock',
+  'fixValue',
+  'maxTemp',
+  'minTemp',
+  'extTempDevice',
+  'overruleMinutes',
+  'runStatus',
+  'heatingPlans',
+  'schedulerPlan',
+  'schedulerPlanPIR',
+  'windowSensor',
+  'windowStates',
+  'occupied',
+  'hasPir',
+  'occupiedTemp'
+];
+
+/** Parst ThingsBoard-Attribut-Arrays [{ key, value }, ...] in ein flaches Objekt. */
+function extractAttributesFromTbResponse(tbAttributesArray, keys) {
+  const out = {};
+  if (!Array.isArray(tbAttributesArray)) return out;
+  keys.forEach((key) => {
+    const attribute = tbAttributesArray.find((attr) => attr.key === key);
+    if (attribute) out[key] = attribute.value;
+  });
+  return out;
+}
+
+/**
+ * Liest SERVER_SCOPE und CLIENT_SCOPE (ThingsBoard kann hasPir/occupied in einem der Scopes haben).
+ * Pro Key gilt: SERVER_SCOPE hat Vorrang, sonst CLIENT_SCOPE.
+ */
 async function fetchAssetAttributes(assetId, tbToken) {
-  try {
+  const TB = process.env.THINGSBOARD_URL;
+  const keysParam = ASSET_ATTRIBUTE_KEYS.join(',');
+
+  async function fetchScope(scopeLabel) {
+    const url = `${TB}/api/plugins/telemetry/ASSET/${assetId}/values/attributes/${scopeLabel}?keys=${encodeURIComponent(keysParam)}`;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 Sekunden Timeout
-    
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
     try {
-      const response = await fetch(
-        `${process.env.THINGSBOARD_URL}/api/plugins/telemetry/ASSET/${assetId}/values/attributes`,
-        {
-          headers: {
-            'X-Authorization': `Bearer ${tbToken}`
-          },
-          signal: controller.signal
-        }
-      );
-
+      const response = await fetch(url, {
+        headers: { 'X-Authorization': `Bearer ${tbToken}` },
+        signal: controller.signal
+      });
       clearTimeout(timeoutId);
-
       if (!response.ok) {
-        console.log(`Failed to fetch attributes for asset ${assetId}: ${response.status}`);
+        debugLog(`[fetchAssetAttributes] ${scopeLabel} failed for asset ${assetId}: ${response.status}`);
         return {};
       }
-
       const attributes = await response.json();
-
-      // Extrahiere die gewünschten Attribute
-      const extractedAttributes = {};
-      const attributeKeys = [
-        'operationalMode',
-        'operationalDevice',
-        'childLock', 
-        'fixValue',
-        'maxTemp',
-        'minTemp',
-        'extTempDevice',
-        'overruleMinutes',
-        'runStatus',
-        'schedulerPlan',
-        'windowSensor',
-        'windowStates'
-      ];
-
-      attributeKeys.forEach(key => {
-        const attribute = attributes.find(attr => attr.key === key);
-        if (attribute) {
-          extractedAttributes[key] = attribute.value;
-        }
-      });
-
-      return extractedAttributes;
+      return extractAttributesFromTbResponse(attributes, ASSET_ATTRIBUTE_KEYS);
     } catch (fetchError) {
       clearTimeout(timeoutId);
-      // Ignoriere Timeout-Fehler stillschweigend
       if (fetchError.name !== 'AbortError' && !fetchError.message?.includes('timeout')) {
-        console.warn(`Error fetching attributes for asset ${assetId}:`, fetchError.message || fetchError);
+        debugWarn(`[fetchAssetAttributes] ${scopeLabel} error for asset ${assetId}:`, fetchError.message || fetchError);
       }
       return {};
     }
+  }
+
+  try {
+    const [serverAttrs, clientAttrs] = await Promise.all([
+      fetchScope('SERVER_SCOPE'),
+      fetchScope('CLIENT_SCOPE')
+    ]);
+    const merged = { ...clientAttrs };
+    ASSET_ATTRIBUTE_KEYS.forEach((key) => {
+      if (serverAttrs[key] !== undefined) merged[key] = serverAttrs[key];
+    });
+    return merged;
   } catch (error) {
-    // Ignoriere Timeout-Fehler
     if (!error.message?.includes('timeout') && !error.message?.includes('aborted')) {
-      console.warn(`Error fetching attributes for asset ${assetId}:`, error.message || error);
+      debugWarn(`Error fetching attributes for asset ${assetId}:`, error.message || error);
     }
     return {};
   }
+}
+
+/**
+ * ThingsBoard 3.x: Der Asset-Typ in der UI entspricht dem Asset-Profil; Persistenz läuft über assetProfileId.
+ * Nur das Feld `type` zu setzen reicht oft nicht — TB ignoriert es zugunsten des Profils.
+ */
+async function resolveAssetProfileEntityId(tbToken, profileName) {
+  const TB = process.env.THINGSBOARD_URL;
+  const name = (profileName || '').trim();
+  if (!name) return null;
+  const res = await fetch(
+    `${TB}/api/assetProfiles?pageSize=500&page=0&sortProperty=name&sortOrder=ASC`,
+    {
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Authorization': `Bearer ${tbToken}`
+      }
+    }
+  );
+  if (!res.ok) {
+    debugWarn('[assets] Could not list assetProfiles:', res.status);
+    return null;
+  }
+  const body = await res.json();
+  const list = Array.isArray(body?.data) ? body.data : [];
+  const found = list.find((p) => p && String(p.name || '').trim() === name);
+  if (!found) {
+    debugWarn('[assets] Asset profile not found for name:', name);
+    return null;
+  }
+  const raw = found.id;
+  if (raw && typeof raw === 'object' && raw.entityType && raw.id) {
+    return raw;
+  }
+  if (typeof raw === 'string') {
+    return { entityType: 'ASSET_PROFILE', id: raw };
+  }
+  return null;
 }
 
 // Funktion zum Entfernen eines Assets aus dem Tree (rekursiv)
@@ -133,42 +187,49 @@ async function removeAssetFromTree(customerId, assetId) {
 }
 
 // Funktion zum Abrufen der Asset-Details
+// Returns { asset } on success, { asset: null, tbStatus, tbDetail } on ThingsBoard error
 async function fetchAssetDetails(assetId, tbToken) {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 Sekunden Timeout
-    
+    const url = `${process.env.THINGSBOARD_URL}/api/asset/${assetId}`;
+
     try {
-      const response = await fetch(
-        `${process.env.THINGSBOARD_URL}/api/asset/${assetId}`,
-        {
-          headers: {
-            'X-Authorization': `Bearer ${tbToken}`
-          },
-          signal: controller.signal
-        }
-      );
+      const response = await fetch(url, {
+        headers: {
+          'X-Authorization': `Bearer ${tbToken}`
+        },
+        signal: controller.signal
+      });
 
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        console.log(`Failed to fetch asset details for ${assetId}: ${response.status}`);
-        return null;
+        const body = await response.text();
+        let errDetail;
+        try {
+          errDetail = JSON.parse(body);
+        } catch {
+          errDetail = body || response.statusText;
+        }
+        debugWarn(`[assets/${assetId}] ThingsBoard asset request failed: status=${response.status}, url=${url}, detail=`, errDetail);
+        return { asset: null, tbStatus: response.status, tbDetail: errDetail };
       }
 
-      return await response.json();
+      const asset = await response.json();
+      return { asset };
     } catch (fetchError) {
       clearTimeout(timeoutId);
       if (fetchError.name !== 'AbortError' && !fetchError.message?.includes('timeout')) {
-        console.warn(`Error fetching asset details for ${assetId}:`, fetchError.message || fetchError);
+        debugWarn(`[assets/${assetId}] Error fetching asset details:`, fetchError.message || fetchError);
       }
-      return null;
+      return { asset: null, tbStatus: null, tbDetail: fetchError?.message || 'Request failed' };
     }
   } catch (error) {
     if (!error.message?.includes('timeout') && !error.message?.includes('aborted')) {
-      console.warn(`Error fetching asset details for ${assetId}:`, error.message || error);
+      debugWarn(`[assets/${assetId}] Error:`, error.message || error);
     }
-    return null;
+    return { asset: null, tbStatus: null, tbDetail: error?.message || 'Unknown error' };
   }
 }
 
@@ -194,13 +255,19 @@ export default async function handler(req, res) {
 
     if (req.method === 'GET') {
       // Hole Asset-Details und Attribute direkt aus ThingsBoard
-      const [assetDetails, attributes] = await Promise.all([
+      const [detailsResult, attributes] = await Promise.all([
         fetchAssetDetails(id, tbToken),
         fetchAssetAttributes(id, tbToken)
       ]);
 
+      const assetDetails = detailsResult?.asset;
       if (!assetDetails) {
-        return res.status(404).json({ message: 'Asset not found' });
+        return res.status(404).json({
+          message: 'Asset not found',
+          tbStatus: detailsResult?.tbStatus ?? null,
+          tbDetail: detailsResult?.tbDetail ?? null,
+          hint: 'ThingsBoard returned no asset. Check: asset exists, THINGSBOARD_URL, token has access to this tenant.'
+        });
       }
 
       return res.status(200).json({
@@ -211,11 +278,76 @@ export default async function handler(req, res) {
         attributes: attributes
       });
     } else if (req.method === 'PUT') {
-      const { minTemp, maxTemp, overruleMinutes, runStatus, fixValue, schedulerPlan, childLock, windowSensor, operationalMode, operationalDevice, extTempDevice } = req.body;
+      const {
+        name,
+        label,
+        type,
+        minTemp,
+        maxTemp,
+        overruleMinutes,
+        runStatus,
+        fixValue,
+        heatingPlans,
+        schedulerPlan,
+        schedulerPlanPIR,
+        childLock,
+        windowSensor,
+        operationalMode,
+        operationalDevice,
+        extTempDevice,
+        hasPir,
+        occupied,
+        occupiedTemp
+      } = req.body;
 
       // Wenn es ein Tree-Only-Update ist, überspringe ThingsBoard Update
       if (isTreeOnlyUpdate) {
         return res.status(200).json({ message: 'Tree-only update skipped' });
+      }
+
+      const TB = process.env.THINGSBOARD_URL;
+      let savedTbEntity = false;
+
+      // Asset-Metadaten (Name, Label, Typ) sind ThingsBoard-Entität, nicht SERVER_SCOPE-Attribute
+      if (name !== undefined || label !== undefined || type !== undefined) {
+        const detailsResult = await fetchAssetDetails(id, tbToken);
+        const current = detailsResult?.asset;
+        if (!current) {
+          return res.status(404).json({
+            message: 'Asset not found in ThingsBoard',
+            tbStatus: detailsResult?.tbStatus ?? null,
+            tbDetail: detailsResult?.tbDetail ?? null
+          });
+        }
+        const payload = {
+          ...current,
+          name: name !== undefined ? name : current.name,
+          label: label !== undefined ? label : current.label,
+          type: type !== undefined ? type : current.type
+        };
+        if (type !== undefined) {
+          const profileEntityId = await resolveAssetProfileEntityId(tbToken, type);
+          if (profileEntityId) {
+            payload.assetProfileId = profileEntityId;
+          }
+        }
+        const entityRes = await fetch(`${TB}/api/asset`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Authorization': `Bearer ${tbToken}`
+          },
+          body: JSON.stringify(payload)
+        });
+        if (!entityRes.ok) {
+          const errorText = await entityRes.text();
+          console.error(`Failed to update ThingsBoard asset entity: ${entityRes.status} - ${errorText}`);
+          return res.status(entityRes.status).json({
+            message: 'Failed to update asset in ThingsBoard',
+            error: errorText
+          });
+        }
+        savedTbEntity = true;
       }
 
       // Aktualisiere Attribute in ThingsBoard
@@ -226,7 +358,9 @@ export default async function handler(req, res) {
       if (overruleMinutes !== undefined) attributesToUpdate.overruleMinutes = overruleMinutes;
       if (runStatus !== undefined) attributesToUpdate.runStatus = runStatus;
       if (fixValue !== undefined) attributesToUpdate.fixValue = fixValue;
+      if (heatingPlans !== undefined) attributesToUpdate.heatingPlans = heatingPlans;
       if (schedulerPlan !== undefined) attributesToUpdate.schedulerPlan = schedulerPlan;
+      if (schedulerPlanPIR !== undefined) attributesToUpdate.schedulerPlanPIR = schedulerPlanPIR;
       if (childLock !== undefined) attributesToUpdate.childLock = childLock;
       if (windowSensor !== undefined) attributesToUpdate.windowSensor = windowSensor;
       if (operationalMode !== undefined) attributesToUpdate.operationalMode = operationalMode;
@@ -235,14 +369,24 @@ export default async function handler(req, res) {
         // Wenn extTempDevice null ist, entferne das Attribut (setze es auf null)
         attributesToUpdate.extTempDevice = extTempDevice;
       }
+      if (hasPir !== undefined) attributesToUpdate.hasPir = hasPir;
+      if (occupied !== undefined) attributesToUpdate.occupied = occupied;
+      if (occupiedTemp !== undefined) attributesToUpdate.occupiedTemp = occupiedTemp;
 
       if (Object.keys(attributesToUpdate).length === 0) {
-        return res.status(400).json({ message: 'No attributes to update' });
+        if (!savedTbEntity) {
+          return res.status(400).json({ message: 'No attributes to update' });
+        }
+        const updatedAttributesOnly = await fetchAssetAttributes(id, tbToken);
+        return res.status(200).json({
+          success: true,
+          attributes: updatedAttributesOnly
+        });
       }
 
       // Sende Attribute an ThingsBoard (als JSON-Objekt, nicht als Array)
       const response = await fetch(
-        `${process.env.THINGSBOARD_URL}/api/plugins/telemetry/ASSET/${id}/attributes/SERVER_SCOPE`,
+        `${TB}/api/plugins/telemetry/ASSET/${id}/attributes/SERVER_SCOPE`,
         {
           method: 'POST',
           headers: {
@@ -286,7 +430,7 @@ export default async function handler(req, res) {
         
         // Wenn Asset nicht gefunden wurde, ist es bereits in ThingsBoard gelöscht
         if (deleteResponse.status === 404) {
-          console.log(`Asset ${id} not found in ThingsBoard, removing from tree only...`);
+          debugLog(`Asset ${id} not found in ThingsBoard, removing from tree only...`);
           
           // Nur aus dem Tree entfernen, nicht aus ThingsBoard löschen
           try {
@@ -305,10 +449,10 @@ export default async function handler(req, res) {
                   .input('assetId', sql.NVarChar, id)
                   .query('DELETE FROM asset_images WHERE asset_id = @assetId');
                 
-                console.log(`Deleted ${deleteImagesResult.rowsAffected[0]} image(s) for asset ${id}`);
+                debugLog(`Deleted ${deleteImagesResult.rowsAffected[0]} image(s) for asset ${id}`);
               }
             } catch (dbError) {
-              console.warn(`Failed to clean up asset images from database:`, dbError.message);
+              debugWarn(`Failed to clean up asset images from database:`, dbError.message);
             }
 
             return res.status(200).json({
@@ -338,11 +482,11 @@ export default async function handler(req, res) {
         const customerId = session.user?.customerid;
         if (customerId) {
           await removeAssetFromTree(customerId, id);
-          console.log(`Asset ${id} removed from tree after successful ThingsBoard deletion`);
+          debugLog(`Asset ${id} removed from tree after successful ThingsBoard deletion`);
         }
       } catch (treeError) {
         // Logge Fehler, aber breche nicht ab, da ThingsBoard-Löschung erfolgreich war
-        console.warn(`Failed to remove asset from tree:`, treeError.message);
+        debugWarn(`Failed to remove asset from tree:`, treeError.message);
       }
 
       // Bereinige zugehörige Bilder aus der Datenbank
@@ -353,11 +497,11 @@ export default async function handler(req, res) {
             .input('assetId', sql.NVarChar, id)
             .query('DELETE FROM asset_images WHERE asset_id = @assetId');
           
-          console.log(`Deleted ${deleteImagesResult.rowsAffected[0]} image(s) for asset ${id}`);
+          debugLog(`Deleted ${deleteImagesResult.rowsAffected[0]} image(s) for asset ${id}`);
         }
       } catch (dbError) {
         // Logge Datenbankfehler, aber breche nicht ab, wenn ThingsBoard-Löschung erfolgreich war
-        console.warn(`Failed to clean up asset images from database:`, dbError.message);
+        debugWarn(`Failed to clean up asset images from database:`, dbError.message);
       }
 
       return res.status(200).json({

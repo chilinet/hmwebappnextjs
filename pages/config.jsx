@@ -1,7 +1,7 @@
 import { useRouter } from 'next/router';
 import { useSession, getSession } from 'next-auth/react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faUsers, faUserCog, faSitemap, faUserShield, faGears, faBoxes, faCalendarAlt, faMicrochip, faPalette } from '@fortawesome/free-solid-svg-icons';
+import { faUsers, faUserCog, faSitemap, faUserShield, faGears, faBoxes, faCalendarAlt, faMicrochip, faPalette, faLayerGroup } from '@fortawesome/free-solid-svg-icons';
 import { useEffect, useState } from 'react';
 import styles from '@/styles/config.module.css';
 
@@ -15,12 +15,29 @@ export default function Config() {
   });
 
   const [userRole, setUserRole] = useState(null);
+  const [heatplanOnLevel, setHeatplanOnLevel] = useState(false);
 
   useEffect(() => {
     if (session?.token) {
       fetchUserRole();
     }
   }, [session]);
+
+  useEffect(() => {
+    if (!session?.token || !session?.user?.customerid) return;
+    let cancelled = false;
+    fetch(`/api/config/customers/${session.user.customerid}/attributes`, {
+      headers: { Authorization: `Bearer ${session.token}` }
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data) setHeatplanOnLevel(!!data.heatplan_on_level);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.token, session?.user?.customerid]);
 
   const fetchUserRole = async () => {
     try {
@@ -163,19 +180,38 @@ export default function Config() {
           </div>
         )}
 
-        {/* Heizpläne Kachel */}
-        <div className="col-md-4">
-          <div className={`card h-100 text-center p-4 ${styles.cardOrange}`} 
-               onClick={() => router.push('/config/heating-schedules')}>
-            <div className="card-body">
-              <FontAwesomeIcon icon={faCalendarAlt} size="3x" className={`mb-3 ${styles.iconOrange}`} />
-              <h5 className={`card-title ${styles.titleOrange}`}>Heizpläne</h5>
-              <p className={`card-text ${styles.textOrange}`}>
-                Heizpläne verwalten und konfigurieren
-              </p>
+        {/* Heizpläne: eine Kachel — Struktur-Modus wenn heatplan_on_level am Kunden */}
+        {heatplanOnLevel ? (
+          <div className="col-md-4">
+            <div
+              className={`card h-100 text-center p-4 ${styles.cardOrange}`}
+              onClick={() => router.push('/config/heating-schedules-asset')}
+            >
+              <div className="card-body">
+                <FontAwesomeIcon icon={faLayerGroup} size="3x" className={`mb-3 ${styles.iconOrange}`} />
+                <h5 className={`card-title ${styles.titleOrange}`}>Heizpläne (Struktur)</h5>
+                <p className={`card-text ${styles.textOrange}`}>
+                  Heizpläne pro Struktur verwalten
+                </p>
+              </div>
             </div>
           </div>
-        </div>
+        ) : (
+          <div className="col-md-4">
+            <div
+              className={`card h-100 text-center p-4 ${styles.cardOrange}`}
+              onClick={() => router.push('/config/heating-schedules')}
+            >
+              <div className="card-body">
+                <FontAwesomeIcon icon={faCalendarAlt} size="3x" className={`mb-3 ${styles.iconOrange}`} />
+                <h5 className={`card-title ${styles.titleOrange}`}>Heizpläne</h5>
+                <p className={`card-text ${styles.textOrange}`}>
+                  Heizpläne verwalten und konfigurieren
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Layout Kachel - nur für Superadmin */}
         {isSuperAdmin && (

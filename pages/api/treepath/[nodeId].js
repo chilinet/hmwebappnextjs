@@ -2,6 +2,7 @@ import { getConnection } from '../../../lib/db.js';
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../auth/[...nextauth]";
 import sql from 'mssql';
+import { debugLog, debugWarn } from '../../../lib/appDebug';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -34,8 +35,8 @@ export default async function handler(req, res) {
     const treeData = await loadTreeData(connection, customerId);
     
     // Debug: Log tree structure info
-    console.log(`[treepath] Looking for node ID: ${id}, customerId: ${customerId}`);
-    console.log(`[treepath] Tree has ${treeData.length} root nodes`);
+    debugLog(`[treepath] Looking for node ID: ${id}, customerId: ${customerId}`);
+    debugLog(`[treepath] Tree has ${treeData.length} root nodes`);
     
     // Find the node with the given ID
     const targetNode = findNodeById(treeData, id);
@@ -43,8 +44,8 @@ export default async function handler(req, res) {
     if (!targetNode) {
       // Debug: Try to find all node IDs in the tree for debugging
       const allNodeIds = getAllNodeIds(treeData);
-      console.log(`[treepath] Node not found. Total nodes in tree: ${allNodeIds.length}`);
-      console.log(`[treepath] First 10 node IDs:`, allNodeIds.slice(0, 10));
+      debugLog(`[treepath] Node not found. Total nodes in tree: ${allNodeIds.length}`);
+      debugLog(`[treepath] First 10 node IDs:`, allNodeIds.slice(0, 10));
       
       return res.status(404).json({ 
         error: 'Node not found',

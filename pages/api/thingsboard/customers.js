@@ -2,18 +2,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "../auth/[...nextauth]";
 import thingsboardAuth from './auth';
 import axios from 'axios';
-import sql from 'mssql';
-
-const config = {
-  user: 'hmroot',
-  password: '9YJLpf6CfyteKzoN',
-  server: 'hmcdev01.database.windows.net',
-  database: 'hmcdev',
-  options: {
-    encrypt: !isLocalConnection, // Disable encryption for local connections
-    trustServerCertificate: true
-  }
-};
+import { getConnection } from '../../../lib/db';
 
 export default async function handler(req, res) {
   const session = await getServerSession(req, res, authOptions);
@@ -23,9 +12,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Hole die Thingsboard-Credentials über customerid aus customer_settings
-    await sql.connect(config);
-    const result = await sql.query`
+    const pool = await getConnection();
+    const result = await pool.request().query`
       SELECT 
         u.customerid,
         cs.tb_username,
@@ -98,7 +86,5 @@ export default async function handler(req, res) {
       message: 'Fehler bei der Kommunikation mit der API',
       error: error.response?.data || error.message 
     });
-  } finally {
-    await sql.close();
   }
 } 

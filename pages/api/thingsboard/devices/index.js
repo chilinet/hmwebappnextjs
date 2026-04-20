@@ -4,6 +4,7 @@ import { getSession } from 'next-auth/react';
 import jwt from 'jsonwebtoken';
 import { getConnection } from '../../../../lib/db';
 import sql from 'mssql';
+import { debugLog, debugWarn } from '../../../../lib/appDebug';
 
 const THINGSBOARD_URL = process.env.THINGSBOARD_URL;
 
@@ -214,7 +215,7 @@ export default async function handler(req, res) {
           const totalPages = devicesData.totalPages || Math.ceil(totalElements / pageSize);
           hasNext = devices.length === pageSize && (page + 1) < totalPages;
 
-          console.log(`Fetched page ${page}: ${devices.length} devices (total so far: ${allDevices.length})`);
+          debugLog(`Fetched page ${page}: ${devices.length} devices (total so far: ${allDevices.length})`);
           
           page++;
         } catch (error) {
@@ -229,7 +230,7 @@ export default async function handler(req, res) {
     // Alle Devices des Kunden von ThingsBoard abrufen (mit Pagination)
     const devices = await fetchAllDevices(customerId, tbToken);
     
-    console.log(`Total devices fetched: ${devices.length}`);
+    debugLog(`Total devices fetched: ${devices.length}`);
 
     // Für jedes Device die neuesten Telemetriedaten abrufen
     const devicesWithTelemetry = await Promise.all(

@@ -101,7 +101,9 @@ export default async function handler(req, res) {
         'targetTemperature',
         'manualTargetTemperatureUpdate',
         'powerSourceStatus',
-        'hall_sensor_state'
+        'hall_sensor_state',
+        'pir',
+        'light'
       ].join(',')}`,
       {
         headers: {
@@ -115,8 +117,17 @@ export default async function handler(req, res) {
     if (telemetryResponse.ok) {
       const telemetryData = await telemetryResponse.json();
       Object.entries(telemetryData).forEach(([key, values]) => {
-        let value = values[0]?.value || null;
-        if (key === 'PercentValveOpen' && value !== null) {
+        if (!Array.isArray(values) || values.length === 0) {
+          telemetry[key] = null;
+          return;
+        }
+        const latest = [...values].sort((a, b) => (b.ts || 0) - (a.ts || 0))[0];
+        let value = latest?.value;
+        if (value === undefined) {
+          telemetry[key] = null;
+          return;
+        }
+        if (key === 'PercentValveOpen') {
           value = Math.round(value);
         }
         telemetry[key] = value;

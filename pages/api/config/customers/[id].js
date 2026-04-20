@@ -1,5 +1,6 @@
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../auth/[...nextauth]";
+import { debugLog, debugWarn } from '../../../../lib/appDebug';
 
 export default async function handler(req, res) {
   const session = await getServerSession(req, res, authOptions);
@@ -28,9 +29,9 @@ export default async function handler(req, res) {
         }
       };
 
-      //console.log('+++++++++++++++++++++++++++++++++++++++++');
-      //console.log('Customer Data:', customerData);
-      //console.log('+++++++++++++++++++++++++++++++++++++++++'); 
+      //debugLog('+++++++++++++++++++++++++++++++++++++++++');
+      //debugLog('Customer Data:', customerData);
+      //debugLog('+++++++++++++++++++++++++++++++++++++++++'); 
       let urlpost = `${process.env.THINGSBOARD_URL}/api/customer`;
       const response = await fetch(urlpost, {
         method: 'POST', // ThingsBoard verwendet POST für Updates

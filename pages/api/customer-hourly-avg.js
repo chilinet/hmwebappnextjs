@@ -1,4 +1,5 @@
 import { getPgConnection } from '../../lib/pgdb.js';
+import { debugLog, debugWarn } from '../../lib/appDebug';
 
 // Preshared Key für Authentifizierung
 const PRESHARED_KEY = process.env.REPORTING_PRESHARED_KEY || 'default-reporting-key-2024';
@@ -27,32 +28,49 @@ function authenticateRequest(req) {
   return false;
 }
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function trimQueryParam(v) {
+  if (v == null) return null;
+  const s = String(v).trim();
+  return s === '' ? null : s;
+}
+
 // Hilfsfunktion zur Validierung der Query-Parameter
 function validateQueryParams(query) {
   const errors = [];
-  
+
+  const startId = trimQueryParam(query.start_id);
+
   // Limit validieren (max 1000 Datensätze für bessere Performance)
   if (query.limit) {
-    const limit = parseInt(query.limit);
+    const limit = parseInt(query.limit, 10);
     if (isNaN(limit) || limit < 1 || limit > 1000) {
       errors.push('Limit muss zwischen 1 und 1000 liegen');
     }
   }
-  
+
   // Offset validieren
   if (query.offset) {
-    const offset = parseInt(query.offset);
+    const offset = parseInt(query.offset, 10);
     if (isNaN(offset) || offset < 0) {
       errors.push('Offset muss eine positive Zahl sein');
     }
   }
-  
+
   // Customer ID validieren (UUID Format)
   if (query.customer_id) {
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (!uuidRegex.test(query.customer_id)) {
+    if (!UUID_REGEX.test(String(query.customer_id).trim())) {
       errors.push('Customer ID muss ein gültiges UUID-Format haben');
     }
+  }
+
+  if (startId && !UUID_REGEX.test(startId)) {
+    errors.push('start_id muss ein gültiges UUID-Format haben');
+  }
+
+  if (startId && !trimQueryParam(query.customer_id)) {
+    errors.push('customer_id ist bei start_id erforderlich');
   }
   
   // Datum validieren
@@ -71,6 +89,73 @@ function validateQueryParams(query) {
   }
   
   return errors;
+}
+
+/**
+ * Stundenmittel (Ventil / Sensor) nur für Devices unterhalb von start_id (asset-Teilbaum).
+ * Datenbasis: hmreporting.device_10m — analog zur Fenster-Teilbaum-Logik in reporting/window-status.
+ */
+function buildHourlyAvgSubtreeSql(includeOffset) {
+  const offsetClause = includeOffset ? `OFFSET $6` : '';
+  return `
+WITH RECURSIVE asset_tree AS (
+    SELECT a.id
+    FROM asset a
+    WHERE a.id = $1::uuid
+
+    UNION ALL
+
+    SELECT child.id
+    FROM relation r
+    JOIN asset child
+        ON r.to_id = child.id
+       AND r.to_type = 'ASSET'
+    JOIN asset_tree at
+        ON r.from_id = at.id
+       AND r.from_type = 'ASSET'
+    WHERE r.relation_type = 'Contains'
+      AND r.relation_type_group = 'COMMON'
+),
+
+asset_devices AS (
+    SELECT DISTINCT
+        r.to_id AS device_id
+    FROM asset_tree at
+    JOIN relation r
+        ON r.from_id = at.id
+       AND r.from_type = 'ASSET'
+       AND r.to_type = 'DEVICE'
+       AND r.relation_type = 'Contains'
+       AND r.relation_type_group = 'COMMON'
+),
+
+hourly AS (
+    SELECT
+        date_trunc('hour', m.bucket_10m) AS hour_start,
+        AVG(m.sensor_temperature::double precision) AS avg_sensortemperature,
+        AVG(m.percent_valve_open::double precision) AS avg_percentvalveopen,
+        COUNT(*) FILTER (WHERE m.sensor_temperature IS NOT NULL) AS n_sensortemperature,
+        COUNT(*) FILTER (WHERE m.percent_valve_open IS NOT NULL) AS n_percentvalveopen
+    FROM hmreporting.device_10m m
+    INNER JOIN asset_devices ad ON ad.device_id = m.entity_id
+    WHERE m.bucket_10m >= $2::timestamptz
+      AND m.bucket_10m <= $3::timestamptz
+    GROUP BY 1
+)
+
+SELECT
+    $4::uuid AS customer_id,
+    (SELECT title FROM customer WHERE id = $4::uuid LIMIT 1) AS customer_name,
+    h.hour_start,
+    h.avg_sensortemperature,
+    h.avg_percentvalveopen,
+    h.n_sensortemperature,
+    h.n_percentvalveopen
+FROM hourly h
+ORDER BY h.hour_start
+LIMIT $5
+${offsetClause}
+`;
 }
 
 // Hauptfunktion für die API
@@ -117,92 +202,100 @@ export default async function handler(req, res) {
     const client = await pool.connect();
     
     try {
-      // SQL Query zusammenbauen - Funktion verwenden
-      let query = 'SELECT * FROM hmreporting.f_customer_hourly_avg_valveopen($1, $2)';
-      const queryParams = [];
-      let paramIndex = 3; // Start bei 3, da $1 und $2 bereits belegt sind
-      
-      // Standard Zeitraum: letzte 24 Stunden
       const endDate = req.query.end_date ? new Date(req.query.end_date) : new Date();
-      const startDate = req.query.start_date ? new Date(req.query.start_date) : new Date(endDate.getTime() - 24 * 60 * 60 * 1000);
-      
-      // Datum im PostgreSQL-Format mit Zeitzone formatieren (YYYY-MM-DD HH:mm+TZ)
-      // Konvertiere zu lokaler Zeit mit Zeitzone im Format +01 oder -01
+      const startDate = req.query.start_date
+        ? new Date(req.query.start_date)
+        : new Date(endDate.getTime() - 24 * 60 * 60 * 1000);
+
       const formatDateForPostgres = (date) => {
         const year = date.getFullYear();
         const month = String(date.getMonth() + 1).padStart(2, '0');
         const day = String(date.getDate()).padStart(2, '0');
         const hours = String(date.getHours()).padStart(2, '0');
         const minutes = String(date.getMinutes()).padStart(2, '0');
-        // PostgreSQL erwartet Zeitzone im Format +01 oder -01 (nur Stunden, keine Minuten)
-        const timezoneOffset = -date.getTimezoneOffset(); // Negiert, weil getTimezoneOffset() das Gegenteil zurückgibt
+        const timezoneOffset = -date.getTimezoneOffset();
         const timezoneHours = Math.floor(Math.abs(timezoneOffset) / 60);
         const timezoneSign = timezoneOffset >= 0 ? '+' : '-';
         const timezoneStr = `${timezoneSign}${String(timezoneHours).padStart(2, '0')}`;
         return `${year}-${month}-${day} ${hours}:${minutes}${timezoneStr}`;
       };
-      
-      queryParams.push(formatDateForPostgres(startDate));
-      queryParams.push(formatDateForPostgres(endDate));
-      
-      // Zusätzliche Filter als WHERE Klausel
-      const conditions = [];
-      
-      // Customer ID Filter
-      if (req.query.customer_id) {
-        conditions.push(`customer_id = $${paramIndex}`);
-        queryParams.push(req.query.customer_id);
+
+      const limit = parseInt(req.query.limit, 10) || 24;
+      const offset = parseInt(req.query.offset, 10) || 0;
+      const startId = trimQueryParam(req.query.start_id);
+      const customerId = trimQueryParam(req.query.customer_id);
+
+      let query;
+      let queryParams;
+      let metadataExtra;
+
+      if (startId) {
+        query = buildHourlyAvgSubtreeSql(offset > 0);
+        queryParams = [
+          startId,
+          formatDateForPostgres(startDate),
+          formatDateForPostgres(endDate),
+          customerId,
+          limit
+        ];
+        if (offset > 0) {
+          queryParams.push(offset);
+        }
+        metadataExtra = {
+          query_mode: 'asset_subtree',
+          start_id: startId,
+          function_name: 'hmreporting.device_10m (hourly, subtree)'
+        };
+      } else {
+        query = 'SELECT * FROM hmreporting.f_customer_hourly_avg_valveopen($1, $2)';
+        queryParams = [formatDateForPostgres(startDate), formatDateForPostgres(endDate)];
+        let paramIndex = 3;
+        const conditions = [];
+        if (customerId) {
+          conditions.push(`customer_id = $${paramIndex}`);
+          queryParams.push(customerId);
+          paramIndex++;
+        }
+        if (conditions.length > 0) {
+          query += ` WHERE ${conditions.join(' AND ')}`;
+        }
+        query += ' ORDER BY hour_start';
+        query += ` LIMIT $${paramIndex}`;
+        queryParams.push(limit);
         paramIndex++;
+        if (offset > 0) {
+          query += ` OFFSET $${paramIndex}`;
+          queryParams.push(offset);
+        }
+        metadataExtra = {
+          query_mode: 'customer',
+          function_name: 'hmreporting.f_customer_hourly_avg_valveopen'
+        };
       }
-      
-      // WHERE Klausel hinzufügen falls Filter vorhanden
-      if (conditions.length > 0) {
-        query += ' WHERE ' + conditions.join(' AND ');
-      }
-      
-      // ORDER BY hinzufügen
-      query += ' ORDER BY hour_start';
-      
-      // LIMIT und OFFSET hinzufügen
-      const limit = parseInt(req.query.limit) || 24; // Default: 24 Stunden
-      const offset = parseInt(req.query.offset) || 0;
-      
-      query += ` LIMIT $${paramIndex}`;
-      queryParams.push(limit);
-      paramIndex++;
-      
-      if (offset > 0) {
-        query += ` OFFSET $${paramIndex}`;
-        queryParams.push(offset);
-      }
-      
-      console.log('Customer Hourly Avg API Query:', query);
-      console.log('Query Parameters:', queryParams);
-      
-      // Query ausführen
+
+      debugLog('Customer Hourly Avg API Query:', query);
+      debugLog('Query Parameters:', queryParams);
+
       const result = await client.query(query, queryParams);
-      
-      // Metadaten für die Antwort
+
       const metadata = {
         total_records: result.rows.length,
-        limit: limit,
-        offset: offset,
+        limit,
+        offset,
         has_more: result.rows.length === limit,
         query_time: new Date().toISOString(),
-        function_name: 'hmreporting.f_customer_hourly_avg_valveopen',
         time_range: {
           start_date: startDate.toISOString(),
           end_date: endDate.toISOString()
-        }
+        },
+        ...metadataExtra
       };
-      
-      // Antwort senden
+
       res.status(200).json({
         success: true,
-        metadata: metadata,
+        metadata,
         data: result.rows
       });
-      
     } finally {
       client.release();
     }
@@ -251,17 +344,20 @@ AUTHENTICATION OPTIONS:
 QUERY PARAMETERS:
 - limit (optional): Anzahl der Datensätze (1-1000, default: 24)
 - offset (optional): Anzahl der zu überspringenden Datensätze (default: 0)
-- customer_id (optional): UUID der Customer für Filterung
+- customer_id (optional): UUID der Customer für Filterung (bei start_id erforderlich)
+- start_id (optional): Asset-UUID — nur Geräte im Teilbaum ab diesem Asset (Aggregation aus hmreporting.device_10m)
 - start_date (optional): Start-Datum für Filterung (ISO Format, default: 24h vor end_date)
 - end_date (optional): End-Datum für Filterung (ISO Format, default: jetzt)
 
 FUNCTION USAGE:
-Die API verwendet die PostgreSQL-Funktion: hmreporting.f_customer_hourly_avg_valveopen(start_date, end_date)
+Ohne start_id: hmreporting.f_customer_hourly_avg_valveopen(start_date, end_date) optional gefiltert nach customer_id.
+Mit start_id: rekursiver Asset-Baum wie window-status, Stundenmittel aus device_10m nur für zugehörige Devices.
 Standard: letzte 24 Stunden (now() - INTERVAL '24 hours', now())
 Die Datumsformate werden im Format 'YYYY-MM-DD HH:mm+TZ' übergeben (z.B. '2025-02-01 00:00+01')
 
 EXAMPLES:
 GET /api/customer-hourly-avg?key=your-key&limit=48&customer_id=2ea4ba70-647a-11ef-8cd8-8b580d9aa086
+GET /api/customer-hourly-avg?key=...&customer_id=...&start_id=<asset-uuid>&start_date=...&end_date=...
 GET /api/customer-hourly-avg?key=your-key&start_date=2025-10-20&end_date=2025-10-21
 POST /api/customer-hourly-avg
 Headers: { "Authorization": "Bearer your-key", "Content-Type": "application/json" }

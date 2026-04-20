@@ -1,22 +1,6 @@
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../auth/[...nextauth]";
-import sql from 'mssql';
-
-// Determine if this is a local connection
-const isLocalConnection = process.env.MSSQL_SERVER === '127.0.0.1' || 
-                          process.env.MSSQL_SERVER === 'localhost' ||
-                          process.env.MSSQL_SERVER?.includes('localhost');
-
-const config = {
-  user: process.env.MSSQL_USER || 'hmroot',
-  password: process.env.MSSQL_PASSWORD || '9YJLpf6CfyteKzoN',
-  server: process.env.MSSQL_SERVER || 'hmcdev01.database.windows.net',
-  database: process.env.MSSQL_DATABASE || 'hmcdev',
-  options: {
-    encrypt: !isLocalConnection, // Disable encryption for local connections
-    trustServerCertificate: true
-  }
-};
+import { getConnection } from '../../../lib/db';
 
 export default async function handler(req, res) {
   const session = await getServerSession(req, res, authOptions);
@@ -33,10 +17,10 @@ export default async function handler(req, res) {
   }
 
   try {
-    await sql.connect(config);
+    const pool = await getConnection();
 
     if (req.method === 'GET') {
-      const result = await sql.query`
+      const result = await pool.request().query`
         SELECT username, firstname, lastname, email
         FROM hm_users
         WHERE userid = ${id}
@@ -52,8 +36,7 @@ export default async function handler(req, res) {
     if (req.method === 'PUT') {
       const { username, firstname, lastname, email } = req.body;
 
-      // Überprüfe ob der Benutzername bereits existiert
-      const checkUsername = await sql.query`
+      const checkUsername = await pool.request().query`
         SELECT userid FROM hm_users
         WHERE username = ${username} AND userid != ${id}
       `;
@@ -62,7 +45,7 @@ export default async function handler(req, res) {
         return res.status(400).json({ message: 'Benutzername bereits vergeben' });
       }
 
-      await sql.query`
+      await pool.request().query`
         UPDATE hm_users
         SET username = ${username},
             firstname = ${firstname},
@@ -78,7 +61,5 @@ export default async function handler(req, res) {
   } catch (error) {
     console.error('Database Error:', error);
     return res.status(500).json({ message: 'Serverfehler' });
-  } finally {
-    await sql.close();
   }
-} 
+}

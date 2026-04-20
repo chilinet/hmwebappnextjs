@@ -1,8 +1,71 @@
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
+
+function singleRouteQuery(q) {
+  if (q == null || q === '') return null;
+  return Array.isArray(q) ? q[0] : q;
+}
+
+function alarmDeviceKey(alarm) {
+  const id =
+    alarm.device?.id ??
+    alarm.originator?.id?.id ??
+    alarm.originatorName ??
+    null;
+  return id != null ? String(id).toLowerCase().trim() : '';
+}
+
+function alarmIdKey(alarm) {
+  const id = alarm.id?.id;
+  return id != null ? String(id).toLowerCase().trim() : '';
+}
+
+/** Klick von Startseite „Details“: gewählter Alarm bzw. Gerät zuerst. */
+function sortAlarmsForFocus(alarms, focusDeviceId, focusAlarmId) {
+  if (!alarms?.length) return alarms || [];
+  const fd = focusDeviceId ? String(focusDeviceId).toLowerCase().trim() : '';
+  const fa = focusAlarmId ? String(focusAlarmId).toLowerCase().trim() : '';
+  if (!fd && !fa) return alarms;
+  const score = (a) => {
+    if (fa && alarmIdKey(a) === fa) return 0;
+    if (fd && alarmDeviceKey(a) === fd) return 1;
+    return 2;
+  };
+  return [...alarms].sort((x, y) => score(x) - score(y));
+}
+
+function buildAlarmSearchHaystack(alarm) {
+  const parts = [
+    alarm.type,
+    alarm.severity,
+    alarm.originatorLabel,
+    alarm.device?.name,
+    alarm.device?.label,
+    alarm.device?.id,
+    alarm.devicePath,
+    alarm.originator?.name,
+    alarm.originatorName,
+    alarm.id?.id,
+    typeof alarm.additionalInfo === 'string' ? alarm.additionalInfo : '',
+    alarm.message,
+  ];
+  return parts
+    .filter((p) => p != null && String(p).trim() !== '')
+    .map((p) => String(p).toLowerCase())
+    .join(' ');
+}
+
+function alarmMatchesSearchQuery(alarm, searchRaw) {
+  const q = String(searchRaw || '').trim().toLowerCase();
+  if (!q) return true;
+  const hay = buildAlarmSearchHaystack(alarm);
+  const tokens = q.split(/\s+/).filter(Boolean);
+  return tokens.every((t) => hay.includes(t));
+}
+
 import Layout from '@/components/Layout';
-import { Card, Badge, Button, Spinner, Alert } from 'react-bootstrap';
+import { Card, Badge, Button, Spinner, Alert, Form, InputGroup } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { 
   faExclamationTriangle,
@@ -13,19 +76,23 @@ import {
   faRefresh,
   faInfoCircle,
   faWarning,
-  faTimesCircle
+  faTimesCircle,
+  faSearch
 } from '@fortawesome/free-solid-svg-icons';
 import Head from 'next/head';
 
 export default function Alarms() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const focusAlarmIdQ = singleRouteQuery(router.query?.focusAlarmId);
+  const focusDeviceIdQ = singleRouteQuery(router.query?.focusDeviceId);
   const [alarms, setAlarms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [filter, setFilter] = useState('ACTIVE');
   const [severityFilter, setSeverityFilter] = useState('ALL');
   const [timeFilter, setTimeFilter] = useState('ALL');
+  const [searchQuery, setSearchQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [selectedAlarms, setSelectedAlarms] = useState(new Set());
   const [bulkAcknowledging, setBulkAcknowledging] = useState(false);
@@ -231,7 +298,35 @@ export default function Alarms() {
 
     try {
       setLoading(true);
-      const response = await fetch(`/api/alarms?customer_id=${session.user.customerid}&status=${status}&limit=100`);
+      let startId = null;
+      try {
+        const meRes = await fetch('/api/config/users/me');
+        if (meRes.ok) {
+          const me = await meRes.json();
+          if (me.defaultEntryAssetId && String(me.defaultEntryAssetId).trim()) {
+            startId = String(me.defaultEntryAssetId).trim();
+          }
+        }
+      } catch (e) {
+        console.warn('alarms: /api/config/users/me failed', e);
+      }
+      if (
+        !startId &&
+        session.user.defaultEntryAssetId &&
+        String(session.user.defaultEntryAssetId).trim()
+      ) {
+        startId = String(session.user.defaultEntryAssetId).trim();
+      }
+
+      const alarmParams = new URLSearchParams({
+        customer_id: session.user.customerid,
+        status: String(status),
+        limit: '100',
+      });
+      if (startId) {
+        alarmParams.set('start_id', startId);
+      }
+      const response = await fetch(`/api/alarms?${alarmParams.toString()}`);
       
       if (!response.ok) {
         const errorData = await response.json();
@@ -239,7 +334,10 @@ export default function Alarms() {
       }
 
       const data = await response.json();
-      setAlarms(data.data || []);
+      const raw = data.data || [];
+      const fa = singleRouteQuery(router.query?.focusAlarmId);
+      const fd = singleRouteQuery(router.query?.focusDeviceId);
+      setAlarms(sortAlarmsForFocus(raw, fd, fa));
       setError(null);
     } catch (err) {
       console.error('Error loading alarms:', err);
@@ -294,10 +392,64 @@ export default function Alarms() {
   useEffect(() => {
     if (status === "unauthenticated") {
       router.push("/auth/signin");
-    } else if (session) {
+    } else if (session && router.isReady) {
       loadAlarms();
     }
-  }, [status, session, router]);
+  }, [status, session, router.isReady, focusAlarmIdQ, focusDeviceIdQ]);
+
+  useEffect(() => {
+    if (!router.isReady) return;
+    if (focusAlarmIdQ || focusDeviceIdQ) {
+      setSeverityFilter('ALL');
+      setTimeFilter('ALL');
+    }
+  }, [router.isReady, focusAlarmIdQ, focusDeviceIdQ]);
+
+  useEffect(() => {
+    if (!router.isReady || loading) return;
+    if (!focusAlarmIdQ && !focusDeviceIdQ) return;
+    if (!alarms.length) return;
+
+    let elId = null;
+    if (focusAlarmIdQ) {
+      elId = `alarm-focus-${focusAlarmIdQ}`;
+    } else if (focusDeviceIdQ) {
+      const first = alarms.find(
+        (a) => alarmDeviceKey(a) === String(focusDeviceIdQ).toLowerCase().trim()
+      );
+      if (first?.id?.id) elId = `alarm-focus-${first.id.id}`;
+    }
+    if (!elId) return;
+
+    const t = window.setTimeout(() => {
+      document.getElementById(elId)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    }, 150);
+    return () => window.clearTimeout(t);
+  }, [router.isReady, loading, focusAlarmIdQ, focusDeviceIdQ, alarms]);
+
+  const filteredAlarmsForDisplay = alarms.filter((alarm) => {
+    if (severityFilter !== 'ALL' && alarm.severity !== severityFilter) {
+      return false;
+    }
+    if (!isAlarmInTimeRange(alarm, timeFilter)) {
+      return false;
+    }
+    if (!alarmMatchesSearchQuery(alarm, searchQuery)) {
+      return false;
+    }
+    return true;
+  });
+
+  const firstDeviceFocusIdx =
+    focusDeviceIdQ && !focusAlarmIdQ
+      ? filteredAlarmsForDisplay.findIndex(
+          (a) =>
+            alarmDeviceKey(a) === String(focusDeviceIdQ).toLowerCase().trim()
+        )
+      : -1;
 
   if (status === "loading") {
     return (
@@ -416,6 +568,33 @@ export default function Alarms() {
                       </div>
                     </div>
                   </div>
+                  <div className="row mt-3 pt-3 border-top">
+                    <div className="col-12 col-lg-6">
+                      <Form.Label className="small text-muted mb-1">Suche</Form.Label>
+                      <InputGroup>
+                        <InputGroup.Text className="bg-white">
+                          <FontAwesomeIcon icon={faSearch} className="text-muted" />
+                        </InputGroup.Text>
+                        <Form.Control
+                          type="search"
+                          placeholder="Gerät, Label, Pfad, Typ, Severity, Alarm-ID, Device-ID …"
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          aria-label="Alarme durchsuchen"
+                          autoComplete="off"
+                        />
+                        {searchQuery.trim() !== '' && (
+                          <Button
+                            variant="outline-secondary"
+                            title="Suche leeren"
+                            onClick={() => setSearchQuery('')}
+                          >
+                            <FontAwesomeIcon icon={faTimesCircle} />
+                          </Button>
+                        )}
+                      </InputGroup>
+                    </div>
+                  </div>
                 </Card.Body>
               </Card>
             </div>
@@ -514,25 +693,32 @@ export default function Alarms() {
                     <p className="text-muted">Für den gewählten Filter wurden keine Alarme gefunden.</p>
                   </Card.Body>
                 </Card>
+              ) : filteredAlarmsForDisplay.length === 0 ? (
+                <Card className="shadow-sm">
+                  <Card.Body className="text-center py-5">
+                    <h5 className="text-muted">Keine Alarme in dieser Ansicht</h5>
+                    <p className="text-muted mb-0">
+                      {searchQuery.trim()
+                        ? 'Keine Treffer für die Suche. Andere Begriffe oder Filter ausprobieren.'
+                        : 'Passe Severity- oder Zeitfilter an.'}
+                    </p>
+                  </Card.Body>
+                </Card>
               ) : (
                 <div className="row g-3">
-                  {alarms
-                    .filter(alarm => {
-                      // Severity-Filter
-                      if (severityFilter !== 'ALL' && alarm.severity !== severityFilter) {
-                        return false;
-                      }
-                      
-                      // Zeit-Filter
-                      if (!isAlarmInTimeRange(alarm, timeFilter)) {
-                        return false;
-                      }
-                      
-                      return true;
-                    })
-                    .map((alarm, index) => (
+                  {filteredAlarmsForDisplay.map((alarm, index) => {
+                    const faNorm = focusAlarmIdQ
+                      ? String(focusAlarmIdQ).toLowerCase().trim()
+                      : '';
+                    const isFocused = faNorm
+                      ? alarmIdKey(alarm) === faNorm
+                      : firstDeviceFocusIdx === index;
+                    return (
                     <div key={alarm.id?.id || index} className="col-12">
-                      <Card className="shadow-sm alarm-card">
+                      <Card
+                        id={alarm.id?.id ? `alarm-focus-${alarm.id.id}` : undefined}
+                        className={`shadow-sm alarm-card${isFocused ? ' alarm-card-focused' : ''}`}
+                      >
                         <Card.Body className="p-4">
                           <div className="d-flex align-items-start">
                             {!alarm.ackTs && (
@@ -560,14 +746,25 @@ export default function Alarms() {
                                     <small className="text-muted">
                                       <strong>Gerät:</strong> {alarm.originatorLabel || alarm.device?.name || alarm.originator?.name || 'Unbekanntes Gerät'}
                                     </small>
-                                    {alarm.devicePath && (
-                                      <>
-                                        <br />
-                                        <small className="text-info">
-                                          <strong>Pfad:</strong> {alarm.devicePath}
-                                        </small>
-                                      </>
-                                    )}
+                                    <br />
+                                    <small
+                                      className={
+                                        alarm.device?.label != null &&
+                                        String(alarm.device.label).trim() !== ''
+                                          ? 'text-dark'
+                                          : 'text-muted'
+                                      }
+                                    >
+                                      <strong>Label:</strong>{' '}
+                                      {alarm.device?.label != null &&
+                                      String(alarm.device.label).trim() !== ''
+                                        ? String(alarm.device.label).trim()
+                                        : '–'}
+                                    </small>
+                                    <br />
+                                    <small className={alarm.devicePath ? 'text-dark' : 'text-muted'}>
+                                      <strong>Pfad:</strong> {alarm.devicePath || '–'}
+                                    </small>
                                   </div>
                                   <div className="device-id">
                                     <small className="text-muted">
@@ -626,7 +823,8 @@ export default function Alarms() {
                         </Card.Body>
                       </Card>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -640,6 +838,11 @@ export default function Alarms() {
           border: none;
           background: white;
           transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+        }
+
+        .alarm-card-focused {
+          border: 3px solid #0d6efd !important;
+          box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
         }
         
         .alarm-card:hover {
@@ -705,12 +908,25 @@ export default function Alarms() {
               <div className="mb-3">
                 <label className="form-label">
                   <strong>Gerät:</strong> {acknowledgingAlarm?.originatorLabel || acknowledgingAlarm?.device?.name || 'Unbekanntes Gerät'}
-                  {acknowledgingAlarm?.devicePath && (
-                    <>
-                      <br />
-                      <span className="text-info small"><strong>Pfad:</strong> {acknowledgingAlarm.devicePath}</span>
-                    </>
-                  )}
+                  <br />
+                  <span
+                    className={
+                      acknowledgingAlarm?.device?.label != null &&
+                      String(acknowledgingAlarm.device.label).trim() !== ''
+                        ? 'text-dark small'
+                        : 'text-muted small'
+                    }
+                  >
+                    <strong>Label:</strong>{' '}
+                    {acknowledgingAlarm?.device?.label != null &&
+                    String(acknowledgingAlarm.device.label).trim() !== ''
+                      ? String(acknowledgingAlarm.device.label).trim()
+                      : '–'}
+                  </span>
+                  <br />
+                  <span className={acknowledgingAlarm?.devicePath ? 'text-dark small' : 'text-muted small'}>
+                    <strong>Pfad:</strong> {acknowledgingAlarm?.devicePath || '–'}
+                  </span>
                 </label>
               </div>
               <div className="mb-3">

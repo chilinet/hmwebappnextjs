@@ -1,6 +1,7 @@
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../../auth/[...nextauth]";
 import sql from 'mssql';
+import { debugLog, debugWarn } from '../../../../../lib/appDebug';
 
 // Determine if this is a local connection
 const isLocalConnection = process.env.MSSQL_SERVER === '127.0.0.1' || 
@@ -106,7 +107,7 @@ export default async function handler(req, res) {
     }
 
     const emailResult = await emailResponse.json();
-    console.log('Activation email sent successfully:', emailResult);
+    debugLog('Activation email sent successfully:', emailResult);
 
     return res.status(200).json({
       success: true,

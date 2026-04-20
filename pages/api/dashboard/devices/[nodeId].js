@@ -3,6 +3,7 @@ import { authOptions } from "../../auth/[...nextauth]";
 import sql from 'mssql';
 import { getConnection } from '../../../../lib/db';
 import { getPgConnection } from '../../../../lib/pgdb';
+import { debugLog, debugWarn } from '../../../../lib/appDebug';
 
 /**
  * Find a node by ID in the tree structure
@@ -70,7 +71,7 @@ async function getSensorTargetTemperature(deviceId) {
       `);
       
       if (keyResult.rows.length === 0) {
-        console.log(`No target temperature-related keys found in dictionary for device ${deviceId}`);
+        debugLog(`No target temperature-related keys found in dictionary for device ${deviceId}`);
         return {
           error: 'Key not found',
           message: 'No target temperature-related keys found in ts_kv_dictionary'
@@ -168,7 +169,7 @@ async function getSensorHumidity(deviceId) {
       `);
       
       if (keyResult.rows.length === 0) {
-        console.log(`No humidity-related keys found in dictionary for device ${deviceId}`);
+        debugLog(`No humidity-related keys found in dictionary for device ${deviceId}`);
         return {
           error: 'Key not found',
           message: 'No humidity-related keys found in ts_kv_dictionary'
@@ -266,7 +267,7 @@ async function getSensorTemperature(deviceId) {
       `);
       
       if (keyResult.rows.length === 0) {
-        console.log(`No temperature-related keys found in dictionary for device ${deviceId}`);
+        debugLog(`No temperature-related keys found in dictionary for device ${deviceId}`);
         return {
           error: 'Key not found',
           message: 'No temperature-related keys found in ts_kv_dictionary'

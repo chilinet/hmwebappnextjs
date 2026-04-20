@@ -17,6 +17,7 @@ import {
   faTimes
 } from '@fortawesome/free-solid-svg-icons';
 import Head from 'next/head';
+import { getReportingPublicBaseUrl } from '@/lib/reportingPublicUrl';
 
 export default function BatteryStatus() {
   const { data: session, status } = useSession();
@@ -116,17 +117,39 @@ export default function BatteryStatus() {
       if (session?.user?.customerid) {
         try {
           setLoading(true);
-          
+
+          let startId = null;
+          try {
+            const meRes = await fetch('/api/config/users/me');
+            if (meRes.ok) {
+              const me = await meRes.json();
+              if (me.defaultEntryAssetId) {
+                startId = me.defaultEntryAssetId;
+              }
+            }
+          } catch (e) {
+            console.warn('battery-status: /api/config/users/me failed', e);
+          }
+
           // Fetch all battery status data with pagination
-          const reportingUrl = process.env.REPORTING_URL || 'https://webapptest.heatmanager.cloud';
+          const reportingUrl = getReportingPublicBaseUrl();
           const allBatteryData = [];
           let offset = 0;
           const limit = 1000; // Max limit allowed by API
           let hasMore = true;
-          
+
           while (hasMore) {
+            const batteryParams = new URLSearchParams({
+              key: 'QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD',
+              customer_id: String(session.user.customerid),
+              limit: String(limit),
+              offset: String(offset)
+            });
+            if (startId) {
+              batteryParams.set('start_id', startId);
+            }
             const batteryResponse = await fetch(
-              `${reportingUrl}/api/reporting/battery-status?key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD&customer_id=${session.user.customerid}&limit=${limit}&offset=${offset}`
+              `${reportingUrl}/api/reporting/battery-status?${batteryParams.toString()}`
             );
             
             if (!batteryResponse.ok) {

@@ -1,23 +1,9 @@
-import { getSession } from 'next-auth/react'
-import { getServerSession } from "next-auth/next"
-import sql from 'mssql'
-import { authOptions } from "../../auth/[...nextauth]";
-
-// Determine if this is a local connection
-const isLocalConnection = process.env.MSSQL_SERVER === '127.0.0.1' || 
-                          process.env.MSSQL_SERVER === 'localhost' ||
-                          process.env.MSSQL_SERVER?.includes('localhost');
-
-const config = {
-  user: process.env.MSSQL_USER,
-  password: process.env.MSSQL_PASSWORD,
-  server: process.env.MSSQL_SERVER,
-  database: process.env.MSSQL_DATABASE,
-  options: {
-    encrypt: !isLocalConnection, // Disable encryption for local connections
-    trustServerCertificate: true
-  }
-}
+import { getServerSession } from 'next-auth/next';
+import sql from 'mssql';
+import { authOptions } from '../../../../lib/authOptions';
+import { validateDefaultEntryAssetForCustomer } from '../../../../lib/userDefaultEntryAsset';
+import { withPoolRetry } from '../../../../lib/db';
+import { debugLog, debugWarn } from '../../../../lib/appDebug';
 
 export default async function handler(req, res) {
   const { id } = req.query
@@ -38,19 +24,16 @@ export default async function handler(req, res) {
     });
   }
 
-  console.log('************************************************');
-  console.log(req.method);
-  console.log('************************************************');
-  
-  let pool;
-  try {
-    pool = await sql.connect(config)
-    console.log('sql.connect');
+  debugLog('************************************************');
+  debugLog(req.method);
+  debugLog('************************************************');
 
+  try {
+    await withPoolRetry(async (pool) => {
     switch (req.method) {
       case 'GET':
         // Einzelnen Benutzer laden
-        console.log('GET');
+        debugLog('GET');
         const userResult = await pool.request()
           .input('id', sql.Int, id)
           .query(`
@@ -64,7 +47,9 @@ export default async function handler(req, res) {
               customerid,
               status,
               createdttm as createdAt,
-              updatedttm as updatedAt
+              updatedttm as updatedAt,
+              default_entry_asset_id,
+              default_entry_override_user
             FROM hm_users
             WHERE userid = @id
           `)
@@ -79,7 +64,7 @@ export default async function handler(req, res) {
         }
 
         const userData = user.recordset[0]
-        console.log('Raw user data from DB:', userData) // Debug Log
+        debugLog('Raw user data from DB:', userData) // Debug Log
 
         // Wenn ein Customer ID vorhanden ist, hole die Daten von ThingsBoard
         if (userData.customerid) {
@@ -100,7 +85,7 @@ export default async function handler(req, res) {
           }
         }
 
-        console.log('Processed user data:', userData) // Debug Log
+        debugLog('Processed user data:', userData) // Debug Log
 
         return res.status(200).json({
           success: true,
@@ -114,45 +99,115 @@ export default async function handler(req, res) {
             customerid: userData.customerid ? userData.customerid.toString() : '', // Explizit als String
             customerName: userData.customerName || '',
             createdAt: userData.createdAt,
-            updatedAt: userData.updatedAt
+            updatedAt: userData.updatedAt,
+            defaultEntryAssetId: userData.default_entry_asset_id
+              ? userData.default_entry_asset_id.toString()
+              : '',
+            defaultEntryOverrideUser: !!userData.default_entry_override_user
           }
         })
 
-      case 'PUT':
-        const { email, firstName, lastName, role, customerid, status } = req.body
-        console.log('Updating user:', { id, email, firstName, lastName, role, customerid, status })
+      case 'PUT': {
+        const {
+          email, firstName, lastName, role, customerid, status,
+          defaultEntryAssetId, defaultEntryOverrideUser
+        } = req.body;
+        debugLog('Updating user:', { id, email, firstName, lastName, role, customerid, status, defaultEntryAssetId, defaultEntryOverrideUser });
+
+        const wantsEntryUpdate = defaultEntryAssetId !== undefined || defaultEntryOverrideUser !== undefined;
+
+        if (wantsEntryUpdate) {
+          const currentUserResult = await pool.request()
+            .input('userid', sql.Int, session.user.userid)
+            .query(`SELECT role, customerid FROM hm_users WHERE userid = @userid`);
+          const targetUserResult = await pool.request()
+            .input('targetId', sql.Int, id)
+            .query(`SELECT customerid FROM hm_users WHERE userid = @targetId`);
+
+          if (currentUserResult.recordset.length === 0 || targetUserResult.recordset.length === 0) {
+            return res.status(404).json({ success: false, error: 'Benutzer nicht gefunden' });
+          }
+          const curRole = currentUserResult.recordset[0].role;
+          const curCustomer = currentUserResult.recordset[0].customerid
+            ? String(currentUserResult.recordset[0].customerid)
+            : '';
+          const tgtCustomer = targetUserResult.recordset[0].customerid
+            ? String(targetUserResult.recordset[0].customerid)
+            : '';
+
+          if (curRole !== 1 && curRole !== 2) {
+            return res.status(403).json({ success: false, error: 'Keine Berechtigung für Einstiegspunkt' });
+          }
+          if (curRole === 2 && curCustomer.toLowerCase() !== tgtCustomer.toLowerCase()) {
+            return res.status(403).json({ success: false, error: 'Nur Benutzer des eigenen Mandanten' });
+          }
+        }
 
         // Baue die UPDATE-Query dynamisch auf, je nachdem welche Felder übergeben wurden
-        let updateFields = []
-        let updateValues = {}
+        let updateFields = [];
+        let updateValues = {};
 
         if (email !== undefined) {
-          updateFields.push('email = @email')
-          updateValues.email = email
+          updateFields.push('email = @email');
+          updateValues.email = email;
         }
         if (firstName !== undefined) {
-          updateFields.push('firstname = @firstName')
-          updateValues.firstName = firstName
+          updateFields.push('firstname = @firstName');
+          updateValues.firstName = firstName;
         }
         if (lastName !== undefined) {
-          updateFields.push('lastname = @lastName')
-          updateValues.lastName = lastName
+          updateFields.push('lastname = @lastName');
+          updateValues.lastName = lastName;
         }
         if (role !== undefined) {
-          updateFields.push('role = @role')
-          updateValues.role = role
+          updateFields.push('role = @role');
+          updateValues.role = role;
         }
         if (customerid !== undefined) {
-          updateFields.push('customerid = @customerid')
-          updateValues.customerid = customerid
+          updateFields.push('customerid = @customerid');
+          updateValues.customerid = customerid;
         }
         if (status !== undefined) {
-          updateFields.push('status = @status')
-          updateValues.status = status
+          updateFields.push('status = @status');
+          updateValues.status = status;
+        }
+
+        if (defaultEntryOverrideUser !== undefined) {
+          updateFields.push('default_entry_override_user = @defaultEntryOverrideUser');
+          updateValues.defaultEntryOverrideUser = defaultEntryOverrideUser ? 1 : 0;
+        }
+
+        if (defaultEntryAssetId !== undefined) {
+          const raw = defaultEntryAssetId == null || String(defaultEntryAssetId).trim() === ''
+            ? null
+            : String(defaultEntryAssetId).trim();
+          if (raw) {
+            const targetRow = await pool.request()
+              .input('targetId', sql.Int, id)
+              .query(`SELECT customerid FROM hm_users WHERE userid = @targetId`);
+            if (targetRow.recordset.length === 0) {
+              return res.status(404).json({ success: false, error: 'Zielbenutzer nicht gefunden' });
+            }
+            const dbCustomer = targetRow.recordset[0].customerid;
+            const effectiveCustomerId =
+              customerid !== undefined &&
+              customerid !== null &&
+              String(customerid).trim() !== ''
+                ? String(customerid).trim()
+                : dbCustomer
+                  ? String(dbCustomer).trim()
+                  : null;
+            const v = await validateDefaultEntryAssetForCustomer(pool, effectiveCustomerId, raw);
+            if (!v.ok) {
+              return res.status(v.status).json({ success: false, error: v.error });
+            }
+          }
+          updateFields.push('default_entry_asset_id = @defaultEntryAssetId');
+          updateValues.defaultEntryAssetId = raw;
         }
 
         // Füge updatedttm immer hinzu
-        updateFields.push('updatedttm = GETDATE()')
+        updateFields.push('updatedttm = GETDATE()');
 
         if (updateFields.length === 1) {
           // Nur updatedttm wurde aktualisiert, keine anderen Felder
@@ -175,24 +230,34 @@ export default async function handler(req, res) {
         // Füge alle Werte hinzu
         Object.keys(updateValues).forEach(key => {
           if (key === 'customerid' && updateValues[key]) {
-            request.input(key, sql.UniqueIdentifier, updateValues[key])
+            request.input(key, sql.UniqueIdentifier, updateValues[key]);
           } else if (key === 'role' || key === 'status') {
-            request.input(key, sql.Int, updateValues[key])
+            request.input(key, sql.Int, updateValues[key]);
+          } else if (key === 'defaultEntryOverrideUser') {
+            request.input(key, sql.Bit, updateValues[key]);
+          } else if (key === 'defaultEntryAssetId') {
+            const v = updateValues[key];
+            if (v == null || v === '') {
+              request.input(key, sql.UniqueIdentifier, null);
+            } else {
+              request.input(key, sql.UniqueIdentifier, v);
+            }
           } else {
-            request.input(key, sql.NVarChar, updateValues[key])
+            request.input(key, sql.NVarChar, updateValues[key]);
           }
-        })
+        });
 
-        await request.query(updateQuery)
+        await request.query(updateQuery);
 
         return res.status(200).json({
           success: true,
           message: 'Benutzer erfolgreich aktualisiert'
-        })
+        });
+      }
 
       case 'DELETE':
         // Benutzer löschen
-        console.log('DELETE');
+        debugLog('DELETE');
         await pool.request()
           .input('id', sql.Int, id)
           .query(`
@@ -206,10 +271,11 @@ export default async function handler(req, res) {
         })
 
       default:
-        console.log('default');
+        debugLog('default');
         res.setHeader('Allow', ['GET', 'PUT', 'DELETE'])
         res.status(405).end(`Method ${req.method} Not Allowed`)
     }
+    }, { attempts: 3 });
   } catch (error) {
     console.error('User API error:', error)
     return res.status(500).json({ 
@@ -221,9 +287,5 @@ export default async function handler(req, res) {
         hasToken: !!tbToken
       }
     })
-  } finally {
-    if (pool) {
-      await pool.close()
-    }
   }
 } 

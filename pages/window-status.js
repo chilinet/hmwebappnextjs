@@ -17,6 +17,7 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 import Head from 'next/head';
 import * as XLSX from 'xlsx';
+import { getReportingPublicBaseUrl } from '@/lib/reportingPublicUrl';
 
 export default function WindowStatus() {
   const { data: session, status } = useSession();
@@ -154,11 +155,34 @@ export default function WindowStatus() {
       if (session?.user?.customerid) {
         try {
           setLoading(true);
-          
+
+          // Aktuelles default_entry_asset_id aus DB (Session-JWT kann veraltet sein)
+          let startId = null;
+          try {
+            const meRes = await fetch('/api/config/users/me');
+            if (meRes.ok) {
+              const me = await meRes.json();
+              if (me.defaultEntryAssetId) {
+                startId = me.defaultEntryAssetId;
+              }
+            }
+          } catch (e) {
+            console.warn('window-status: /api/config/users/me failed', e);
+          }
+
           // Fetch window status data - erhöhtes Limit für mehr als 2000 Geräte
-          const reportingUrl = process.env.REPORTING_URL || 'https://webapptest.heatmanager.cloud';
-          const windowResponse = await fetch(`${reportingUrl}/api/reporting/window-status?key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD&customer_id=${session.user.customerid}&limit=5000`);
-          
+          const reportingUrl = getReportingPublicBaseUrl();
+          const windowParams = new URLSearchParams({
+            key: 'QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD',
+            customer_id: String(session.user.customerid),
+            limit: '5000'
+          });
+          if (startId) {
+            windowParams.set('start_id', startId);
+          }
+          const windowStatusUrl = `${reportingUrl}/api/reporting/window-status?${windowParams.toString()}`;
+          console.log('[window-status] reporting request URL:', windowStatusUrl);
+          const windowResponse = await fetch(windowStatusUrl);
           if (!windowResponse.ok) {
             throw new Error(`HTTP error! status: ${windowResponse.status}`);
           }

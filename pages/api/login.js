@@ -4,6 +4,7 @@ import { authOptions } from './auth/[...nextauth]'
 import jwt from 'jsonwebtoken'
 import sql from 'mssql'
 import bcrypt from 'bcryptjs'
+import { debugLog, debugWarn } from '../../lib/appDebug';
 
 const JWT_SECRET = process.env.NEXTAUTH_SECRET
 const TB_URL = process.env.THINGSBOARD_URL
@@ -96,9 +97,9 @@ export default async function handler(req, res) {
     // Passwort überprüfen
     const passwordMatch = await bcrypt.compare(password, user.password)
     
-   // console.log(passwordMatch)
-   // console.log(user.password)
-   // console.log(password)
+   // debugLog(passwordMatch)
+   // debugLog(user.password)
+   // debugLog(password)
 
     if (!passwordMatch) {
       return res.status(401).json({ 

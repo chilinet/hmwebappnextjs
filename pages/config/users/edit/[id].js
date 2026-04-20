@@ -1,8 +1,54 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useSession, signIn } from 'next-auth/react'
 import { useRouter } from 'next/router'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faSave, faArrowLeft } from '@fortawesome/free-solid-svg-icons'
+import { faSave, faArrowLeft, faSitemap, faTimes } from '@fortawesome/free-solid-svg-icons'
+import {
+  getTopRootAssetIdFromStructureTree,
+  resolveRawStructureNodeAssetId
+} from '../../../../lib/heating-control/treeUtils'
+
+function normStructureNodeId(s) {
+  return String(s || '').replace(/-/g, '').toLowerCase();
+}
+
+function StructureTreePicker({ nodes, selectedAssetId, onSelect, depth = 0 }) {
+  if (!nodes?.length) return null;
+  return (
+    <ul className="list-unstyled mb-0 ps-0">
+      {nodes.map((node, idx) => (
+        <li
+          key={`d${depth}-i${idx}-${resolveRawStructureNodeAssetId(node) || 'noid'}`}
+          className="mb-1"
+        >
+          <button
+            type="button"
+            className={`btn btn-sm text-start w-100 ${
+              selectedAssetId &&
+              normStructureNodeId(selectedAssetId) ===
+                normStructureNodeId(resolveRawStructureNodeAssetId(node))
+                ? 'btn-primary'
+                : 'btn-outline-secondary'
+            }`}
+            style={{ marginLeft: Math.min(depth, 8) * 12 }}
+            onClick={() => onSelect(node)}
+          >
+            <FontAwesomeIcon icon={faSitemap} className="me-2 text-muted" />
+            {node.label || node.name || node.id}
+          </button>
+          {node.children?.length > 0 && (
+            <StructureTreePicker
+              nodes={node.children}
+              selectedAssetId={selectedAssetId}
+              onSelect={onSelect}
+              depth={depth + 1}
+            />
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 export default function EditUser() {
   const router = useRouter()
@@ -20,7 +66,9 @@ export default function EditUser() {
     firstName: '',
     lastName: '',
     role: '',
-    customerid: ''
+    customerid: '',
+    defaultEntryAssetId: '',
+    defaultEntryOverrideUser: false
   })
   const [newPassword, setNewPassword] = useState('')
   const [passwordError, setPasswordError] = useState('')
@@ -30,6 +78,11 @@ export default function EditUser() {
   const [saving, setSaving] = useState(false)
   const [roles, setRoles] = useState([])
   const [userRole, setUserRole] = useState(null);
+  const [structureTree, setStructureTree] = useState(null);
+  const [structureLoading, setStructureLoading] = useState(false);
+  const [structureError, setStructureError] = useState(null);
+  /** Nach Mandantenwechsel: Einstieg auf obersten Strukturknoten setzen, sobald Baum da ist. */
+  const shouldSetEntryToRootWhenTreeLoadsRef = useRef(false);
 
   useEffect(() => {
     if (session?.token && id) {
@@ -51,6 +104,53 @@ export default function EditUser() {
         })
     }
   }, [session, id])
+
+  useEffect(() => {
+    if (!session?.token || !user?.customerid) {
+      setStructureTree(null);
+      return;
+    }
+    if (userRole !== 1 && userRole !== 2) {
+      setStructureTree(null);
+      return;
+    }
+    let cancelled = false;
+    setStructureLoading(true);
+    setStructureError(null);
+    setStructureTree(null);
+    fetch(`/api/config/customers/${user.customerid}/tree`, {
+      headers: { Authorization: `Bearer ${session.token}` }
+    })
+      .then((r) => {
+        if (!r.ok) throw new Error('Struktur konnte nicht geladen werden');
+        return r.json();
+      })
+      .then((data) => {
+        if (cancelled) return;
+        const tree = Array.isArray(data) ? data : [];
+        setStructureTree(tree);
+        // Direkt hier setzen: vermeidet Race mit altem structureTree im nächsten useEffect
+        // (setState(null) für den Baum ist erst im nächsten Render sichtbar).
+        if (shouldSetEntryToRootWhenTreeLoadsRef.current) {
+          shouldSetEntryToRootWhenTreeLoadsRef.current = false;
+          const rootId = getTopRootAssetIdFromStructureTree(tree);
+          setUser((prev) => ({ ...prev, defaultEntryAssetId: rootId || '' }));
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setStructureTree(null);
+          setStructureError(err.message || 'Strukturfehler');
+          shouldSetEntryToRootWhenTreeLoadsRef.current = false;
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setStructureLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.token, user.customerid, userRole]);
 
   const fetchUserRole = async () => {
     try {
@@ -91,7 +191,11 @@ export default function EditUser() {
       
       const userData = {
         ...data.data,
-        customerid: data.data.customerid ? data.data.customerid.toLowerCase() : ''
+        customerid: data.data.customerid ? data.data.customerid.toLowerCase() : '',
+        defaultEntryAssetId: data.data.defaultEntryAssetId
+          ? String(data.data.defaultEntryAssetId).toLowerCase()
+          : '',
+        defaultEntryOverrideUser: !!data.data.defaultEntryOverrideUser
       }
       
       setUser(userData)
@@ -162,7 +266,13 @@ export default function EditUser() {
     e.preventDefault()
     setSaving(true)
     setPasswordError('')
-    
+
+    if (shouldSetEntryToRootWhenTreeLoadsRef.current) {
+      setError('Bitte warten, bis die Struktur für den neuen Mandanten geladen ist.')
+      setSaving(false)
+      return
+    }
+
     try {
       // Konvertiere beide Werte zu Nummern für den Vergleich
       const currentUserRole = parseInt(userRole, 10);
@@ -219,7 +329,9 @@ export default function EditUser() {
           firstName: user.firstName,
           lastName: user.lastName,
           role: user.role,
-          customerid: user.customerid
+          customerid: user.customerid,
+          defaultEntryAssetId: user.defaultEntryAssetId || null,
+          defaultEntryOverrideUser: !!user.defaultEntryOverrideUser
         })
       })
 
@@ -238,6 +350,15 @@ export default function EditUser() {
   const handleChange = (e) => {
     const { name, value } = e.target
     console.log('Select change:', name, value)
+    if (name === 'customerid' && value !== user.customerid) {
+      shouldSetEntryToRootWhenTreeLoadsRef.current = true;
+      setUser((prev) => ({
+        ...prev,
+        customerid: value,
+        defaultEntryAssetId: ''
+      }));
+      return;
+    }
     setUser(prev => ({
       ...prev,
       [name]: value
@@ -245,6 +366,8 @@ export default function EditUser() {
   }
 
   const isSuperAdmin = userRole === 1;
+  const isCustomerAdmin = userRole === 2;
+  const canEditStructureEntry = (isSuperAdmin || isCustomerAdmin) && !!user.customerid;
 
   if (!session) return <div>Loading...</div>
   if (loading) return <div>Loading user data...</div>
@@ -373,6 +496,84 @@ export default function EditUser() {
                       </option>
                     ))}
                   </select>
+                </div>
+              )}
+
+              {canEditStructureEntry && (
+                <div className="col-12 mb-4">
+                  <div className="card border-info">
+                    <div className="card-header bg-light d-flex align-items-center gap-2">
+                      <FontAwesomeIcon icon={faSitemap} className="text-info" />
+                      <strong>Einstieg Heizungssteuerung</strong>
+                    </div>
+                    <div className="card-body">
+                      <p className="text-muted small mb-3">
+                        Legen Sie den Startknoten in der Objektstruktur fest. Beim Wechsel des Mandanten wird der Einstieg automatisch auf den obersten Strukturknoten gesetzt. Mit „Vorrang vor Benutzer“ wird dieser bei jedem Laden der Heizungssteuerung wiederhergestellt (der Benutzer kann zwar navigieren, z. B. nach Baum-Aktualisierung greift der Einstieg erneut).
+                      </p>
+                      <div className="form-check mb-3">
+                        <input
+                          className="form-check-input"
+                          type="checkbox"
+                          id="defaultEntryOverrideUser"
+                          checked={!!user.defaultEntryOverrideUser}
+                          onChange={(e) =>
+                            setUser((prev) => ({ ...prev, defaultEntryOverrideUser: e.target.checked }))
+                          }
+                        />
+                        <label className="form-check-label" htmlFor="defaultEntryOverrideUser">
+                          Vorrang vor Benutzer (Zwangseinstieg bei Struktur-Laden)
+                        </label>
+                      </div>
+                      <div className="mb-2 d-flex flex-wrap align-items-center gap-2">
+                        <span className="small text-muted">
+                          Gewählter Knoten:{' '}
+                          <strong>
+                            {user.defaultEntryAssetId
+                              ? user.defaultEntryAssetId
+                              : '— keiner —'}
+                          </strong>
+                        </span>
+                        {user.defaultEntryAssetId && (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-danger"
+                            onClick={() =>
+                              setUser((prev) => ({ ...prev, defaultEntryAssetId: '' }))
+                            }
+                          >
+                            <FontAwesomeIcon icon={faTimes} className="me-1" />
+                            Einstieg entfernen
+                          </button>
+                        )}
+                      </div>
+                      {structureLoading && (
+                        <div className="text-muted small py-3">Struktur wird geladen…</div>
+                      )}
+                      {structureError && (
+                        <div className="alert alert-warning py-2 small mb-0">{structureError}</div>
+                      )}
+                      {!structureLoading && structureTree?.length > 0 && (
+                        <div
+                          className="border rounded p-2 bg-white"
+                          style={{ maxHeight: '360px', overflowY: 'auto' }}
+                        >
+                          <StructureTreePicker
+                            nodes={structureTree}
+                            selectedAssetId={user.defaultEntryAssetId}
+                            onSelect={(node) =>
+                              setUser((prev) => ({
+                                ...prev,
+                                defaultEntryAssetId: resolveRawStructureNodeAssetId(node)
+                              }))
+                            }
+                          />
+                        </div>
+                      )}
+                      {!structureLoading && structureTree && structureTree.length === 0 && (
+                        <p className="text-muted small mb-0">Keine Knoten in der Mandantenstruktur.</p>
+                      )}
+                    </div>
+                  </div>
                 </div>
               )}
 

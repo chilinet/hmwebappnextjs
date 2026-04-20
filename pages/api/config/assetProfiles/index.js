@@ -2,6 +2,7 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../auth/[...nextauth]';
 import { getConnection } from '../../../../lib/db';
 import sql from 'mssql';
+import { debugLog, debugWarn } from '../../../../lib/appDebug';
 
 async function refreshThingsBoardToken(session) {
   try {
@@ -84,12 +85,12 @@ export default async function handler(req, res) {
       
       // Check if it's a token expiration error
       if (errorJson?.message === 'Token has expired' || errorText.includes('Token has expired')) {
-        console.log('Token expired, attempting refresh...');
+        debugLog('Token expired, attempting refresh...');
         
         try {
           // Refresh token
           tbToken = await refreshThingsBoardToken(session);
-          console.log('✅ Token refreshed successfully, retrying request...');
+          debugLog('✅ Token refreshed successfully, retrying request...');
           
           // Retry the request with new token
           response = await fetch(`${TB_API_URL}/api/assetProfiles?pageSize=100&page=0`, {

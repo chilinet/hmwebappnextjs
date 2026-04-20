@@ -1,5 +1,6 @@
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]';
+import { debugLog, debugWarn } from '../../../lib/appDebug';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -30,7 +31,7 @@ export default async function handler(req, res) {
       });
     }
 
-    console.log('Refreshing OAuth2 token...');
+    debugLog('Refreshing OAuth2 token...');
 
     // Refresh Token verwenden, um neuen Access Token zu holen
     const tokenResponse = await fetch(`https://login.microsoftonline.com/${process.env.OAUTH_TENANT_ID}/oauth2/v2.0/token`, {
@@ -41,7 +42,6 @@ export default async function handler(req, res) {
       body: new URLSearchParams({
         client_id: process.env.OAUTH_CLIENT_ID,
         client_secret: process.env.OAUTH_CLIENT_SECRET,
-        scope: 'https://outlook.office.com/SMTP.Send offline_access',
         grant_type: 'refresh_token',
         refresh_token: process.env.OAUTH_REFRESH_TOKEN,
       }),
@@ -82,7 +82,7 @@ export default async function handler(req, res) {
     }
 
     const tokenData = await tokenResponse.json();
-    console.log('OAuth2 token refreshed successfully');
+    debugLog('OAuth2 token refreshed successfully');
 
     // Prüfen, ob wir einen neuen Refresh Token erhalten haben
     const hasNewRefreshToken = tokenData.refresh_token && 

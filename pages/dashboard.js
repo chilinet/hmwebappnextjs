@@ -3884,6 +3884,7 @@ export default function Dashboard() {
                                     <thead className="table-dark">
                                       <tr>
                                         <th>Device (Name + Label)</th>
+                                        <th>Pfad</th>
                                         <th>Alarm Typ</th>
                                         <th>Nachricht</th>
                                         <th>Status</th>
@@ -3898,6 +3899,11 @@ export default function Dashboard() {
                                             <strong>{safeAlarmValue(alarm.deviceName, 'Unbekannt')}</strong>
                                             <br />
                                             <small className="text-muted">{safeAlarmValue(alarm.deviceLabel, 'Label nicht verfügbar')}</small>
+                                          </td>
+                                          <td>
+                                            <small className={alarm.devicePath ? 'text-dark' : 'text-muted'}>
+                                              {alarm.devicePath || '–'}
+                                            </small>
                                           </td>
                                           <td>
                                             <span className={`badge ${safeAlarmValue(alarm.type) === 'TEMPERATURE_HIGH' ? 'bg-danger' : safeAlarmValue(alarm.type) === 'TEMPERATURE_LOW' ? 'bg-warning' : 'bg-secondary'}`}>

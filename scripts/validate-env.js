@@ -17,7 +17,9 @@ const requiredEnvVars = [
 
 const optionalEnvVars = [
   'REPORTING_URL',
+  'NEXT_PUBLIC_REPORTING_URL',
   'REPORTING_PRESHARED_KEY',
+  'MSSQL_PORT',
 ];
 
 function validateEnvironment() {

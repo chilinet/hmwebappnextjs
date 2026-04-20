@@ -4,7 +4,6 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faEdit, faTrash, faPlus, faSearch, faSync, faDownload, faUpload, faArrowUp } from "@fortawesome/free-solid-svg-icons";
 import Layout from "@/components/Layout";
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
-import { useThingsboard } from '@/contexts/ThingsboardContext';
 import * as XLSX from 'xlsx';
 
 // Local storage keys
@@ -12,9 +11,11 @@ const DEVICES_CACHE_KEY = 'hm_devices_cache';
 const DEVICES_LAST_UPDATE_KEY = 'hm_devices_last_update';
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
 
+const SHOW_ACTIONS = false; // Aktionen-Spalte (Reset, Rekalibrierung, etc.) ein-/ausblenden
+const SHOW_AUTO_REFRESH_AND_CACHE = false; // Auto-Refresh und Cache löschen ein-/ausblenden
+
 function Devices() {
-  const { data: session } = useSession();
-  const { tbToken, isLoading } = useThingsboard();
+  const { data: session, status } = useSession();
   
   // Local state for devices
   const [devices, setDevices] = useState([]);
@@ -31,7 +32,11 @@ function Devices() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedType, setSelectedType] = useState('all');
   const [selectedStatus, setSelectedStatus] = useState('all');
-  const [selectedGateway, setSelectedGateway] = useState('all');
+  const [selectedPathLevel1, setSelectedPathLevel1] = useState('');
+  const [selectedPathLevel2, setSelectedPathLevel2] = useState('');
+  const [selectedPathLevel3, setSelectedPathLevel3] = useState('');
+  const [selectedPathLevel4, setSelectedPathLevel4] = useState('');
+  const [selectedPathLevel5, setSelectedPathLevel5] = useState('');
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [refreshInterval, setRefreshInterval] = useState(null);
   const [showScrollToTop, setShowScrollToTop] = useState(false);
@@ -107,7 +112,7 @@ function Devices() {
 
   // Auto-refresh functionality
   useEffect(() => {
-    if (autoRefresh && tbToken) {
+    if (autoRefresh && session?.user?.customerid) {
       const interval = setInterval(() => {
         refreshDevices();
       }, 30000); // Refresh every 30 seconds
@@ -120,7 +125,7 @@ function Devices() {
       clearInterval(refreshInterval);
       setRefreshInterval(null);
     }
-  }, [autoRefresh, tbToken]);
+  }, [autoRefresh, session?.user?.customerid]);
 
   // Update cache when new devices data is available
   useEffect(() => {
@@ -202,19 +207,17 @@ function Devices() {
   }, []);
 
   const fetchDevices = useCallback(async () => {
-    if (!tbToken || !session?.token) return;
-    
+    if (!session?.user?.customerid) return;
+
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch('/api/config/devices', {
-        headers: {
-          'Authorization': `Bearer ${session.token}`
-        }
-      });
-      
+      const response = await fetch('/api/config/devices-sql');
+
       if (!response.ok) {
-        throw new Error('Failed to fetch devices');
+        const errJson = await response.json().catch(() => ({}));
+        const parts = [errJson.message, errJson.error, errJson.detail, errJson.hint].filter(Boolean);
+        throw new Error(parts.length ? parts.join(' — ') : 'Failed to fetch devices');
       }
       
       const data = await response.json();
@@ -226,7 +229,7 @@ function Devices() {
     } finally {
       setLoading(false);
     }
-  }, [tbToken, session?.token, cacheDevices]);
+  }, [session?.user?.customerid, cacheDevices]);
 
   // Fetch devices when tbToken is available
   useEffect(() => {
@@ -236,8 +239,6 @@ function Devices() {
   }, [tbToken, session?.token, hasValidCache, fetchDevices]);
 
   const refreshDevices = useCallback(async () => {
-    if (!tbToken) return;
-    
     setIsRefreshing(true);
     try {
       await fetchDevices();
@@ -246,7 +247,13 @@ function Devices() {
     } finally {
       setIsRefreshing(false);
     }
-  }, [tbToken, fetchDevices]);
+  }, [fetchDevices]);
+
+  useEffect(() => {
+    if (session?.user?.customerid) {
+      fetchDevices();
+    }
+  }, [session?.user?.customerid, fetchDevices]);
 
   const clearCache = useCallback(() => {
     try {
@@ -260,35 +267,35 @@ function Devices() {
     }
   }, []);
 
-  // Hilfsfunktion zum Finden des SerialNbr-Attributs (muss vor exportDevices definiert werden)
-  const getSerialNumber = (device) => {
-    // Priorität: 1. Lokale Seriennummer aus inventory-Tabelle über API
-    if (device.serialNumber) {
-      return device.serialNumber;
-    }
+  const scrollToTop = () => {
+    // Scroll page to top
+    window.scrollTo({
+      top: 0,
+      behavior: 'smooth'
+    });
     
-    // Fallback: ThingsBoard-Attribute (falls keine lokale Seriennummer verfügbar ist)
-    const attributes = device.serverAttributes || device.telemetry || {};
-    return attributes.serialNbr || 
-           attributes.serialNumber || 
-           attributes.SerialNbr || 
-           attributes.SerialNumber || 
-           attributes.serial || 
-           attributes.Serial || 
-           '-';
+    // Also scroll table to top if it has scroll position
+    if (tableContainerRef.current) {
+      tableContainerRef.current.scrollTo({
+        top: 0,
+        behavior: 'smooth'
+      });
+    }
   };
+
+  const displayDevices = useMemo(() => {
+    return cachedDevices.length > 0 ? cachedDevices : (devices || []);
+  }, [cachedDevices, devices]);
 
   const exportDevices = useCallback(() => {
     try {
-      // Bereite Daten für Excel vor
-      const excelData = cachedDevices.map(device => {
-        const serialNumber = getSerialNumber(device);
+      const excelData = displayDevices.map(device => {
         const assetPath = (device.asset?.id && getAssetPathString(device.asset.id))
           || (device.asset?.fullPath?.labels?.length > 0 ? device.asset.fullPath.labels.join(' → ') : null)
           || (device.asset?.pathString && !device.asset.pathString.startsWith('Asset ') ? device.asset.pathString : null)
           || '-';
-        
-        const lastActivity = device.telemetry?.lastActivityTime ? 
+
+        const lastActivity = device.telemetry?.lastActivityTime ?
           new Date(parseInt(device.telemetry.lastActivityTime)).toLocaleString('de-DE', {
             day: '2-digit',
             month: '2-digit',
@@ -296,8 +303,8 @@ function Devices() {
             hour: '2-digit',
             minute: '2-digit',
             second: '2-digit'
-          }) : 
-          device.lastActivityTime ? 
+          }) :
+          device.lastActivityTime ?
             new Date(parseInt(device.lastActivityTime)).toLocaleString('de-DE', {
               day: '2-digit',
               month: '2-digit',
@@ -305,21 +312,17 @@ function Devices() {
               hour: '2-digit',
               minute: '2-digit',
               second: '2-digit'
-            }) : 
+            }) :
             'Nie';
 
         return {
           'Name': device.name || '-',
           'Label': device.label || '-',
           'Typ': device.type || '-',
-          'SerialNbr': serialNumber,
-          'Gateway': device.telemetry?.gatewayId || '-',
           'Pfad': assetPath,
           'Batterie (V)': device.telemetry?.batteryVoltage || '-',
           'FCnt': device.telemetry?.fCnt || '-',
           'Ventil (%)': device.telemetry?.PercentValveOpen !== undefined ? Math.round(device.telemetry.PercentValveOpen) : '-',
-          'Motor Position': device.telemetry?.motorPosition !== undefined ? Math.round(device.telemetry.motorPosition) : '-',
-          'Motor Range': device.telemetry?.motorRange !== undefined ? Math.round(device.telemetry.motorRange) : '-',
           'RSSI (dBm)': device.telemetry?.rssi || '-',
           'SF': device.telemetry?.sf || '-',
           'SNR (dB)': device.telemetry?.snr ? `${device.telemetry.snr}dB` : '-',
@@ -330,35 +333,28 @@ function Devices() {
         };
       });
 
-      // Erstelle Workbook und Worksheet
       const worksheet = XLSX.utils.json_to_sheet(excelData);
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, 'Geräte');
 
-      // Setze Spaltenbreiten
       const columnWidths = [
-        { wch: 20 }, // Name
-        { wch: 20 }, // Label
-        { wch: 15 }, // Typ
-        { wch: 15 }, // SerialNbr
-        { wch: 20 }, // Gateway
-        { wch: 40 }, // Pfad
-        { wch: 12 }, // Batterie
-        { wch: 10 }, // FCnt
-        { wch: 12 }, // Ventil
-        { wch: 15 }, // Motor Position
-        { wch: 15 }, // Motor Range
-        { wch: 12 }, // RSSI
-        { wch: 8 },  // SF
-        { wch: 12 }, // SNR
-        { wch: 15 }, // Signal Quality
-        { wch: 10 }, // Status
-        { wch: 20 }, // Letzte Aktivität
-        { wch: 40 }  // Device ID
+        { wch: 20 },
+        { wch: 20 },
+        { wch: 15 },
+        { wch: 40 },
+        { wch: 12 },
+        { wch: 10 },
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 8 },
+        { wch: 12 },
+        { wch: 15 },
+        { wch: 10 },
+        { wch: 20 },
+        { wch: 40 }
       ];
       worksheet['!cols'] = columnWidths;
 
-      // Exportiere als Excel-Datei
       const fileName = `devices_${new Date().toISOString().split('T')[0]}.xlsx`;
       XLSX.writeFile(workbook, fileName);
     } catch (error) {
@@ -389,36 +385,30 @@ function Devices() {
   // Filter devices based on search term
   const filteredDevices = useMemo(() => {
     if (!displayDevices) return [];
-    if (!searchTerm && selectedType === 'all' && selectedStatus === 'all' && selectedGateway === 'all') return displayDevices;
+    if (!searchTerm && selectedType === 'all' && selectedStatus === 'all' && !pathLevelFiltersActive) return displayDevices;
 
     const searchLower = (searchTerm || '').toLowerCase();
+    const pathFilters = [selectedPathLevel1, selectedPathLevel2, selectedPathLevel3, selectedPathLevel4, selectedPathLevel5];
     return displayDevices.filter(device => {
       if (!device) return false;
-      const serialNumber = getSerialNumber(device).toLowerCase();
       const pathStr = (device.asset?.id && getAssetPathString(device.asset.id)) || device.asset?.pathString || '';
-      const matchesSearch = !searchTerm || 
+      const matchesSearch = !searchTerm ||
         (device.name || '').toLowerCase().includes(searchLower) ||
         (device.label || '').toLowerCase().includes(searchLower) ||
         (device.type || '').toLowerCase().includes(searchLower) ||
-        pathStr.toLowerCase().includes(searchLower) ||
-        serialNumber.includes(searchLower) ||
-        (device.telemetry?.gatewayId || '').toLowerCase().includes(searchLower);
+        pathStr.toLowerCase().includes(searchLower);
 
       const matchesType = selectedType === 'all' || device.type === selectedType;
-      
       const matchesStatus = selectedStatus === 'all' || 
         (selectedStatus === 'active' && device.active) ||
         (selectedStatus === 'inactive' && !device.active);
-      
-      const matchesGateway = selectedGateway === 'all' || 
-        (selectedGateway === 'withGateway' && device.telemetry?.gatewayId) ||
-        (selectedGateway === 'withoutGateway' && !device.telemetry?.gatewayId) ||
-        (selectedGateway !== 'all' && selectedGateway !== 'withGateway' && selectedGateway !== 'withoutGateway' && 
-         device.telemetry?.gatewayId === selectedGateway);
 
-      return matchesSearch && matchesType && matchesStatus && matchesGateway;
+      const seg = getPathSegments(device);
+      const matchesPath = pathFilters.every((sel, i) => !sel || seg[i] === sel);
+
+      return matchesSearch && matchesType && matchesStatus && matchesPath;
     });
-  }, [displayDevices, searchTerm, selectedType, selectedStatus, selectedGateway, getAssetPathString]);
+  }, [displayDevices, searchTerm, selectedType, selectedStatus, selectedPathLevel1, selectedPathLevel2, selectedPathLevel3, selectedPathLevel4, selectedPathLevel5, pathLevelFiltersActive, getAssetPathString, getPathSegments]);
 
   const handleClose = () => {
     setShowModal(false);
@@ -712,7 +702,7 @@ function Devices() {
     return new Date(timestamp).toLocaleString('de-DE');
   };
 
-  if (isLoading || !tbToken || !session) {
+  if (status === 'loading' || !session) {
     return (
       <div className="d-flex justify-content-center align-items-center" style={{ height: '100vh' }}>
         <Spinner animation="border" />
@@ -734,6 +724,7 @@ function Devices() {
             <FontAwesomeIcon icon={faSync} spin={isRefreshing} className="me-2" />
             {isRefreshing ? 'Aktualisiere...' : 'Aktualisieren'}
           </Button>
+          {SHOW_AUTO_REFRESH_AND_CACHE && (
           <Button
             variant={autoRefresh ? "success" : "outline-success"}
             size="sm"
@@ -741,22 +732,25 @@ function Devices() {
           >
             Auto-Refresh
           </Button>
+          )}
           <Button
             variant="outline-info"
             size="sm"
             onClick={exportDevices}
-            disabled={cachedDevices.length === 0}
+            disabled={displayDevices.length === 0}
           >
             <FontAwesomeIcon icon={faDownload} className="me-2" />
             Export
           </Button>
-                    <Button
+          {SHOW_AUTO_REFRESH_AND_CACHE && (
+          <Button
             variant="outline-warning"
             size="sm"
             onClick={clearCache}
           >
             Cache löschen
           </Button>
+          )}
         </div>
       </div>
 
@@ -776,7 +770,7 @@ function Devices() {
 
       {error && (
         <Alert variant="danger" className="mb-3">
-          Fehler beim Laden der Geräte: {error.message}
+          Fehler beim Laden der Geräte: {typeof error === 'string' ? error : error?.message}
           {cachedDevices.length > 0 && (
             <div className="mt-2">
               <small>Zeige gecachte Daten ({cachedDevices.length} Geräte)</small>
@@ -792,7 +786,7 @@ function Devices() {
             <FontAwesomeIcon icon={faSearch} />
           </InputGroup.Text>
           <Form.Control
-            placeholder="Suche nach Gerät, Label, Typ, SerialNbr, Gateway oder Pfad..."
+            placeholder="Suche nach Gerät, Label, Typ oder Pfad..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
@@ -824,27 +818,83 @@ function Devices() {
             <option value="inactive">Inaktiv</option>
           </Form.Select>
         </div>
-        <div className="col-md-2">
-          <Form.Select 
-            value={selectedGateway} 
-            onChange={(e) => setSelectedGateway(e.target.value)}
+        <div className="col-12 col-lg">
+          <Form.Select
+            value={selectedPathLevel1}
+            onChange={(e) => {
+              const v = e.target.value;
+              setSelectedPathLevel1(v);
+              if (!v) { setSelectedPathLevel2(''); setSelectedPathLevel3(''); setSelectedPathLevel4(''); setSelectedPathLevel5(''); }
+            }}
             className="form-select-sm"
           >
-            <option value="all">Alle Gateways</option>
-            <option value="withGateway">Mit Gateway</option>
-            <option value="withoutGateway">Ohne Gateway</option>
-            {Array.from(new Set(displayDevices
-              .map(d => d.telemetry?.gatewayId)
-              .filter(Boolean)))
-              .sort()
-              .map(gatewayId => (
-                <option key={gatewayId} value={gatewayId}>
-                  Gateway: {gatewayId}
-                </option>
-              ))}
+            <option value="">Level 1</option>
+            {pathLevelOptions.level1.map(s => (
+              <option key={s} value={s}>{s}</option>
+            ))}
           </Form.Select>
         </div>
-        <div className="col-md-3">
+        <div className="col-12 col-lg">
+          <Form.Select
+            value={selectedPathLevel2}
+            onChange={(e) => {
+              const v = e.target.value;
+              setSelectedPathLevel2(v);
+              if (!v) { setSelectedPathLevel3(''); setSelectedPathLevel4(''); setSelectedPathLevel5(''); }
+            }}
+            className="form-select-sm"
+          >
+            <option value="">Level 2</option>
+            {pathLevelOptions.level2.map(s => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </Form.Select>
+        </div>
+        <div className="col-12 col-lg">
+          <Form.Select
+            value={selectedPathLevel3}
+            onChange={(e) => {
+              const v = e.target.value;
+              setSelectedPathLevel3(v);
+              if (!v) { setSelectedPathLevel4(''); setSelectedPathLevel5(''); }
+            }}
+            className="form-select-sm"
+          >
+            <option value="">Level 3</option>
+            {pathLevelOptions.level3.map(s => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </Form.Select>
+        </div>
+        <div className="col-12 col-lg">
+          <Form.Select
+            value={selectedPathLevel4}
+            onChange={(e) => {
+              const v = e.target.value;
+              setSelectedPathLevel4(v);
+              if (!v) setSelectedPathLevel5('');
+            }}
+            className="form-select-sm"
+          >
+            <option value="">Level 4</option>
+            {pathLevelOptions.level4.map(s => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </Form.Select>
+        </div>
+        <div className="col-12 col-lg">
+          <Form.Select
+            value={selectedPathLevel5}
+            onChange={(e) => setSelectedPathLevel5(e.target.value)}
+            className="form-select-sm"
+          >
+            <option value="">Level 5</option>
+            {pathLevelOptions.level5.map(s => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </Form.Select>
+        </div>
+        <div className="col-12 col-lg-2">
           <Button
             variant="outline-secondary"
             size="sm"
@@ -852,9 +902,14 @@ function Devices() {
               setSearchTerm('');
               setSelectedType('all');
               setSelectedStatus('all');
-              setSelectedGateway('all');
+              setSelectedPathLevel1('');
+              setSelectedPathLevel2('');
+              setSelectedPathLevel3('');
+              setSelectedPathLevel4('');
+              setSelectedPathLevel5('');
             }}
-            className="w-100"
+            className="w-100 mt-4 mt-lg-0"
+            style={{ minHeight: '31px' }}
           >
             Filter zurücksetzen
           </Button>
@@ -887,21 +942,19 @@ function Devices() {
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Name</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Label</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Typ</th>
-                <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>SerialNbr</th>
-                <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Gateway</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Pfad</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Batterie</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>FCnt</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Ventil</th>
-                <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Motor Position</th>
-                <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Motor Range</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>RSSI</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>SF</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>SNR</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Signal Quality</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Status</th>
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Letzte Aktivität</th>
+                {SHOW_ACTIONS && (
                 <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Aktionen</th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -912,14 +965,10 @@ function Devices() {
                   <td>{device.name}</td>
                   <td>{device.label}</td>
                   <td>{device.type}</td>
-                  <td>{getSerialNumber(device)}</td>
-                  <td>
-                    {device.telemetry?.gatewayId || '-'}
-                  </td>
                   <td>
                     {(() => {
                       const pathFromTree = device.asset?.id && getAssetPathString(device.asset.id);
-                      if (pathFromTree) return <div><small className="text-info">{pathFromTree}</small></div>;
+                      if (pathFromTree) return <div><small style={{ color: '#000' }}>{pathFromTree}</small></div>;
                       if (device.asset && typeof device.asset === 'object') {
                         if (device.asset.fullPath?.labels?.length > 0) return <div>{device.asset.fullPath.labels.join(' / ')}</div>;
                         if (device.asset.pathString && !device.asset.pathString.startsWith('Asset ')) return <div>{device.asset.pathString}</div>;
@@ -940,16 +989,6 @@ function Devices() {
                       <div>
                         {Math.round(device.telemetry.PercentValveOpen)}%
                       </div>
-                    ) : '-'}
-                  </td>
-                  <td>
-                    {device.telemetry?.motorPosition !== undefined ? (
-                      <div>{Math.round(device.telemetry.motorPosition)}</div>
-                    ) : '-'}
-                  </td>
-                  <td>
-                    {device.telemetry?.motorRange !== undefined ? (
-                      <div>{Math.round(device.telemetry.motorRange)}</div>
                     ) : '-'}
                   </td>
                   <td>
@@ -993,6 +1032,7 @@ function Devices() {
                         'Nie'
                     }
                   </td>
+                  {SHOW_ACTIONS && (
                   <td>
                     <div className="dropdown position-relative">
                       <Button
@@ -1065,6 +1105,7 @@ function Devices() {
                       )}
                     </div>
                   </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -1232,7 +1273,7 @@ function Devices() {
                   <div className="mb-3">
                     <strong>Pfad:</strong>{' '}
                     {selectedDevice?.asset?.id && getAssetPathString(selectedDevice.asset.id) ? (
-                      <span className="text-info">{getAssetPathString(selectedDevice.asset.id)}</span>
+                      <span style={{ color: '#000' }}>{getAssetPathString(selectedDevice.asset.id)}</span>
                     ) : selectedDevice?.asset?.fullPath?.labels?.length > 0 ? (
                       selectedDevice.asset.fullPath.labels.join(' → ')
                     ) : selectedDevice?.asset?.pathString && !selectedDevice.asset.pathString.startsWith('Asset ') ? (

@@ -1,6 +1,8 @@
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../auth/[...nextauth]";
 import sql from 'mssql';
+import { getConnection } from '../../../lib/db';
+import { getMssqlConfig } from '../../../lib/mssqlConfig';
 import mqtt from 'mqtt';
 import fs from 'fs';
 import { getMelitaApiConnection, getMelitaToken } from "../../../lib/melitaAuth";
@@ -413,21 +415,7 @@ export default async function handler(req, res) {
     // Weiter mit der bestehenden Logik; fPort kann pro Request überschrieben werden.
     const effectiveFPort = Number(req.body?.fPort ?? f_port);
 
-    // MSSQL-Zugangsdaten aus .env lesen
-    const mssqlConfig = {
-      user: process.env.MSSQL_USER,
-      password: process.env.MSSQL_PASSWORD,
-      server: process.env.MSSQL_SERVER,
-      database: process.env.MSSQL_DATABASE,
-      port: process.env.MSSQL_PORT ? parseInt(process.env.MSSQL_PORT) : 1433,
-      options: {
-        encrypt: true,
-        trustServerCertificate: true,
-        enableArithAbort: true,
-        connectTimeout: 30000,
-        requestTimeout: 30000,
-      },
-    };
+    const mssqlConfig = getMssqlConfig();
 
     // Validierung der Konfiguration
     if (!mssqlConfig.user || !mssqlConfig.password || !mssqlConfig.server || !mssqlConfig.database) {
@@ -449,7 +437,7 @@ export default async function handler(req, res) {
     
     try {
       // Erstelle direkte Verbindung mit .env-Variablen
-      pool = await sql.connect(mssqlConfig);
+      pool = await getConnection();
       
       // Versuche verschiedene Tabellennamen/Schemas
       const tableVariants = [
@@ -477,14 +465,13 @@ export default async function handler(req, res) {
           continue;
         }
       }
-      // console.log('************************************************')
-      // console.log(connectionResult);
-      // console.log('************************************************')   
+      // debugLog('************************************************')
+      // debugLog(connectionResult);
+      // debugLog('************************************************')   
       
       // Wenn alle Versuche fehlgeschlagen sind
       if (!connectionResult) {
         console.error('[LNS] Database query error:', lastError);
-        await pool.close();
         return res.status(500).json({
           error: 'Database query failed',
           details: lastError?.message || 'Failed to query nwconnections table',
@@ -505,7 +492,6 @@ export default async function handler(req, res) {
     }
 
     if (connectionResult.recordset.length === 0) {
-      await pool.close();
       return res.status(404).json({ 
         error: 'Network connection not found',
         name2: name2,
@@ -514,9 +500,6 @@ export default async function handler(req, res) {
     }
 
     const connection = connectionResult.recordset[0];
-    
-    // Verbindung schließen nach erfolgreicher Abfrage
-    await pool.close();
 
     // name2 parsen: Format "typ:applicationid" (z.B. "ttn:2")
     let applicationId = null;
@@ -563,15 +546,14 @@ export default async function handler(req, res) {
     }
 
     
-   // console.log('************************************************')
-   // console.log(connection);
-   // console.log('************************************************')
+   // debugLog('************************************************')
+   // debugLog(connection);
+   // debugLog('************************************************')
 
     // username aus connection holen (kann als 'username' oder 'user' kommen)
     const username = connection.username || connection.user;
     
     if (!username || !connection.passwort || !connection.url) {
-      await pool.close();
       return res.status(400).json({ 
         error: 'Incomplete connection data',
         details: 'Missing user, password, or URL in nwconnections table',
@@ -599,7 +581,7 @@ export default async function handler(req, res) {
     // Prüfen ob CA-Datei existiert
     const caFileExists = fs.existsSync(caFilePath);
     if (!caFileExists) {
-      console.warn(`[LNS] CA file not found at ${caFilePath}, proceeding without CA verification`);
+      debugWarn(`[LNS] CA file not found at ${caFilePath}, proceeding without CA verification`);
     }
 
     // URL parsen: Falls Port bereits enthalten ist, trennen
@@ -629,7 +611,7 @@ export default async function handler(req, res) {
       ...(caFileExists && { ca: fs.readFileSync(caFilePath) })
     };
     
-    console.log(`[LNS] MQTT connection options:`, {
+    debugLog(`[LNS] MQTT connection options:`, {
       hostname: mqttOptions.hostname,
       port: mqttOptions.port,
       protocol: mqttOptions.protocol,
@@ -668,7 +650,7 @@ export default async function handler(req, res) {
       const client = mqtt.connect(mqttOptions);
 
       client.on('connect', () => {
-        console.log(`[LNS] MQTT connected to ${connection.url}`);
+        debugLog(`[LNS] MQTT connected to ${connection.url}`);
         
         // Nachricht publizieren
         client.publish(topic, JSON.stringify(downlinkMessage), { qos: 1 }, (err) => {
@@ -683,7 +665,7 @@ export default async function handler(req, res) {
             });
           }
 
-          console.log(`[LNS] Downlink message sent successfully to topic: ${topic}`);
+          debugLog(`[LNS] Downlink message sent successfully to topic: ${topic}`);
           
           resolve({
             success: true,

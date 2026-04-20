@@ -1,5 +1,18 @@
 /** @type {import('next').NextConfig} */
+// Browser-Fetches: REPORTING_URL allein liegt nicht im Client-Bundle. Über env wird eine
+// NEXT_PUBLIC_REPORTING_URL eingetragen (Priorität siehe reportingUrlForClient).
+const reportingUrlForClient =
+  process.env.NEXT_PUBLIC_REPORTING_URL ||
+  process.env.NEXT_PUBLIC_REPORTING_URL_LOCAL ||
+  process.env.REPORTING_URL ||
+  'https://webapptest.heatmanager.cloud';
+
 const nextConfig = {
+  env: {
+    NEXT_PUBLIC_REPORTING_URL: reportingUrlForClient,
+    // Client-Bundle: gleiche DEBUG-Variable wie serverseitig (.env DEBUG=true)
+    NEXT_PUBLIC_DEBUG: process.env.DEBUG ?? '',
+  },
   experimental: {
     // 'appDir' entfernen, da es nicht mehr benötigt wird
   },

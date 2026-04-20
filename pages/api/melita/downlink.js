@@ -12,11 +12,11 @@ async function sendDownlinkToMelita(deviceEui, payload, authToken, confirmed, fP
   
   // Device EUI Format validieren (sollte 16 Zeichen Hex-String sein)
   if (!/^[0-9a-fA-F]{16}$/.test(deviceEui)) {
-    console.log(`[MELITA] Device EUI format validation failed: ${deviceEui}`);
-    console.log(`[MELITA] Expected: 16 character hex string, got: ${deviceEui.length} characters`);
+    debugLog(`[MELITA] Device EUI format validation failed: ${deviceEui}`);
+    debugLog(`[MELITA] Expected: 16 character hex string, got: ${deviceEui.length} characters`);
     
     // Versuche es trotzdem, falls es ein gültiges Format ist
-    console.log(`[MELITA] Proceeding with device EUI: ${deviceEui}`);
+    debugLog(`[MELITA] Proceeding with device EUI: ${deviceEui}`);
   }
   
   // Verschiedene Downlink-Endpunkte testen
@@ -25,7 +25,7 @@ async function sendDownlinkToMelita(deviceEui, payload, authToken, confirmed, fP
       const endpoint = endpointTemplate.replace('{deviceEui}', deviceEui);
       const downlinkUrl = `${normalizedBaseUrl}${endpoint}`;
       
-      console.log(`[MELITA] Trying downlink endpoint: ${downlinkUrl}`);
+      debugLog(`[MELITA] Trying downlink endpoint: ${downlinkUrl}`);
       
       const response = await fetch(downlinkUrl, {
         method: 'POST',
@@ -42,15 +42,15 @@ async function sendDownlinkToMelita(deviceEui, payload, authToken, confirmed, fP
         })
       });
 
-      console.log(`[MELITA] Endpoint ${endpoint} response status:`, response.status);
+      debugLog(`[MELITA] Endpoint ${endpoint} response status:`, response.status);
       
       if (response.ok) {
         const result = await response.json();
-        console.log(`[MELITA] Downlink sent successfully via ${endpoint}:`, result);
+        debugLog(`[MELITA] Downlink sent successfully via ${endpoint}:`, result);
         return result;
       } else {
         const errorText = await response.text();
-        console.log(`[MELITA] Endpoint ${endpoint} failed: ${response.status} - ${errorText}`);
+        debugLog(`[MELITA] Endpoint ${endpoint} failed: ${response.status} - ${errorText}`);
         
         // Spezielle Behandlung für 404 (Device EUI nicht gefunden)
         if (response.status === 404) {
@@ -65,7 +65,7 @@ async function sendDownlinkToMelita(deviceEui, payload, authToken, confirmed, fP
         }
       }
     } catch (error) {
-      console.log(`[MELITA] Endpoint ${endpointTemplate} error:`, error.message);
+      debugLog(`[MELITA] Endpoint ${endpointTemplate} error:`, error.message);
     }
   }
 

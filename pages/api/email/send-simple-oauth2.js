@@ -1,6 +1,10 @@
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]';
-import nodemailer from 'nodemailer';
+import { debugLog, debugWarn } from '../../../lib/appDebug';
+import {
+  getMailAccessTokenFromEnvironment,
+  sendMailViaMicrosoftGraph,
+} from '../../../lib/microsoftGraphMail';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -8,7 +12,6 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Authentifizierung prüfen
     const session = await getServerSession(req, res, authOptions);
     if (!session) {
       return res.status(401).json({ error: 'Unauthorized' });
@@ -16,191 +19,109 @@ export default async function handler(req, res) {
 
     const { to, subject, text, html, from } = req.body;
 
-    // Validierung der E-Mail-Parameter
     if (!to || !subject || (!text && !html)) {
-      return res.status(400).json({ 
-        error: 'Missing required fields: to, subject, and either text or html are required' 
+      return res.status(400).json({
+        error:
+          'Missing required fields: to, subject, and either text or html are required',
       });
     }
 
-    // OAuth2-Konfiguration prüfen
-    const requiredEnvVars = [
+    const baseRequired = [
       'OAUTH_TENANT_ID',
-      'OAUTH_CLIENT_ID', 
+      'OAUTH_CLIENT_ID',
       'OAUTH_CLIENT_SECRET',
-      'OAUTH_AUTHORIZATION_CODE',
-      'OAUTH_REDIRECT_URI',
-      'SMTP_USER'
+      'SMTP_USER',
     ];
-
-    const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
-    
-    if (missingVars.length > 0) {
-      console.error('Missing OAuth2 environment variables:', missingVars);
-      console.log('Available environment variables:', {
-        OAUTH_TENANT_ID: process.env.OAUTH_TENANT_ID ? '✓ Set' : '✗ Missing',
-        OAUTH_CLIENT_ID: process.env.OAUTH_CLIENT_ID ? '✓ Set' : '✗ Missing',
-        OAUTH_CLIENT_SECRET: process.env.OAUTH_CLIENT_SECRET ? '✓ Set' : '✗ Missing',
-        OAUTH_AUTHORIZATION_CODE: process.env.OAUTH_AUTHORIZATION_CODE ? '✓ Set' : '✗ Missing',
-        OAUTH_REDIRECT_URI: process.env.OAUTH_REDIRECT_URI ? '✓ Set' : '✗ Missing',
-        SMTP_USER: process.env.SMTP_USER ? '✓ Set' : '✗ Missing'
-      });
-      
+    const missingBase = baseRequired.filter((varName) => !process.env[varName]);
+    if (missingBase.length > 0) {
       return res.status(400).json({
         error: 'Missing OAuth2 environment variables',
-        missing: missingVars,
-        available: Object.fromEntries(
-          requiredEnvVars.map(varName => [varName, process.env[varName] ? 'Set' : 'Missing'])
-        )
+        missing: missingBase,
       });
     }
 
-    // E-Mail-Optionen vorbereiten
+    const hasRefresh = Boolean(process.env.OAUTH_REFRESH_TOKEN);
+    const hasCode = Boolean(process.env.OAUTH_AUTHORIZATION_CODE);
+    if (!hasRefresh && !hasCode) {
+      return res.status(400).json({
+        error: 'No token source',
+        details:
+          'Set OAUTH_REFRESH_TOKEN or OAUTH_AUTHORIZATION_CODE (+ OAUTH_REDIRECT_URI for code).',
+      });
+    }
+    if (hasCode && !process.env.OAUTH_REDIRECT_URI) {
+      return res.status(400).json({
+        error: 'Missing OAUTH_REDIRECT_URI',
+        details: 'Required when using OAUTH_AUTHORIZATION_CODE.',
+      });
+    }
+
     const mailOptions = {
       from: from || process.env.SMTP_FROM || process.env.SMTP_USER,
-      to: to,
-      subject: subject,
-      text: text,
-      html: html,
+      to,
+      subject,
+      text,
+      html,
     };
 
-    console.log('Sending email via OAuth2:', {
+    debugLog('Sending email via Microsoft Graph:', {
       from: mailOptions.from,
       to: mailOptions.to,
-      subject: mailOptions.subject
+      subject: mailOptions.subject,
     });
 
-    // OAuth2-Token holen - Verwende Refresh Token wenn verfügbar
-    let tokenResponse;
-    
-    if (process.env.OAUTH_REFRESH_TOKEN) {
-      // Verwende Refresh Token für neue Access Tokens
-      console.log('Using refresh token to get new access token');
-      tokenResponse = await fetch(`https://login.microsoftonline.com/${process.env.OAUTH_TENANT_ID}/oauth2/v2.0/token`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: new URLSearchParams({
-          client_id: process.env.OAUTH_CLIENT_ID,
-          client_secret: process.env.OAUTH_CLIENT_SECRET,
-          scope: 'https://outlook.office.com/SMTP.Send offline_access',
-          grant_type: 'refresh_token',
-          refresh_token: process.env.OAUTH_REFRESH_TOKEN,
-        }),
-      });
-    } else {
-      // Erste Authentifizierung mit Authorization Code
-      console.log('Using authorization code for initial authentication');
-      tokenResponse = await fetch(`https://login.microsoftonline.com/${process.env.OAUTH_TENANT_ID}/oauth2/v2.0/token`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: new URLSearchParams({
-          client_id: process.env.OAUTH_CLIENT_ID,
-          client_secret: process.env.OAUTH_CLIENT_SECRET,
-          scope: 'https://outlook.office.com/SMTP.Send offline_access',
-          grant_type: 'authorization_code',
-          code: process.env.OAUTH_AUTHORIZATION_CODE,
-          redirect_uri: process.env.OAUTH_REDIRECT_URI,
-        }),
-      });
-    }
-
-    if (!tokenResponse.ok) {
-      const errorText = await tokenResponse.text();
-      console.error('OAuth2 token response:', tokenResponse.status, errorText);
-      
-      // Spezifische Fehlerbehandlung
-      if (tokenResponse.status === 400) {
-        try {
-          const errorData = JSON.parse(errorText);
-          if (errorData.error === 'invalid_grant') {
-            if (errorData.error_description?.includes('AADSTS9002313')) {
-              return res.status(400).json({
-                error: 'OAuth2 request is malformed',
-                details: 'Please check your configuration and get a new authorization code',
-                solution: 'Visit the authorization URL to get a fresh authorization code'
-              });
-            } else if (errorData.error_description?.includes('AADSTS70008')) {
-              return res.status(400).json({
-                error: 'Authorization code has expired',
-                details: 'Authorization codes expire after 10 minutes',
-                solution: 'Get a new authorization code from the authorization URL'
-              });
-            } else {
-              return res.status(400).json({
-                error: 'OAuth2 invalid_grant error',
-                details: errorData.error_description
-              });
-            }
-          }
-        } catch (parseError) {
-          // Fallback für nicht-JSON Fehler
-        }
-      }
-      
+    let tokenData;
+    try {
+      tokenData = await getMailAccessTokenFromEnvironment();
+    } catch (tokenErr) {
+      console.error('Token error:', tokenErr.message);
       return res.status(400).json({
-        error: 'OAuth2 token request failed',
-        status: tokenResponse.status,
-        details: errorText
+        error: 'Token request failed',
+        details: tokenErr.message,
       });
     }
 
-    const tokenData = await tokenResponse.json();
-    console.log('OAuth2 token received successfully');
-    
-    // Wenn wir einen Refresh Token erhalten haben, speichern wir ihn
     if (tokenData.refresh_token && !process.env.OAUTH_REFRESH_TOKEN) {
-      console.log('Refresh token received - you can now add OAUTH_REFRESH_TOKEN to your .env file');
-      console.log('Refresh token:', tokenData.refresh_token);
+      debugLog(
+        'Refresh token received - add OAUTH_REFRESH_TOKEN to .env and remove OAUTH_AUTHORIZATION_CODE'
+      );
+      debugLog('Refresh token:', tokenData.refresh_token);
     }
 
-    // Nodemailer Transporter mit OAuth2 erstellen
-    const transporter = nodemailer.createTransport({
-      host: 'smtp.office365.com',
-      port: 587,
-      secure: false,
-      auth: {
-        type: 'OAuth2',
-        user: process.env.SMTP_USER,
-        clientId: process.env.OAUTH_CLIENT_ID,
-        clientSecret: process.env.OAUTH_CLIENT_SECRET,
-        accessToken: tokenData.access_token,
-        refreshToken: tokenData.refresh_token,
-        expires: Date.now() + (tokenData.expires_in * 1000),
-      },
-      tls: {
-        ciphers: 'SSLv3',
-        rejectUnauthorized: false
-      }
-    });
+    const result = await sendMailViaMicrosoftGraph(
+      tokenData.access_token,
+      mailOptions
+    );
 
-    // E-Mail senden
-    const result = await transporter.sendMail(mailOptions);
-
-    console.log('Email sent successfully via OAuth2:', result.messageId);
+    const exposeRefresh =
+      tokenData.refresh_token &&
+      !process.env.OAUTH_REFRESH_TOKEN &&
+      (process.env.NODE_ENV === 'development' ||
+        process.env.OAUTH_EXPOSE_REFRESH_TOKEN === 'true');
 
     return res.status(200).json({
       success: true,
       message: 'Email sent successfully',
       messageId: result.messageId,
-      method: 'OAuth2',
+      method: 'Microsoft Graph',
       tokenInfo: {
-        access_token: tokenData.access_token ? '✓ Present' : '✗ Missing',
-        refresh_token: tokenData.refresh_token ? '✓ Present' : '✗ Missing',
-        expires_in: tokenData.expires_in
-      }
+        access_token: tokenData.access_token ? 'present' : 'missing',
+        refresh_token: tokenData.refresh_token ? 'present' : 'missing',
+        expires_in: tokenData.expires_in,
+      },
+      ...(exposeRefresh && {
+        newRefreshToken: tokenData.refresh_token,
+        setupNote:
+          'Copy newRefreshToken into .env as OAUTH_REFRESH_TOKEN, remove OAUTH_AUTHORIZATION_CODE, restart.',
+      }),
     });
-
   } catch (error) {
-    console.error('Error sending email via OAuth2:', error);
-    
+    console.error('Error sending email via Microsoft Graph:', error);
+
     return res.status(500).json({
       error: 'Failed to send email',
       details: error.message,
-      method: 'OAuth2'
+      method: 'Microsoft Graph',
     });
   }
 }

@@ -2,6 +2,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../auth/[...nextauth]";
 import { getConnection, getMssqlConfig } from "../../../../lib/db";
 import sql from 'mssql';
+import { debugLog, debugWarn } from '../../../../lib/appDebug';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -25,7 +26,7 @@ export default async function handler(req, res) {
       ORDER BY id DESC
     `);
     
-    console.log(`Found ${result.recordset.length} inventory records with tbconnectionid`);
+    debugLog(`Found ${result.recordset.length} inventory records with tbconnectionid`);
     
     // Zeige auch die ersten 5 ThingsBoard Devices
     const tbResponse = await fetch(`${process.env.THINGSBOARD_URL}/api/customer/${session.user.customerid}/deviceInfos?pageSize=5&page=0`, {
@@ -37,7 +38,7 @@ export default async function handler(req, res) {
     
     const tbData = await tbResponse.json();
     
-    console.log(`Found ${tbData.data?.length || 0} ThingsBoard devices`);
+    debugLog(`Found ${tbData.data?.length || 0} ThingsBoard devices`);
     
     // Vergleiche die IDs
     const inventoryIds = result.recordset.map(r => r.tbconnectionid);
@@ -68,7 +69,7 @@ export default async function handler(req, res) {
     // Versuche es nochmal bei Verbindungsfehlern
     if (error.code === 'ECONNCLOSED' || error.code === 'ECONNRESET') {
       try {
-        console.log('Retrying database connection...');
+        debugLog('Retrying database connection...');
         await new Promise(resolve => setTimeout(resolve, 1000));
         const pool = await getConnection();
         const db = getMssqlConfig().database;

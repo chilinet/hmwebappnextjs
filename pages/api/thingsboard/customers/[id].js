@@ -2,23 +2,8 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../auth/[...nextauth]";
 import thingsboardAuth from '../auth';
 import axios from 'axios';
-import sql from 'mssql';
-
-// Determine if this is a local connection
-const isLocalConnection = (process.env.MSSQL_SERVER || 'hmcdev01.database.windows.net') === '127.0.0.1' || 
-                          (process.env.MSSQL_SERVER || 'hmcdev01.database.windows.net') === 'localhost' ||
-                          (process.env.MSSQL_SERVER || 'hmcdev01.database.windows.net')?.includes('localhost');
-
-const config = {
-  user: process.env.MSSQL_USER || 'hmroot',
-  password: process.env.MSSQL_PASSWORD || '9YJLpf6CfyteKzoN',
-  server: process.env.MSSQL_SERVER || 'hmcdev01.database.windows.net',
-  database: process.env.MSSQL_DATABASE || 'hmcdev',
-  options: {
-    encrypt: !isLocalConnection, // Disable encryption for local connections
-    trustServerCertificate: true
-  }
-};
+import { getConnection } from '../../../../lib/db';
+import { debugLog, debugWarn } from '../../../../lib/appDebug';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -38,9 +23,8 @@ export default async function handler(req, res) {
       return res.status(400).json({ message: 'Customer ID erforderlich' });
     }
 
-    // Hole die Thingsboard-Credentials über customerid aus customer_settings
-    await sql.connect(config);
-    const result = await sql.query`
+    const pool = await getConnection();
+    const result = await pool.request().query`
       SELECT 
         u.customerid,
         cs.tb_username,
@@ -64,12 +48,12 @@ export default async function handler(req, res) {
     }
 
     // Debug: Zeige welche Credentials verwendet werden (ohne Passwort vollständig zu loggen)
-    console.log('Using ThingsBoard credentials from customer_settings:');
-    console.log('  User ID:', session.user.id);
-    console.log('  Customer ID:', customerid || 'N/A');
-    console.log('  Username:', tb_username);
-    console.log('  Password length:', tb_password ? tb_password.length : 0);
-    console.log('  Password starts with:', tb_password ? tb_password.substring(0, 3) + '...' : 'null');
+    debugLog('Using ThingsBoard credentials from customer_settings:');
+    debugLog('  User ID:', session.user.id);
+    debugLog('  Customer ID:', customerid || 'N/A');
+    debugLog('  Username:', tb_username);
+    debugLog('  Password length:', tb_password ? tb_password.length : 0);
+    debugLog('  Password starts with:', tb_password ? tb_password.substring(0, 3) + '...' : 'null');
 
     // Token von Thingsboard mit den Benutzer-Credentials holen
     const token = await thingsboardAuth(tb_username, tb_password);
@@ -96,7 +80,5 @@ export default async function handler(req, res) {
       message: 'Fehler bei der Kommunikation mit der API',
       error: error.response?.data || error.message 
     });
-  } finally {
-    await sql.close();
   }
 }

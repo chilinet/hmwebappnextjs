@@ -2,6 +2,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "../auth/[...nextauth]";
 import sql from 'mssql';
 import { getConnection } from '../../../lib/db';
+import { debugLog, debugWarn } from '../../../lib/appDebug';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -19,7 +20,7 @@ export default async function handler(req, res) {
       const jwt = require('jsonwebtoken');
       const decoded = jwt.verify(token, process.env.NEXTAUTH_SECRET);
       isAuthenticated = true;
-      console.log('Mobile token verified for user:', decoded.username);
+      debugLog('Mobile token verified for user:', decoded.username);
     } catch (err) {
       console.error('JWT verification failed:', err);
     }
@@ -30,7 +31,7 @@ export default async function handler(req, res) {
     const session = await getServerSession(req, res, authOptions);
     if (session?.user) {
       isAuthenticated = true;
-      console.log('Session verified for user:', session.user.name);
+      debugLog('Session verified for user:', session.user.name);
     }
   }
 
@@ -58,7 +59,7 @@ export default async function handler(req, res) {
         const jwt = require('jsonwebtoken');
         const decoded = jwt.verify(token, process.env.NEXTAUTH_SECRET);
         customerId = decoded.customerid;
-        console.log('Customer ID from token:', customerId);
+        debugLog('Customer ID from token:', customerId);
       } catch (err) {
         console.error('JWT verification failed:', err);
       }
@@ -69,14 +70,14 @@ export default async function handler(req, res) {
       const session = await getServerSession(req, res, authOptions);
       if (session?.user?.customerid) {
         customerId = session.user.customerid;
-        console.log('Customer ID from session:', customerId);
+        debugLog('Customer ID from session:', customerId);
       }
     }
     
     // Fallback to default customer ID if none found
     if (!customerId) {
       customerId = '2EA4BA70-647A-11EF-8CD8-8B580D9AA086';
-      console.log('Using default customer ID:', customerId);
+      debugLog('Using default customer ID:', customerId);
     }
     
     // Load the tree structure from customer_settings table for specific customer

@@ -37,7 +37,7 @@ async function fetchWithRetry(url, options, retries = 3, delay = 1000) {
 
       // Exponentielles Backoff
       const backoffDelay = delay * Math.pow(2, i);
-      console.log(`Waiting ${backoffDelay}ms before retry ${i + 1}/${retries} for ${url}`);
+      debugLog(`Waiting ${backoffDelay}ms before retry ${i + 1}/${retries} for ${url}`);
       await new Promise(resolve => setTimeout(resolve, backoffDelay));
     }
   }
@@ -105,7 +105,7 @@ function buildAssetPathMap(treeData) {
 
 async function getAssetHierarchy(deviceId, tbToken, assetPathMap) {
   
-  //console.log('getAssetHierarchy: ' + deviceId);
+  //debugLog('getAssetHierarchy: ' + deviceId);
 
   try {
     // Hole die Relations für das Gerät
@@ -121,7 +121,7 @@ async function getAssetHierarchy(deviceId, tbToken, assetPathMap) {
 
     const relations = await relationsResponse.json();
 
-    //console.log('relations: ' + JSON.stringify(relations, null, 2));
+    //debugLog('relations: ' + JSON.stringify(relations, null, 2));
 
     const assetRelation = relations.find(r => r.from.entityType === 'ASSET');
     if (!assetRelation) return null;
@@ -232,8 +232,8 @@ async function getLatestTelemetry(deviceId, tbToken) {
         }
       )
     ]);
-    //console.log('telemetryResponse: ' + JSON.stringify(telemetryResponse, null, 2));  
-    //console.log('attributesResponse: ' + JSON.stringify(attributesResponse, null, 2));
+    //debugLog('telemetryResponse: ' + JSON.stringify(telemetryResponse, null, 2));  
+    //debugLog('attributesResponse: ' + JSON.stringify(attributesResponse, null, 2));
     const telemetry = {};
 
     // Verarbeite Telemetrie-Daten, wenn verfügbar
@@ -241,7 +241,7 @@ async function getLatestTelemetry(deviceId, tbToken) {
       const telemetryData = await telemetryResponse.value.json();
       Object.entries(telemetryData).forEach(([key, values]) => {
         let value = values[0]?.value || null;
-        //console.log('key: ' + key + ' value: ' + value);
+        //debugLog('key: ' + key + ' value: ' + value);
         if (key === 'PercentValveOpen' && value !== null) {
           value = Math.round(value);
         }
@@ -252,7 +252,7 @@ async function getLatestTelemetry(deviceId, tbToken) {
     // Verarbeite Attribute-Daten, wenn verfügbar
     if (attributesResponse.status === 'fulfilled' && attributesResponse.value) {
       const attributesData = await attributesResponse.value.json();
-      //console.log('attributesData: ' + JSON.stringify(attributesData, null, 2));
+      //debugLog('attributesData: ' + JSON.stringify(attributesData, null, 2));
       if (attributesData && attributesData.length > 0) {
         // Speichere alle Server-Attribute
         attributesData.forEach(attr => {
@@ -332,7 +332,7 @@ export default async function handler(req, res) {
           const totalPages = devicesData.totalPages || Math.ceil(totalElements / pageSize);
           hasNext = devices.length === pageSize && (page + 1) < totalPages;
 
-          console.log(`Fetched page ${page}: ${devices.length} devices (total so far: ${allDevices.length})`);
+          debugLog(`Fetched page ${page}: ${devices.length} devices (total so far: ${allDevices.length})`);
           
           page++;
         } catch (error) {
@@ -363,15 +363,16 @@ export default async function handler(req, res) {
           getAssetHierarchy(device.id.id, session.tbToken, assetPathMap),
           getLatestTelemetry(device.id.id, session.tbToken)
         ]);
-       // console.log('device: ' + JSON.stringify(device, null, 2));
-       // console.log('asset: ' + JSON.stringify(asset, null, 2));
-        //console.log('telemetry: ' + JSON.stringify(telemetry, null, 2));
+        const serialNumber = serialByDeviceId.get(String(device.id.id)) ?? null;
+       // debugLog('device: ' + JSON.stringify(device, null, 2));
+       // debugLog('asset: ' + JSON.stringify(asset, null, 2));
+        //debugLog('telemetry: ' + JSON.stringify(telemetry, null, 2));
         return {
           id: device.id.id,
           name: device.name,
           type: device.type,
           active: device.active,
-          lastActivityTime: device.lastActivityTime,
+          lastActivityTime: device.lastActivityTime ?? telemetry?.lastActivityTime, // Device-Server-Attribut lastActivityTime (Entity oder SERVER_SCOPE)
           label: device.label || '',
           additionalInfo: device.additionalInfo || {},
           asset: asset,

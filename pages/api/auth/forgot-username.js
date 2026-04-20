@@ -1,5 +1,6 @@
 import { getConnection } from '../../../lib/db';
 import sql from 'mssql';
+import { debugLog, debugWarn } from '../../../lib/appDebug';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -92,7 +93,7 @@ export default async function handler(req, res) {
     }
 
     const emailResult = await emailResponse.json();
-    console.log('Username reminder email sent successfully:', emailResult);
+    debugLog('Username reminder email sent successfully:', emailResult);
 
     return res.status(200).json({
       success: true,
