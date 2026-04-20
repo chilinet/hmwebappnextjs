@@ -1,8 +1,10 @@
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../auth/[...nextauth]";
-import { withPoolRetry } from "../../../../lib/db";
+import { getConnection, getMssqlConfig } from "../../../../lib/db";
 import sql from 'mssql';
-import { debugLog, debugWarn } from '../../../../lib/appDebug';
+import { getCachedDevices, setCachedDevices } from "../../../../lib/utils/deviceCache";
+
+const DEVICES_CACHE_TTL_MS = 60 * 1000; // 1 minute server-side cache
 
 async function fetchWithRetry(url, options, retries = 3, delay = 1000) {
   for (let i = 0; i < retries; i++) {
@@ -41,7 +43,67 @@ async function fetchWithRetry(url, options, retries = 3, delay = 1000) {
   }
 }
 
-async function getAssetHierarchy(deviceId, tbToken, session) {
+async function loadTreeData(connection, customerId) {
+  const query = `
+    SELECT tree
+    FROM customer_settings
+    WHERE customer_id = @customerId
+      AND tree IS NOT NULL
+  `;
+
+  const result = await connection.request()
+    .input('customerId', sql.UniqueIdentifier, customerId)
+    .query(query);
+
+  if (result.recordset.length === 0) {
+    return [];
+  }
+
+  const treeJson = result.recordset[0].tree;
+  if (typeof treeJson === 'string') {
+    return JSON.parse(treeJson);
+  }
+
+  return Array.isArray(treeJson) ? treeJson : [];
+}
+
+function buildAssetPathMap(treeData) {
+  const map = new Map();
+
+  function walk(nodes, path = []) {
+    if (!Array.isArray(nodes)) return;
+
+    for (const node of nodes) {
+      const currentNode = {
+        id: node?.id,
+        name: node?.name,
+        type: node?.type,
+        label: node?.label
+      };
+      const nextPath = [...path, currentNode];
+
+      if (node?.id) {
+        map.set(node.id, {
+          id: node.id,
+          pathString: nextPath.map((p) => p.label || p.name || '').filter(Boolean).join(' / '),
+          fullPath: {
+            labels: nextPath.map((p) => p.label || p.name || '').filter(Boolean),
+            nodes: nextPath
+          }
+        });
+      }
+
+      if (Array.isArray(node?.children) && node.children.length > 0) {
+        walk(node.children, nextPath);
+      }
+    }
+  }
+
+  walk(treeData, []);
+  return map;
+}
+
+async function getAssetHierarchy(deviceId, tbToken, assetPathMap) {
   
   //debugLog('getAssetHierarchy: ' + deviceId);
 
@@ -63,40 +125,16 @@ async function getAssetHierarchy(deviceId, tbToken, session) {
 
     const assetRelation = relations.find(r => r.from.entityType === 'ASSET');
     if (!assetRelation) return null;
-    
-    try {
-      const treePath = await fetch(`${process.env.NEXTAUTH_URL}/api/treepath/${assetRelation.from.id}?customerId=${session.user.customerid}`, {
-        headers: {
-          'x-api-source': 'backend'
-        }
-      });
-      
-      if (treePath.ok) {
-        const treePathData = await treePath.json();
-        //debugLog('treePath.pathString:', treePathData.pathString);
-        return {
-          id: assetRelation.from.id,
-          pathString: treePathData.pathString || '',
-          fullPath: treePathData.fullPath || null
-        };
-      } else {
-        debugWarn(`TreePath API failed for asset ${assetRelation.from.id}: ${treePath.status}`);
-        // Fallback: Gib nur die Asset-ID zurück
-        return {
-          id: assetRelation.from.id,
-          pathString: `Asset ${assetRelation.from.id}`,
-          fullPath: null
-        };
-      }
-    } catch (treePathError) {
-      debugWarn('TreePath API error, using fallback:', treePathError.message);
-      // Fallback: Gib nur die Asset-ID zurück
-      return {
-        id: assetRelation.from.id,
-        pathString: `Asset ${assetRelation.from.id}`,
-        fullPath: null
-      };
-    }
+    const assetId = typeof assetRelation.from.id === 'string'
+      ? assetRelation.from.id
+      : assetRelation.from.id?.id;
+    const mappedPath = assetId ? assetPathMap.get(assetId) : null;
+
+    return {
+      id: assetId || null,
+      pathString: mappedPath?.pathString || (assetId ? `Asset ${assetId}` : ''),
+      fullPath: mappedPath?.fullPath || null
+    };
 
   } catch (error) {
     console.error('Error in getAssetHierarchy:', {
@@ -108,37 +146,48 @@ async function getAssetHierarchy(deviceId, tbToken, session) {
   }
 }
 
-/** Eine Abfrage pro Chunk — vermeidet Dutzende parallele getConnection/Pulse-Stürme (Pool max 10). */
-async function getSerialNumbersByTbConnectionIds(deviceIds) {
-  const uniqueIds = [...new Set((deviceIds || []).filter(Boolean).map((id) => String(id)))];
-  if (uniqueIds.length === 0) {
-    return new Map();
+async function getSerialNumbersFromInventoryBatch(deviceIds) {
+  const db = getMssqlConfig().database;
+  const serialByDeviceId = {};
+
+  if (!Array.isArray(deviceIds) || deviceIds.length === 0) {
+    return serialByDeviceId;
   }
 
-  return withPoolRetry(async (pool) => {
-    const map = new Map();
-    const chunkSize = 400;
+  try {
+    const pool = await getConnection();
+
+    // Dedupe and chunk to keep the SQL statement manageable.
+    const uniqueIds = Array.from(new Set(deviceIds.filter(Boolean)));
+    const chunkSize = 200;
+
     for (let i = 0; i < uniqueIds.length; i += chunkSize) {
       const chunk = uniqueIds.slice(i, i + chunkSize);
       const request = pool.request();
-      const placeholders = chunk.map((_, idx) => {
-        const name = `id${i + idx}`;
-        request.input(name, sql.VarChar, chunk[idx]);
-        return `@${name}`;
+      const placeholders = chunk.map((id, idx) => {
+        const paramName = `deviceId_${i + idx}`;
+        request.input(paramName, sql.VarChar, id);
+        return `@${paramName}`;
       });
+
       const result = await request.query(`
         SELECT tbconnectionid, serialnbr
-        FROM dbo.inventory
+        FROM ${db}.dbo.inventory
         WHERE tbconnectionid IN (${placeholders.join(', ')})
       `);
-      for (const row of result.recordset) {
-        if (row.tbconnectionid != null && row.serialnbr != null) {
-          map.set(String(row.tbconnectionid), row.serialnbr);
+
+      for (const row of result.recordset || []) {
+        if (row.tbconnectionid) {
+          serialByDeviceId[row.tbconnectionid] = row.serialnbr || null;
         }
       }
     }
-    return map;
-  });
+
+    return serialByDeviceId;
+  } catch (error) {
+    console.error('Error getting serial numbers from inventory (batch):', error);
+    return {};
+  }
 }
 
 async function getLatestTelemetry(deviceId, tbToken) {
@@ -244,6 +293,16 @@ export default async function handler(req, res) {
     return res.status(400).json({ message: 'ThingsBoard token not found in session' });
   }
 
+  const customerId = session.user.customerid;
+  const forceRefresh = req.query?.refresh === 'true' || req.headers['x-force-refresh'] === '1';
+
+  if (!forceRefresh) {
+    const cachedDevices = getCachedDevices(customerId);
+    if (cachedDevices) {
+      return res.json(cachedDevices);
+    }
+  }
+
   try {
     // Hilfsfunktion zum Abrufen aller Geräte mit Pagination
     const fetchAllDevices = async (customerId, tbToken) => {
@@ -286,20 +345,23 @@ export default async function handler(req, res) {
     };
 
     // Alle Geräte mit Pagination abrufen
-    const allDevices = await fetchAllDevices(session.user.customerid, session.tbToken);
+    const allDevices = await fetchAllDevices(customerId, session.tbToken);
     
-    debugLog(`Total devices fetched: ${allDevices.length}`);
+    console.log(`Total devices fetched: ${allDevices.length}`);
+    const connection = await getConnection();
+    const treeData = await loadTreeData(connection, customerId);
+    const assetPathMap = buildAssetPathMap(treeData);
 
-    const serialByDeviceId = await getSerialNumbersByTbConnectionIds(
-      allDevices.map((d) => d.id.id)
+    const serialByDeviceId = await getSerialNumbersFromInventoryBatch(
+      allDevices.map((device) => device?.id?.id).filter(Boolean)
     );
 
-    // Hole Asset-, Telemetrie- und Seriennummer-Informationen für jedes Gerät
+    // Hole Asset- und Telemetrie-Informationen für jedes Gerät; serials are preloaded in batch.
     const devicesWithData = await Promise.all(
       allDevices.map(async device => {
         const [asset, telemetry] = await Promise.all([
-          getAssetHierarchy(device.id.id, session.tbToken, session),
-          getLatestTelemetry(device.id.id, session.tbToken),
+          getAssetHierarchy(device.id.id, session.tbToken, assetPathMap),
+          getLatestTelemetry(device.id.id, session.tbToken)
         ]);
         const serialNumber = serialByDeviceId.get(String(device.id.id)) ?? null;
        // debugLog('device: ' + JSON.stringify(device, null, 2));
@@ -316,11 +378,12 @@ export default async function handler(req, res) {
           asset: asset,
           telemetry: telemetry,
           serverAttributes: telemetry, // Server-Attribute sind jetzt in telemetry enthalten
-          serialNumber: serialNumber // Seriennummer aus der lokalen inventory-Tabelle
+          serialNumber: serialByDeviceId[device.id.id] || null // Seriennummer aus der lokalen inventory-Tabelle
         };
       })
     );
 
+    setCachedDevices(customerId, devicesWithData, DEVICES_CACHE_TTL_MS);
     return res.json(devicesWithData);
   } catch (error) {
     console.error('Error in handler:', {

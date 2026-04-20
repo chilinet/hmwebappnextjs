@@ -1,6 +1,6 @@
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../auth/[...nextauth]";
-import { getConnection } from "../../../../lib/db";
+import { getConnection, getMssqlConfig } from "../../../../lib/db";
 import sql from 'mssql';
 import { debugLog, debugWarn } from '../../../../lib/appDebug';
 
@@ -15,12 +15,13 @@ export default async function handler(req, res) {
   }
 
   try {
+    const db = getMssqlConfig().database;
     const pool = await getConnection();
     
     // Hole alle Einträge aus der Inventory-Tabelle mit tbconnectionid
     const result = await pool.request().query(`
       SELECT id, deviceLabel, serialnbr, deveui, tbconnectionid, customerid
-      FROM dbo.inventory 
+      FROM ${db}.dbo.inventory 
       WHERE tbconnectionid IS NOT NULL
       ORDER BY id DESC
     `);
@@ -71,10 +72,10 @@ export default async function handler(req, res) {
         debugLog('Retrying database connection...');
         await new Promise(resolve => setTimeout(resolve, 1000));
         const pool = await getConnection();
-        
+        const db = getMssqlConfig().database;
         const result = await pool.request().query(`
           SELECT id, deviceLabel, serialnbr, deveui, tbconnectionid, customerid
-          FROM dbo.inventory 
+          FROM ${db}.dbo.inventory 
           WHERE tbconnectionid IS NOT NULL
           ORDER BY id DESC
         `);

@@ -1,94 +1,14 @@
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../auth/[...nextauth]";
-import { debugLog, debugWarn } from '../../../lib/appDebug';
-
-// Melita.io Konfiguration
-const MELITA_API_KEY = process.env.MELITA_API_KEY;
-const MELITA_BASE_URL = process.env.MELITA_BASE_URL;
-
-// Alternative API-Endpunkte testen
-const POSSIBLE_AUTH_ENDPOINTS = [
-  '/api/iot-gateway/auth/generate'
-];
+import { getMelitaApiConnection, getMelitaToken } from "../../../lib/melitaAuth";
 
 const POSSIBLE_DOWNLINK_ENDPOINTS = [
   '/api/iot-gateway/lorawan/{deviceEui}/queue'
 ];
 
-// Token-Cache für Melita.io
-let melitaTokenCache = {
-  authToken: null,
-  expiry: 0
-};
-
-// Melita.io Token generieren oder aus Cache holen
-async function getMelitaToken() {
-  const now = Math.floor(Date.now() / 1000);
-  
-  // Prüfen ob der Cache-Token noch gültig ist
-  if (melitaTokenCache.authToken && melitaTokenCache.expiry > now) {
-    debugLog('[MELITA] Using cached token, expires in', melitaTokenCache.expiry - now, 'seconds');
-    return melitaTokenCache.authToken;
-  }
-
-  try {
-    debugLog('[MELITA] Generating new auth token...');
-    debugLog('[MELITA] Using API Key:', MELITA_API_KEY ? 'Present' : 'Missing');
-    debugLog('[MELITA] Using Base URL:', MELITA_BASE_URL);
-    
-    // Base-URL korrekt formatieren (keine doppelten Slashes)
-    const baseUrl = MELITA_BASE_URL.endsWith('/') ? MELITA_BASE_URL.slice(0, -1) : MELITA_BASE_URL;
-    
-    // Verschiedene Auth-Endpunkte testen
-    for (const endpoint of POSSIBLE_AUTH_ENDPOINTS) {
-      try {
-        const authUrl = `${baseUrl}${endpoint}`;
-        debugLog(`[MELITA] Trying auth endpoint: ${authUrl}`);
-        
-        const response = await fetch(authUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'accept': '*/*',
-            'ApiKey': MELITA_API_KEY
-          }
-        });
-
-        debugLog(`[MELITA] Endpoint ${endpoint} response status:`, response.status);
-        
-        if (response.ok) {
-          const authData = await response.json();
-          debugLog(`[MELITA] Success with endpoint ${endpoint}:`, authData);
-          
-          // Token im Cache speichern
-          melitaTokenCache = {
-            authToken: authData.authToken,
-            expiry: authData.expiry
-          };
-
-          debugLog('[MELITA] New token generated, expires at', new Date(authData.expiry * 1000).toISOString());
-          return authData.authToken;
-        } else {
-          const errorText = await response.text();
-          debugLog(`[MELITA] Endpoint ${endpoint} failed: ${response.status} - ${errorText}`);
-        }
-      } catch (error) {
-        debugLog(`[MELITA] Endpoint ${endpoint} error:`, error.message);
-      }
-    }
-
-    // Alle Endpunkte fehlgeschlagen
-    throw new Error('All possible auth endpoints failed. Please check the API configuration.');
-  } catch (error) {
-    console.error('[MELITA] Error generating auth token:', error);
-    throw new Error(`Failed to authenticate with Melita.io: ${error.message}`);
-  }
-}
-
 // Downlink-Nachricht an Melita.io senden
-async function sendDownlinkToMelita(deviceEui, payload, authToken, confirmed, fPort) {
-  // Base-URL korrekt formatieren
-  const baseUrl = MELITA_BASE_URL.endsWith('/') ? MELITA_BASE_URL.slice(0, -1) : MELITA_BASE_URL;
+async function sendDownlinkToMelita(deviceEui, payload, authToken, confirmed, fPort, baseUrl) {
+  const normalizedBaseUrl = (String(baseUrl || '').trim()).replace(/\/+$/, '');
   
   // Device EUI Format validieren (sollte 16 Zeichen Hex-String sein)
   if (!/^[0-9a-fA-F]{16}$/.test(deviceEui)) {
@@ -103,7 +23,7 @@ async function sendDownlinkToMelita(deviceEui, payload, authToken, confirmed, fP
   for (const endpointTemplate of POSSIBLE_DOWNLINK_ENDPOINTS) {
     try {
       const endpoint = endpointTemplate.replace('{deviceEui}', deviceEui);
-      const downlinkUrl = `${baseUrl}${endpoint}`;
+      const downlinkUrl = `${normalizedBaseUrl}${endpoint}`;
       
       debugLog(`[MELITA] Trying downlink endpoint: ${downlinkUrl}`);
       
@@ -194,11 +114,19 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Invalid base64 payload' });
     }
 
-    // Melita.io Token holen
-    const authToken = await getMelitaToken();
+    const melitaConn = await getMelitaApiConnection();
+    if (!melitaConn?.apiKey || !melitaConn?.baseUrl) {
+      return res.status(500).json({
+        error: 'Melita API nicht konfiguriert',
+        details: 'Keine Melita Verbindung in mw/nwconnections gefunden und MELITA_API_KEY/MELITA_BASE_URL nicht gesetzt.',
+      });
+    }
+
+    const authToken = await getMelitaToken({ apiKey: melitaConn.apiKey, baseUrl: melitaConn.baseUrl });
+    const baseUrl = melitaConn.baseUrl;
 
     // Downlink-Nachricht senden
-    const result = await sendDownlinkToMelita(deviceEui, payload, authToken, confirmed, fPort);
+    const result = await sendDownlinkToMelita(deviceEui, payload, authToken, confirmed, fPort, baseUrl);
 
     // Erfolgreiche Antwort
     return res.status(200).json({

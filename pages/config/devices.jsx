@@ -24,6 +24,7 @@ function Devices() {
   
   // Local state for cached devices
   const [cachedDevices, setCachedDevices] = useState([]);
+  const [hasValidCache, setHasValidCache] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showModal, setShowModal] = useState(false);
@@ -41,7 +42,15 @@ function Devices() {
   const [showScrollToTop, setShowScrollToTop] = useState(false);
   const [openDropdown, setOpenDropdown] = useState(null);
   const [treeData, setTreeData] = useState(null);
+  const [showDownlinkModal, setShowDownlinkModal] = useState(false);
+  const [downlinkTargetDevice, setDownlinkTargetDevice] = useState(null);
+  const [downlinkMode, setDownlinkMode] = useState('command');
+  const [downlinkCommand, setDownlinkCommand] = useState('reset');
+  const [downlinkHexPayload, setDownlinkHexPayload] = useState('03F40B');
+  const [downlinkConfirmed, setDownlinkConfirmed] = useState(false);
+  const [downlinkSending, setDownlinkSending] = useState(false);
   const tableContainerRef = useRef(null);
+  const isSuperAdmin = Number(session?.user?.role) === 1;
 
   // Helper: find asset path in tree (same pattern as window-status)
   const findAssetPath = useCallback((assetId, treeNodes, currentPath = []) => {
@@ -63,28 +72,33 @@ function Devices() {
     return path && path.length > 0 ? path.join(' → ') : null;
   }, [treeData, findAssetPath]);
 
-  /** Pfad-Segmente pro Ebene (max 5). z.B. ["HEATMANGER Test", "Himmelauer Mühle 9 / Gelnhausen", "2. OG rechts", "", ""]. */
-  const getPathSegments = useCallback((device) => {
-    const empty = ['', '', '', '', ''];
-    if (!device) return empty;
-    let segments = [];
-    const pathFromTree = device.asset?.id && getAssetPathString(device.asset.id);
-    if (pathFromTree) {
-      segments = pathFromTree.split(' → ').map(s => s.trim()).filter(Boolean);
-    } else if (device.asset?.fullPath?.labels?.length) {
-      segments = device.asset.fullPath.labels.slice(0, 5);
-    } else if (device.asset?.pathString && !device.asset.pathString.startsWith('Asset ')) {
-      segments = device.asset.pathString.split(/\s*→\s*|\s*\/\s*/).map(s => s.trim()).filter(Boolean);
+  const loadCachedDevices = useCallback(() => {
+    try {
+      const cached = localStorage.getItem(DEVICES_CACHE_KEY);
+      const lastUpdateStr = localStorage.getItem(DEVICES_LAST_UPDATE_KEY);
+      
+      if (cached && lastUpdateStr) {
+        const parsedDevices = JSON.parse(cached);
+        const lastUpdateTime = parseInt(lastUpdateStr);
+        const now = Date.now();
+        
+        // Check if cache is still valid
+        if (now - lastUpdateTime < CACHE_DURATION) {
+          setCachedDevices(parsedDevices);
+          setLastUpdate(lastUpdateTime);
+          return true;
+        }
+      }
+    } catch (error) {
+      console.error('Error loading cached devices:', error);
     }
-    const padded = [...segments.slice(0, 5)];
-    while (padded.length < 5) padded.push('');
-    return padded;
-  }, [getAssetPathString]);
+    return false;
+  }, []);
 
   // Load cached data on component mount
   useEffect(() => {
-    loadCachedDevices();
-  }, []);
+    setHasValidCache(loadCachedDevices());
+  }, [loadCachedDevices]);
 
   // Load tree data for path display (same pattern as window-status)
   useEffect(() => {
@@ -181,29 +195,6 @@ function Devices() {
     };
   }, [openDropdown]);
 
-  const loadCachedDevices = useCallback(() => {
-    try {
-      const cached = localStorage.getItem(DEVICES_CACHE_KEY);
-      const lastUpdateStr = localStorage.getItem(DEVICES_LAST_UPDATE_KEY);
-      
-      if (cached && lastUpdateStr) {
-        const parsedDevices = JSON.parse(cached);
-        const lastUpdateTime = parseInt(lastUpdateStr);
-        const now = Date.now();
-        
-        // Check if cache is still valid
-        if (now - lastUpdateTime < CACHE_DURATION) {
-          setCachedDevices(parsedDevices);
-          setLastUpdate(lastUpdateTime);
-          return true;
-        }
-      }
-    } catch (error) {
-      console.error('Error loading cached devices:', error);
-    }
-    return false;
-  }, []);
-
   const cacheDevices = useCallback((devicesData) => {
     try {
       localStorage.setItem(DEVICES_CACHE_KEY, JSON.stringify(devicesData));
@@ -228,7 +219,7 @@ function Devices() {
         const parts = [errJson.message, errJson.error, errJson.detail, errJson.hint].filter(Boolean);
         throw new Error(parts.length ? parts.join(' — ') : 'Failed to fetch devices');
       }
-
+      
       const data = await response.json();
       setDevices(data);
       cacheDevices(data);
@@ -239,6 +230,13 @@ function Devices() {
       setLoading(false);
     }
   }, [session?.user?.customerid, cacheDevices]);
+
+  // Fetch devices when tbToken is available
+  useEffect(() => {
+    if (tbToken && session?.token && !hasValidCache) {
+      fetchDevices();
+    }
+  }, [tbToken, session?.token, hasValidCache, fetchDevices]);
 
   const refreshDevices = useCallback(async () => {
     setIsRefreshing(true);
@@ -262,6 +260,7 @@ function Devices() {
       localStorage.removeItem(DEVICES_CACHE_KEY);
       localStorage.removeItem(DEVICES_LAST_UPDATE_KEY);
       setCachedDevices([]);
+      setHasValidCache(false);
       setLastUpdate(null);
     } catch (error) {
       console.error('Error clearing cache:', error);
@@ -362,30 +361,28 @@ function Devices() {
       console.error('Error exporting devices:', error);
       alert('Fehler beim Exportieren der Geräte: ' + error.message);
     }
-  }, [displayDevices, getAssetPathString]);
+  }, [cachedDevices, getAssetPathString]);
 
-  // Kaskadierte Optionen für Pfad-Level 1–5 (Level 2 nur unter gewähltem Level 1, etc.)
-  const pathLevelOptions = useMemo(() => {
-    if (!displayDevices) return { level1: [], level2: [], level3: [], level4: [], level5: [] };
-    const level1 = [...new Set(displayDevices.map(d => getPathSegments(d)[0]).filter(Boolean))].sort();
-    let devL1 = displayDevices;
-    if (selectedPathLevel1) devL1 = displayDevices.filter(d => getPathSegments(d)[0] === selectedPathLevel1);
-    const level2 = [...new Set(devL1.map(d => getPathSegments(d)[1]).filter(Boolean))].sort();
-    let devL2 = devL1;
-    if (selectedPathLevel2) devL2 = devL1.filter(d => getPathSegments(d)[1] === selectedPathLevel2);
-    const level3 = [...new Set(devL2.map(d => getPathSegments(d)[2]).filter(Boolean))].sort();
-    let devL3 = devL2;
-    if (selectedPathLevel3) devL3 = devL2.filter(d => getPathSegments(d)[2] === selectedPathLevel3);
-    const level4 = [...new Set(devL3.map(d => getPathSegments(d)[3]).filter(Boolean))].sort();
-    let devL4 = devL3;
-    if (selectedPathLevel4) devL4 = devL3.filter(d => getPathSegments(d)[3] === selectedPathLevel4);
-    const level5 = [...new Set(devL4.map(d => getPathSegments(d)[4]).filter(Boolean))].sort();
-    return { level1, level2, level3, level4, level5 };
-  }, [displayDevices, selectedPathLevel1, selectedPathLevel2, selectedPathLevel3, selectedPathLevel4, getPathSegments]);
+  const scrollToTop = () => {
+    // Scroll page to top
+    window.scrollTo({
+      top: 0,
+      behavior: 'smooth'
+    });
+    
+    // Also scroll table to top if it has scroll position
+    if (tableContainerRef.current) {
+      tableContainerRef.current.scrollTo({
+        top: 0,
+        behavior: 'smooth'
+      });
+    }
+  };
 
-  const pathLevelFiltersActive = selectedPathLevel1 || selectedPathLevel2 || selectedPathLevel3 || selectedPathLevel4 || selectedPathLevel5;
+  // Use cached devices if available, otherwise use live data
+  const displayDevices = cachedDevices.length > 0 ? cachedDevices : (devices || []);
 
-  // Filter devices based on search term and filters (incl. Pfad Level 1–5)
+  // Filter devices based on search term
   const filteredDevices = useMemo(() => {
     if (!displayDevices) return [];
     if (!searchTerm && selectedType === 'all' && selectedStatus === 'all' && !pathLevelFiltersActive) return displayDevices;
@@ -460,23 +457,14 @@ function Devices() {
         return;
       }
 
-      // Debug-Logging
-      console.log('Frontend Debug - Device object:', device);
-      console.log('Frontend Debug - Extracted deviceId:', deviceId);
-      console.log('Frontend Debug - Action:', action);
-      console.log('Frontend Debug - Session token:', session.token);
-
       const requestBody = {
-        action: action,
-        device: device,
+        action,
         parameters: {
           deviceName: device.name,
           deviceType: device.type,
           timestamp: new Date().toISOString()
         }
       };
-      
-      console.log('Frontend Debug - Request body:', requestBody);
 
       const response = await fetch(`/api/config/devices/${deviceId}/actions`, {
         method: 'POST',
@@ -487,14 +475,14 @@ function Devices() {
         body: JSON.stringify(requestBody)
       });
 
+      const result = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        throw new Error(result?.details || result?.error || `HTTP error! status: ${response.status}`);
       }
-
-      const result = await response.json();
       
       if (result.success) {
-        alert(`${actionNames[action]} erfolgreich für Gerät "${device.name}" ausgelöst!`);
+        const integrationLabel = result.integration ? ` (${result.integration})` : '';
+        alert(`${actionNames[action]} erfolgreich für Gerät "${device.name}" ausgelöst${integrationLabel}.`);
         console.log('Action result:', result);
       } else {
         alert(`Fehler bei der ${actionNames[action]}: ${result.error || 'Unbekannter Fehler'}`);
@@ -605,6 +593,110 @@ function Devices() {
     }
   };
 
+  const sendDownlink = async (device, event) => {
+    if (event) {
+      event.stopPropagation();
+    }
+    setDownlinkTargetDevice(device || null);
+    setDownlinkMode('command');
+    setDownlinkCommand('reset');
+    setDownlinkHexPayload('03F40B');
+    setDownlinkConfirmed(false);
+    setShowDownlinkModal(true);
+  };
+
+  const closeDownlinkModal = () => {
+    if (downlinkSending) return;
+    setShowDownlinkModal(false);
+    setDownlinkTargetDevice(null);
+  };
+
+  const extractDeviceId = (device) => {
+    if (!device?.id) return null;
+    if (typeof device.id === 'string') return device.id;
+    if (device.id && typeof device.id === 'object' && device.id.id) return device.id.id;
+    return device.id || null;
+  };
+
+  const submitDownlink = async () => {
+    const device = downlinkTargetDevice;
+    const deviceId = extractDeviceId(device);
+    if (!deviceId) {
+      alert('Keine gültige Geräte-ID gefunden');
+      return;
+    }
+
+    if (downlinkMode === 'raw') {
+      if (!isSuperAdmin) {
+        alert('Nur Superadmins dürfen RAW HEX senden.');
+        return;
+      }
+      const normalizedPayload = downlinkHexPayload.trim().toUpperCase();
+      if (!normalizedPayload) {
+        alert('Payload darf nicht leer sein.');
+        return;
+      }
+      if (!/^[0-9A-F]+$/.test(normalizedPayload)) {
+        alert('Ungültiges HEX-Format. Erlaubt sind nur 0-9 und A-F.');
+        return;
+      }
+    }
+
+    try {
+      setDownlinkSending(true);
+      if (downlinkMode === 'command') {
+        const response = await fetch(`/api/config/devices/${deviceId}/actions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.token}`
+          },
+          body: JSON.stringify({
+            action: downlinkCommand,
+            parameters: {
+              source: 'send-downlink-modal',
+              deviceName: device?.name || '',
+              timestamp: new Date().toISOString(),
+            },
+          }),
+        });
+
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(result?.details || result?.error || `HTTP ${response.status}`);
+        }
+        alert(`Kommando erfolgreich gesendet.\n\nGerät: ${device?.name}\nAktion: ${downlinkCommand}`);
+      } else {
+        const normalizedPayload = downlinkHexPayload.trim().toUpperCase();
+        const response = await fetch('/api/lns/downlink', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.token}`
+          },
+          body: JSON.stringify({
+            deviceId,
+            frm_payload: normalizedPayload,
+            confirmed: downlinkConfirmed,
+            priority: 'NORMAL'
+          })
+        });
+
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(result?.details || result?.error || `HTTP ${response.status}`);
+        }
+        alert(`Downlink erfolgreich gesendet.\n\nGerät: ${device?.name}\nHEX: ${normalizedPayload}`);
+      }
+      closeDownlinkModal();
+    } catch (error) {
+      console.error('Error sending downlink:', error);
+      alert(`Fehler beim Senden des Downlinks: ${error.message}`);
+    } finally {
+      setDownlinkSending(false);
+    }
+  };
+
   const formatLastUpdate = (timestamp) => {
     if (!timestamp) return 'Nie';
     return new Date(timestamp).toLocaleString('de-DE');
@@ -621,7 +713,7 @@ function Devices() {
   return (
     <div className="container-fluid px-4 mt-4">
       <div className="d-flex justify-content-between align-items-center mb-4">
-        <h2 className="text-white">Geräte</h2>
+        <h2 className="text-dark">Geräte</h2>
         <div className="d-flex gap-2">
           <Button
             variant="outline-light"
@@ -969,20 +1061,20 @@ function Devices() {
                               Rekalibrierung
                             </button>
                           </li>
+                          <li><hr className="dropdown-divider" /></li>
                           <li>
                             <button
                               className="dropdown-item"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleDeviceAction(device, 'reset', e);
+                                sendDownlink(device, e);
                                 setOpenDropdown(null);
                               }}
                             >
-                              <FontAwesomeIcon icon={faTrash} className="me-2" />
-                              Reset
+                              <FontAwesomeIcon icon={faUpload} className="me-2" />
+                              Send Downlink
                             </button>
                           </li>
-                          <li><hr className="dropdown-divider" /></li>
                           <li>
                             <button
                               className="dropdown-item"
@@ -1045,6 +1137,95 @@ function Devices() {
       >
         <FontAwesomeIcon icon={faArrowUp} />
       </Button>
+
+      <Modal
+        show={showDownlinkModal}
+        onHide={closeDownlinkModal}
+        centered
+      >
+        <Modal.Header closeButton>
+          <Modal.Title>Send Downlink</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <div className="mb-3">
+            <strong>Gerät:</strong> {downlinkTargetDevice?.name || '-'}
+          </div>
+          <Form.Group className="mb-3">
+            <Form.Label>Modus</Form.Label>
+            <Form.Select
+              value={downlinkMode}
+              onChange={(e) => {
+                const nextMode = e.target.value;
+                if (nextMode === 'raw' && !isSuperAdmin) {
+                  return;
+                }
+                setDownlinkMode(nextMode);
+              }}
+              disabled={downlinkSending}
+            >
+              <option value="command">Command (sensorabhängig)</option>
+              {isSuperAdmin && <option value="raw">Raw HEX</option>}
+            </Form.Select>
+            {!isSuperAdmin && (
+              <Form.Text className="d-block text-muted mt-1">
+                Nur Superadmins können Raw HEX senden.
+              </Form.Text>
+            )}
+          </Form.Group>
+
+          {downlinkMode === 'command' ? (
+            <Form.Group className="mb-3">
+              <Form.Label>Command</Form.Label>
+              <Form.Select
+                value={downlinkCommand}
+                onChange={(e) => setDownlinkCommand(e.target.value)}
+                disabled={downlinkSending}
+              >
+                <option value="reset">Reset</option>
+                <option value="recalibrate">Rekalibrierung</option>
+              </Form.Select>
+              <Form.Text className="text-muted">
+                Das Backend löst das passende Payload je Sensor/LNS auf.
+              </Form.Text>
+              <Form.Text className="d-block text-warning mt-1">
+                Hinweis: Preset-Kommandos haben eine Cooldown-Zeit von 10 Minuten pro Gerät.
+              </Form.Text>
+            </Form.Group>
+          ) : (
+            <>
+              <Form.Group className="mb-3">
+                <Form.Label>HEX Payload</Form.Label>
+                <Form.Control
+                  type="text"
+                  value={downlinkHexPayload}
+                  onChange={(e) => setDownlinkHexPayload(e.target.value)}
+                  disabled={downlinkSending}
+                  placeholder="z.B. 03F40B"
+                />
+              </Form.Group>
+              <Form.Check
+                type="switch"
+                id="downlink-confirmed-switch"
+                label="Confirmed Downlink"
+                checked={downlinkConfirmed}
+                onChange={(e) => setDownlinkConfirmed(e.target.checked)}
+                disabled={downlinkSending}
+              />
+              <Form.Text className="d-block text-muted mt-2">
+                Raw HEX hat keinen Preset-Kommando-Cooldown.
+              </Form.Text>
+            </>
+          )}
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={closeDownlinkModal} disabled={downlinkSending}>
+            Abbrechen
+          </Button>
+          <Button variant="primary" onClick={submitDownlink} disabled={downlinkSending}>
+            {downlinkSending ? 'Sende...' : 'Senden'}
+          </Button>
+        </Modal.Footer>
+      </Modal>
 
       <Modal
         show={showModal}

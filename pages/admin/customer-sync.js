@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Container, Row, Col, Card, Button, Alert, Spinner, Table } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faSync, faUsers, faDatabase, faClock } from '@fortawesome/free-solid-svg-icons';
-import Layout from '../../components/Layout';
 
 export default function CustomerSync() {
   const [isSyncing, setIsSyncing] = useState(false);
@@ -69,8 +68,7 @@ export default function CustomerSync() {
   };
 
   return (
-    <Layout>
-      <Container fluid className="mt-4">
+    <Container fluid className="mt-4">
         <Row>
           <Col>
             <h1 className="mb-4">
@@ -243,6 +241,5 @@ export default function CustomerSync() {
           </Col>
         </Row>
       </Container>
-    </Layout>
   );
 }

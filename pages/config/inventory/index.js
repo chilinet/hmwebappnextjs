@@ -2,7 +2,7 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/router";
 import { Table, Spinner, Button, Modal, Nav, Tab, Form, InputGroup, Alert, ProgressBar } from "react-bootstrap";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faEdit, faTrash, faPlus, faSearch, faEllipsisV, faUserEdit, faExclamationTriangle, faArrowUp, faFileExcel, faUpload, faCheck, faTimes, faCloudUpload } from "@fortawesome/free-solid-svg-icons";
+import { faEdit, faTrash, faPlus, faSearch, faEllipsisV, faUserEdit, faExclamationTriangle, faArrowUp, faFileExcel, faUpload, faCheck, faTimes, faCloudUpload, faCircleNodes } from "@fortawesome/free-solid-svg-icons";
 import Layout from "@/components/Layout";
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import * as XLSX from 'xlsx';
@@ -32,6 +32,41 @@ function Inventory() {
   const [updateStatus, setUpdateStatus] = useState(null);
   const [showScrollToTop, setShowScrollToTop] = useState(false);
   const tableContainerRef = useRef(null);
+  const selectAllCheckboxRef = useRef(null);
+  const [selectedDeviceIds, setSelectedDeviceIds] = useState([]);
+  const [bulkDeviceIdsForCustomerChange, setBulkDeviceIdsForCustomerChange] = useState(null);
+  const [bulkActionDropdownOpen, setBulkActionDropdownOpen] = useState(false);
+
+  // Assign LNS modal
+  const [showAssignLnsModal, setShowAssignLnsModal] = useState(false);
+  const [assignLnsSelectedLns, setAssignLnsSelectedLns] = useState('');
+  const [assignLnsSelectedOffer, setAssignLnsSelectedOffer] = useState('');
+  const [melitaOffers, setMelitaOffers] = useState([]);
+  const [melitaOffersLoading, setMelitaOffersLoading] = useState(false);
+  const [melitaOffersError, setMelitaOffersError] = useState(null);
+  const [melitaProfiles, setMelitaProfiles] = useState([]);
+  const [melitaProfilesLoading, setMelitaProfilesLoading] = useState(false);
+  const [melitaProfilesError, setMelitaProfilesError] = useState(null);
+  const [thingsstackApplications, setThingsstackApplications] = useState([]);
+  const [thingsstackApplicationsLoading, setThingsstackApplicationsLoading] = useState(false);
+  const [thingsstackApplicationsError, setThingsstackApplicationsError] = useState(null);
+  const [thingsstackInputMethod, setThingsstackInputMethod] = useState('manual'); // manual | repository
+  const [thingsstackFrequencyPlanId, setThingsstackFrequencyPlanId] = useState('EU_863_870');
+  const [thingsstackMacVersion, setThingsstackMacVersion] = useState('MAC_V1_0_3');
+  const [thingsstackPhyVersion, setThingsstackPhyVersion] = useState('PHY_V1_0_3_REV_A');
+  const [thingsstackBrands, setThingsstackBrands] = useState([]);
+  const [thingsstackBrandsLoading, setThingsstackBrandsLoading] = useState(false);
+  const [thingsstackBrandsError, setThingsstackBrandsError] = useState(null);
+  const [thingsstackBrandId, setThingsstackBrandId] = useState('');
+  const [thingsstackModels, setThingsstackModels] = useState([]);
+  const [thingsstackModelsLoading, setThingsstackModelsLoading] = useState(false);
+  const [thingsstackModelsError, setThingsstackModelsError] = useState(null);
+  const [thingsstackModelId, setThingsstackModelId] = useState('');
+  const [assignLnsSelectedProfile, setAssignLnsSelectedProfile] = useState('');
+  const [isAssigningLns, setIsAssigningLns] = useState(false);
+  const [assignLnsError, setAssignLnsError] = useState(null);
+  const [isRemovingLns, setIsRemovingLns] = useState(false);
+  const LNS_OPTIONS = [{ value: 'melita', label: 'Melita' }, { value: 'thingsstack', label: 'Thingsstack' }];
 
   // Excel Import States
   const [showImportModal, setShowImportModal] = useState(false);
@@ -44,6 +79,226 @@ function Inventory() {
   const [importProgress, setImportProgress] = useState(0);
   const [importResults, setImportResults] = useState(null);
   const [importStep, setImportStep] = useState('upload'); // 'upload', 'mapping', 'preview', 'importing', 'results'
+
+  // Customer list for filter dropdown (same source as Customers page: ThingsBoard via /api/config/customers)
+  const [customerList, setCustomerList] = useState([]);
+
+  // Fetch customer list for dropdown (matches Customers page)
+  useEffect(() => {
+    if (!session?.token) return;
+    const loadCustomers = async () => {
+      try {
+        const response = await fetch('/api/config/customers', {
+          headers: { 'Authorization': `Bearer ${session.token}` },
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setCustomerList(data.data || []);
+        }
+      } catch (err) {
+        console.error('Error loading customers for filter:', err);
+      }
+    };
+    loadCustomers();
+  }, [session?.token]);
+
+  // Fetch Melita offers when Assign LNS modal is open and Melita is selected
+  useEffect(() => {
+    if (!showAssignLnsModal || assignLnsSelectedLns !== 'melita' || !session?.token) {
+      if (assignLnsSelectedLns !== 'melita') {
+        setMelitaOffers([]);
+        setMelitaOffersError(null);
+      }
+      return;
+    }
+    let cancelled = false;
+    setMelitaOffersLoading(true);
+    setMelitaOffersError(null);
+    fetch('/api/lns/melita/offers', {
+      headers: { 'Authorization': `Bearer ${session.token}` },
+    })
+      .then((res) => {
+        if (cancelled) return res;
+        if (!res.ok) return res.json().then((body) => { throw new Error(body?.error || body?.details?.message || res.statusText); });
+        return res.json();
+      })
+      .then((data) => {
+        if (!cancelled) {
+          setMelitaOffers(data?.offers ?? []);
+          setMelitaOffersError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setMelitaOffers([]);
+          setMelitaOffersError(err.message || 'Fehler beim Laden der Offers');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setMelitaOffersLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [showAssignLnsModal, assignLnsSelectedLns, session?.token]);
+
+  // Fetch Thingsstack Device Repository brands
+  useEffect(() => {
+    if (!showAssignLnsModal || assignLnsSelectedLns !== 'thingsstack' || thingsstackInputMethod !== 'repository' || !session?.token) {
+      if (assignLnsSelectedLns !== 'thingsstack' || thingsstackInputMethod !== 'repository') {
+        setThingsstackBrands([]);
+        setThingsstackBrandsError(null);
+        setThingsstackBrandId('');
+        setThingsstackModels([]);
+        setThingsstackModelsError(null);
+        setThingsstackModelId('');
+      }
+      return;
+    }
+    let cancelled = false;
+    setThingsstackBrandsLoading(true);
+    setThingsstackBrandsError(null);
+    fetch('/api/lns/thingsstack/device-repository/brands', {
+      headers: { 'Authorization': `Bearer ${session.token}` },
+    })
+      .then((res) => {
+        if (cancelled) return res;
+        if (!res.ok) return res.json().then((body) => { throw new Error(body?.error || body?.details || res.statusText); });
+        return res.json();
+      })
+      .then((data) => {
+        if (!cancelled) {
+          setThingsstackBrands(data?.brands ?? []);
+          setThingsstackBrandsError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setThingsstackBrands([]);
+          setThingsstackBrandsError(err.message || 'Fehler beim Laden der Device Repository Brands');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setThingsstackBrandsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [showAssignLnsModal, assignLnsSelectedLns, thingsstackInputMethod, session?.token]);
+
+  // Fetch Thingsstack Device Repository models for selected brand
+  useEffect(() => {
+    if (!showAssignLnsModal || assignLnsSelectedLns !== 'thingsstack' || thingsstackInputMethod !== 'repository' || !thingsstackBrandId || !session?.token) {
+      if (!thingsstackBrandId) {
+        setThingsstackModels([]);
+        setThingsstackModelsError(null);
+        setThingsstackModelId('');
+      }
+      return;
+    }
+    let cancelled = false;
+    setThingsstackModelsLoading(true);
+    setThingsstackModelsError(null);
+    setThingsstackModelId('');
+    fetch(`/api/lns/thingsstack/device-repository/models?brandId=${encodeURIComponent(thingsstackBrandId)}`, {
+      headers: { 'Authorization': `Bearer ${session.token}` },
+    })
+      .then((res) => {
+        if (cancelled) return res;
+        if (!res.ok) return res.json().then((body) => { throw new Error(body?.error || body?.details || res.statusText); });
+        return res.json();
+      })
+      .then((data) => {
+        if (!cancelled) {
+          setThingsstackModels(data?.models ?? []);
+          setThingsstackModelsError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setThingsstackModels([]);
+          setThingsstackModelsError(err.message || 'Fehler beim Laden der Device Repository Models');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setThingsstackModelsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [showAssignLnsModal, assignLnsSelectedLns, thingsstackInputMethod, thingsstackBrandId, session?.token]);
+
+  // Fetch Melita device profiles when contract is selected (for Assign LNS)
+  useEffect(() => {
+    if (!showAssignLnsModal || assignLnsSelectedLns !== 'melita' || !assignLnsSelectedOffer || !session?.token) {
+      if (!assignLnsSelectedOffer) {
+        setMelitaProfiles([]);
+        setAssignLnsSelectedProfile('');
+        setMelitaProfilesError(null);
+      }
+      return;
+    }
+    let cancelled = false;
+    setMelitaProfilesLoading(true);
+    setMelitaProfilesError(null);
+    setAssignLnsSelectedProfile('');
+    fetch('/api/lns/melita/device-profiles', {
+      headers: { 'Authorization': `Bearer ${session.token}` },
+    })
+      .then((res) => {
+        if (cancelled) return res;
+        if (!res.ok) return res.json().then((body) => { throw new Error(body?.error || body?.details?.message || res.statusText); });
+        return res.json();
+      })
+      .then((data) => {
+        if (!cancelled) {
+          setMelitaProfiles(data?.profiles ?? []);
+          setMelitaProfilesError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setMelitaProfiles([]);
+          setMelitaProfilesError(err.message || 'Fehler beim Laden der Device Profiles');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setMelitaProfilesLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [showAssignLnsModal, assignLnsSelectedLns, assignLnsSelectedOffer, session?.token]);
+
+  // Fetch Thingsstack applications when Assign LNS modal is open and Thingsstack is selected
+  useEffect(() => {
+    if (!showAssignLnsModal || assignLnsSelectedLns !== 'thingsstack' || !session?.token) {
+      if (assignLnsSelectedLns !== 'thingsstack') {
+        setThingsstackApplications([]);
+        setThingsstackApplicationsError(null);
+      }
+      return;
+    }
+    let cancelled = false;
+    setThingsstackApplicationsLoading(true);
+    setThingsstackApplicationsError(null);
+    fetch('/api/lns/thingsstack/applications', {
+      headers: { 'Authorization': `Bearer ${session.token}` },
+    })
+      .then((res) => {
+        if (cancelled) return res;
+        if (!res.ok) return res.json().then((body) => { throw new Error(body?.error || body?.details?.message || body?.details || res.statusText); });
+        return res.json();
+      })
+      .then((data) => {
+        if (!cancelled) {
+          setThingsstackApplications(data?.offers ?? []);
+          setThingsstackApplicationsError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setThingsstackApplications([]);
+          setThingsstackApplicationsError(err.message || 'Fehler beim Laden der Thingsstack Applications');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setThingsstackApplicationsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [showAssignLnsModal, assignLnsSelectedLns, session?.token]);
 
   // Fetch devices with retry mechanism
   const fetchDevices = useCallback(async (retryCount = 0) => {
@@ -102,6 +357,9 @@ function Inventory() {
     const handleClickOutside = (event) => {
       if (!event.target.closest('.dropdown')) {
         setActiveActionDropdown(null);
+      }
+      if (!event.target.closest('[data-bulk-action-dropdown]')) {
+        setBulkActionDropdownOpen(false);
       }
     };
 
@@ -211,6 +469,15 @@ function Inventory() {
     });
   }, [devices, searchTerm, customerFilter, brandFilter, modelFilter, distributorFilter, hasRelationFilter]);
 
+  // Keep "select all" checkbox indeterminate in sync
+  useEffect(() => {
+    const el = selectAllCheckboxRef.current;
+    if (!el) return;
+    const someSelected = filteredDevices.some(d => selectedDeviceIds.includes(d.id));
+    const allSelected = filteredDevices.length > 0 && filteredDevices.every(d => selectedDeviceIds.includes(d.id));
+    el.indeterminate = someSelected && !allSelected;
+  }, [filteredDevices, selectedDeviceIds]);
+
   // Show loading or access denied if not Superadmin
   if (status === 'loading') {
     return (
@@ -242,15 +509,44 @@ function Inventory() {
 
   // CRUD Operations
   const handleAdd = async (deviceData) => {
+    const deveui = (deviceData.deveui ?? '').toString().trim();
+    if (!deveui) {
+      setError('DevEUI ist ein Pflichtfeld und darf nicht leer sein.');
+      return;
+    }
+    const brandName = (deviceData.brand_name ?? '').toString().trim();
+    if (!brandName) {
+      setError('Brand ist ein Pflichtfeld und darf nicht leer sein.');
+      return;
+    }
+    const modelName = (deviceData.model_name ?? '').toString().trim();
+    if (!modelName) {
+      setError('Model ist ein Pflichtfeld und darf nicht leer sein.');
+      return;
+    }
+    const joineui = (deviceData.joineui ?? '').toString().trim();
+    if (!joineui) {
+      setError('JoinEUI ist ein Pflichtfeld und darf nicht leer sein.');
+      return;
+    }
+    const serialnbr = (deviceData.serialnbr ?? '').toString().trim();
+    if (!serialnbr) {
+      setError('Seriennummer ist ein Pflichtfeld und darf nicht leer sein.');
+      return;
+    }
     try {
+      setError(null);
       const response = await fetch('/api/inventory', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(deviceData)
       });
-      
-      if (!response.ok) throw new Error('Fehler beim Erstellen des Geräts');
-      
+
+      const responseData = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(responseData.message || responseData.error || 'Fehler beim Erstellen des Geräts');
+      }
+
       await fetchDevices(); // Refresh the list
       handleClose();
     } catch (err) {
@@ -350,6 +646,7 @@ function Inventory() {
           name: device.deviceLabel || `Device_${device.deveui}`,
           type: device.model_name || 'Default',
           label: device.deviceLabel || device.deveui,
+          deveui: device.deveui,
           // Add device attributes
           attributes: {
             deveui: device.deveui,
@@ -400,132 +697,396 @@ function Inventory() {
 
   const handleRemoveCustomerAssignment = (device) => {
     setSelectedCustomerForChange(device);
-    setNewCustomerId(''); // Empty string means remove assignment
+    setNewCustomerId('__REMOVE__'); // Pre-select "remove assignment" so user can confirm without picking another customer
     setShowChangeCustomerModal(true);
     setActiveActionDropdown(null);
   };
 
+  const handleBulkAddToThingsBoard = async () => {
+    if (selectedDeviceIds.length === 0) return;
+    const toAdd = devices.filter(d => selectedDeviceIds.includes(d.id));
+    const withoutTb = toAdd.filter(d => !d.tbconnectionid || String(d.tbconnectionid).trim() === '' || String(d.tbconnectionid) === '0');
+    const withTb = toAdd.filter(d => d.tbconnectionid && String(d.tbconnectionid) !== '0' && String(d.tbconnectionid).length > 10);
+    // Allow all: create new or re-link existing (backend returns existing id if device already in TB)
+    const msg = withTb.length > 0 && withoutTb.length > 0
+      ? `${withoutTb.length} Gerät(e) anlegen, ${withTb.length} Verknüpfung prüfen/aktualisieren. Fortfahren?`
+      : withTb.length > 0
+        ? `${toAdd.length} Gerät(e): Verknüpfung mit ThingsBoard prüfen bzw. erneut anlegen. Fortfahren?`
+        : `${withoutTb.length} Gerät(e) in ThingsBoard anlegen?`;
+    if (!confirm(msg)) {
+      setBulkActionDropdownOpen(false);
+      return;
+    }
+    setError(null);
+    setBulkActionDropdownOpen(false);
+    let done = 0;
+    let failed = 0;
+    for (const device of toAdd) {
+      try {
+        const response = await fetch('/api/thingsboard/devices', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: device.deviceLabel || `Device_${device.deveui}`,
+            type: device.model_name || 'Default',
+            label: device.deviceLabel || device.deveui,
+            deveui: device.deveui,
+            attributes: {
+              deveui: device.deveui,
+              joineui: device.joineui,
+              serialnbr: device.serialnbr,
+              brand: device.brand_name,
+              model: device.model_name,
+              distributor: device.distributor_name,
+              ordernbr: device.ordernbr,
+              orderdate: device.orderdate
+            }
+          })
+        });
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.error || errData.details || response.statusText);
+        }
+        const result = await response.json();
+        const tbId = result.id?.id ?? result.id;
+        const updateResponse = await fetch('/api/inventory', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...device, tbconnectionid: tbId })
+        });
+        if (!updateResponse.ok) {
+          console.warn('Device created in ThingsBoard but inventory update failed for', device.id);
+        }
+        done++;
+      } catch (err) {
+        failed++;
+        setError(`ThingsBoard: ${err.message} (Gerät: ${device.deviceLabel || device.deveui})`);
+      }
+    }
+    await fetchDevices();
+    if (failed === 0) {
+      setError(null);
+      alert(`${done} Gerät(e) erfolgreich in ThingsBoard angelegt.`);
+    } else if (done > 0) {
+      alert(`${done} angelegt, ${failed} fehlgeschlagen.`);
+    }
+  };
+
+  const handleBulkRemoveCustomerAssignment = async () => {
+    if (selectedDeviceIds.length === 0) return;
+    if (!confirm(`Customer-Zuordnung für ${selectedDeviceIds.length} Gerät(e) entfernen?`)) return;
+
+    setError(null);
+    try {
+      const toUpdate = devices.filter(d => selectedDeviceIds.includes(d.id));
+      for (const device of toUpdate) {
+        const localResponse = await fetch('/api/inventory', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...device, customerid: null })
+        });
+        if (!localResponse.ok) throw new Error(`Fehler beim Aktualisieren von Gerät ${device.id}`);
+        // Always unassign in ThingsBoard when device has a connection (API only needs deviceId for type=TENANT)
+        const validTbId = device.tbconnectionid && String(device.tbconnectionid).trim() !== '' && String(device.tbconnectionid) !== '0' && String(device.tbconnectionid).length > 10;
+        if (validTbId) {
+          const unassignRes = await fetch(`/api/thingsboard/owner?type=TENANT&deviceId=${encodeURIComponent(device.tbconnectionid)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify([])
+          });
+          if (!unassignRes.ok) {
+            const err = await unassignRes.json().catch(() => ({}));
+            throw new Error(err?.details || err?.error || `ThingsBoard Unassign: ${unassignRes.status}`);
+          }
+        }
+      }
+      await fetchDevices();
+      setSelectedDeviceIds([]);
+      setError(null);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleAssignLns = async () => {
+    if (!assignLnsSelectedLns || selectedDeviceIds.length === 0) {
+      setAssignLnsError('Bitte LNS und mindestens ein Gerät auswählen.');
+      return;
+    }
+    if (!assignLnsSelectedOffer || assignLnsSelectedOffer.trim() === '') {
+      setAssignLnsError(assignLnsSelectedLns === 'thingsstack' ? 'Bitte Application auswählen.' : 'Bitte Offer/Contract auswählen.');
+      return;
+    }
+    if (assignLnsSelectedLns === 'thingsstack' && thingsstackInputMethod === 'repository' && (!thingsstackBrandId || !thingsstackModelId)) {
+      setAssignLnsError('Bitte Device Repository Brand und Model auswählen.');
+      return;
+    }
+    if (assignLnsSelectedLns === 'melita' && (!assignLnsSelectedProfile || assignLnsSelectedProfile.trim() === '')) {
+      setAssignLnsError('Bitte Device Profile auswählen.');
+      return;
+    }
+    setAssignLnsError(null);
+    setIsAssigningLns(true);
+    try {
+      const lnsName = LNS_OPTIONS.find((o) => o.value === assignLnsSelectedLns)?.label || assignLnsSelectedLns || 'Melita';
+      const endpoint = assignLnsSelectedLns === 'thingsstack' ? '/api/lns/thingsstack/assign' : '/api/lns/melita/assign';
+      const body = assignLnsSelectedLns === 'thingsstack'
+        ? {
+            deviceIds: selectedDeviceIds,
+            applicationId: assignLnsSelectedOffer.trim(),
+            lnsAssignmentName: lnsName,
+            thingsstackConfig: {
+              inputMethod: thingsstackInputMethod,
+              frequencyPlanId: thingsstackFrequencyPlanId,
+              macVersion: thingsstackMacVersion,
+              phyVersion: thingsstackPhyVersion,
+              brandId: thingsstackBrandId,
+              modelId: thingsstackModelId,
+            },
+          }
+        : {
+            deviceIds: selectedDeviceIds,
+            contractId: assignLnsSelectedOffer.trim(),
+            deviceProfileId: assignLnsSelectedProfile.trim(),
+            lnsAssignmentName: lnsName,
+          };
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || data?.details || res.statusText);
+      }
+  
+      // Supports both old backend shape ({ success, failed }) and new one
+      // ({ created, alreadyExisted, failed, success }).
+      const created = Number(data?.created ?? 0);
+      const alreadyExisted = Number(data?.alreadyExisted ?? 0);
+      const success = Number(data?.success ?? (created + alreadyExisted));
+      const failed = Number(data?.failed ?? 0);
+      const errors = Array.isArray(data?.errors) ? data.errors : [];
+      const selectedTarget = assignLnsSelectedOffer;
+  
+      await fetchDevices();
+      setShowAssignLnsModal(false);
+      setAssignLnsSelectedLns('');
+      setAssignLnsSelectedOffer('');
+      setAssignLnsSelectedProfile('');
+      setThingsstackInputMethod('manual');
+      setThingsstackFrequencyPlanId('EU_863_870');
+      setThingsstackMacVersion('MAC_V1_0_3');
+      setThingsstackPhyVersion('PHY_V1_0_3_REV_A');
+      setThingsstackBrandId('');
+      setThingsstackModelId('');
+      setSelectedDeviceIds([]);
+  
+      if (failed > 0 && errors.length) {
+        setError(
+          `${created} erstellt, ${alreadyExisted} bereits vorhanden, ${failed} fehlgeschlagen: ${errors.slice(0, 2).join('; ')}`
+        );
+      } else {
+        setError(null);
+        if (assignLnsSelectedLns === 'thingsstack') {
+          if (created > 0 && alreadyExisted > 0) {
+            alert(`${created} Gerät(e) neu erstellt, ${alreadyExisted} bereits vorhanden (Application ${selectedTarget}).`);
+          } else if (created > 0) {
+            alert(`${created} Gerät(e) erfolgreich zu Thingsstack (Application ${selectedTarget}) zugewiesen.`);
+          } else if (alreadyExisted > 0) {
+            alert(`${alreadyExisted} Gerät(e) waren bereits in Thingsstack vorhanden (Application ${selectedTarget}).`);
+          } else if (success > 0) {
+            alert(`${success} Gerät(e) zu Thingsstack (Application ${selectedTarget}) verarbeitet.`);
+          }
+        } else if (success > 0) {
+          alert(`${success} Gerät(e) erfolgreich zu Melita LNS (Contract ${selectedTarget}) zugewiesen.`);
+        }
+      }
+    } catch (err) {
+      setAssignLnsError(err.message);
+    } finally {
+      setIsAssigningLns(false);
+    }
+  };
+
+  const handleRemoveLns = async () => {
+    if (selectedDeviceIds.length === 0) {
+      setError('Bitte mindestens ein Gerät auswählen.');
+      return;
+    }
+    const selectedDevices = devices.filter((d) => selectedDeviceIds.includes(d.id));
+    const thingsstackIds = selectedDevices
+      .filter((d) => String(d.lns_assignment_name || '').toLowerCase().startsWith('thingsstack'))
+      .map((d) => d.id);
+    const melitaIds = selectedDevices
+      .filter((d) => String(d.lns_assignment_name || '').toLowerCase().startsWith('melita'))
+      .map((d) => d.id);
+
+    const hasUnknown = selectedDevices.length !== (thingsstackIds.length + melitaIds.length);
+    if (!window.confirm(
+      `LNS-Zuordnung für ${selectedDeviceIds.length} Gerät(e) entfernen?` +
+      (thingsstackIds.length > 0 ? `\n- Thingsstack: ${thingsstackIds.length}` : '') +
+      (melitaIds.length > 0 ? `\n- Melita: ${melitaIds.length}` : '') +
+      (hasUnknown ? `\n- Hinweis: Einige Geräte konnten keinem LNS zugeordnet werden.` : '')
+    )) {
+      return;
+    }
+    setError(null);
+    setIsRemovingLns(true);
+    try {
+      const results = [];
+
+      if (thingsstackIds.length > 0) {
+        const resTb = await fetch('/api/lns/thingsstack/remove', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deviceIds: thingsstackIds }),
+        });
+        const dataTb = await resTb.json().catch(() => ({}));
+        if (!resTb.ok) throw new Error(dataTb?.error || dataTb?.details || resTb.statusText);
+        results.push({ provider: 'thingsstack', data: dataTb });
+      }
+
+      if (melitaIds.length > 0) {
+        const resMe = await fetch('/api/lns/melita/remove', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deviceIds: melitaIds }),
+        });
+        const dataMe = await resMe.json().catch(() => ({}));
+        if (!resMe.ok) throw new Error(dataMe?.error || dataMe?.details || resMe.statusText);
+        results.push({ provider: 'melita', data: dataMe });
+      }
+
+      await fetchDevices();
+      setSelectedDeviceIds([]);
+      setError(null);
+
+      const allErrors = results.flatMap((r) => r?.data?.errors || []);
+      if (allErrors.length > 0) {
+        setError(allErrors.length > 0 ? `Fehler beim Entfernen: ${allErrors.slice(0, 3).join('; ')}` : null);
+      } else {
+        const removedCount =
+          results.reduce((acc, r) => {
+            if (r.provider === 'thingsstack') return acc + (r.data?.thingsstackRemoved ?? r.data?.success ?? 0);
+            if (r.provider === 'melita') return acc + (r.data?.melitaRemoved ?? r.data?.success ?? 0);
+            return acc;
+          }, 0) || selectedDeviceIds.length;
+        alert(`${removedCount} Gerät(e) erfolgreich von LNS entfernt.`);
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsRemovingLns(false);
+    }
+  };
+
   const handleSaveCustomerChange = async () => {
-    if (!selectedCustomerForChange) return;
-    
-    // Check if we're trying to assign to the same customer (only if we're not removing assignment)
-    if (newCustomerId && selectedCustomerForChange.customerid === newCustomerId) {
+    const isBulk = bulkDeviceIdsForCustomerChange?.length > 0;
+    const devicesToUpdate = isBulk
+      ? devices.filter(d => bulkDeviceIdsForCustomerChange.includes(d.id))
+      : (selectedCustomerForChange ? [selectedCustomerForChange] : []);
+
+    if (devicesToUpdate.length === 0) return;
+    if (!newCustomerId && !isBulk) return;
+    if (isBulk && !newCustomerId) {
+      setError('Bitte wählen Sie einen Customer aus.');
+      return;
+    }
+    if (!isBulk && newCustomerId && selectedCustomerForChange.customerid === newCustomerId) {
       setError('Der neue Customer ist identisch mit dem aktuellen Customer');
       return;
     }
-    
+
     setIsUpdatingCustomer(true);
     setUpdateStatus(null);
     setError(null);
-    
+
     try {
-      // 1. Aktualisiere lokale Datenbank
-      const localResponse = await fetch('/api/inventory', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...selectedCustomerForChange,
-          customerid: newCustomerId === '__REMOVE__' ? null : newCustomerId
-        })
-      });
-      
-      if (!localResponse.ok) throw new Error('Fehler beim Ändern des Customers in der lokalen Datenbank');
-      
-      // 2. Aktualisiere ThingsBoard (nur wenn tbconnectionid vorhanden ist)
-      let thingsboardSuccess = false;
-      if (selectedCustomerForChange.tbconnectionid) {
-        try {
-          // Finde den aktuellen und neuen Customer für ThingsBoard
-          const currentCustomer = devices.find(d => d.customerid === selectedCustomerForChange.customerid);
-          const newCustomer = devices.find(d => d.customerid === newCustomerId);
-          
-          if (currentCustomer && selectedCustomerForChange.tbconnectionid) {
-            // 1. Entferne die aktuelle Zuordnung (setze auf TENANT)
-            const removeResponse = await fetch(`/api/thingsboard/owner?type=TENANT&customerId=${currentCustomer.customerid}&deviceId=${selectedCustomerForChange.tbconnectionid}`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify([])
-            });
-            
-            if (!removeResponse.ok) {
-              const removeError = await removeResponse.json().catch(() => ({}));
-              console.warn('Fehler beim Entfernen der Customer-Zuordnung in ThingsBoard:', removeError);
-            } else {
-              console.log('Customer-Zuordnung erfolgreich entfernt');
-            }
-            
-            // 2. Wenn ein neuer Customer zugewiesen wird, weise ihn zu
-            if (newCustomerId && newCustomerId !== '__REMOVE__') {
-              const newCustomer = devices.find(d => d.customerid === newCustomerId);
-              if (newCustomer) {
-                const assignResponse = await fetch(`/api/thingsboard/owner?type=CUSTOMER&customerId=${newCustomer.customerid}&deviceId=${selectedCustomerForChange.tbconnectionid}`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify([])
-                });
-                
-                if (assignResponse.ok) {
-                  thingsboardSuccess = true;
-                  console.log('Customer erfolgreich in ThingsBoard neu zugeordnet');
-                } else {
-                  const assignError = await assignResponse.json().catch(() => ({}));
-                  console.warn('ThingsBoard Neuzuordnung fehlgeschlagen:', assignError);
-                }
+      let allLocalOk = true;
+      let thingsboardSuccess = true;
+      let anyDeviceHadTbConnection = false;
+      for (const device of devicesToUpdate) {
+        const localResponse = await fetch('/api/inventory', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...device,
+            customerid: newCustomerId === '__REMOVE__' ? null : newCustomerId
+          })
+        });
+        if (!localResponse.ok) {
+          allLocalOk = false;
+          throw new Error('Fehler beim Ändern des Customers in der lokalen Datenbank');
+        }
+        const validTbId = device.tbconnectionid && String(device.tbconnectionid).trim() !== '' && String(device.tbconnectionid) !== '0' && String(device.tbconnectionid).length > 10;
+        if (validTbId && (newCustomerId === '__REMOVE__' || newCustomerId)) {
+          anyDeviceHadTbConnection = true;
+          try {
+            // When removing assignment, always unassign in ThingsBoard (API only needs deviceId for type=TENANT)
+            if (newCustomerId === '__REMOVE__') {
+              const unassignRes = await fetch(`/api/thingsboard/owner?type=TENANT&deviceId=${encodeURIComponent(device.tbconnectionid)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify([])
+              });
+              if (!unassignRes.ok) {
+                const err = await unassignRes.json().catch(() => ({}));
+                throw new Error(err.details || err.error || `Unassign: ${unassignRes.status}`);
               }
-            } else {
-              // Wenn kein neuer Customer oder __REMOVE__, dann war es eine Entfernung - ThingsBoard ist bereits auf TENANT gesetzt
-              thingsboardSuccess = true;
-              console.log('Customer-Zuordnung erfolgreich entfernt - Device ist jetzt dem Tenant zugeordnet');
             }
+            if (newCustomerId && newCustomerId !== '__REMOVE__') {
+              // Use newCustomerId directly (ThingsBoard customer UUID from dropdown), not from devices
+              const assignResponse = await fetch(`/api/thingsboard/owner?type=CUSTOMER&customerId=${encodeURIComponent(newCustomerId)}&deviceId=${encodeURIComponent(device.tbconnectionid)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify([])
+              });
+              if (!assignResponse.ok) {
+                const errData = await assignResponse.json().catch(() => ({}));
+                throw new Error(errData.details || errData.error || `ThingsBoard Assign: ${assignResponse.status}`);
+              }
+            }
+          } catch (tbError) {
+            thingsboardSuccess = false;
+            throw tbError;
           }
-        } catch (tbError) {
-          console.warn('ThingsBoard Update fehlgeschlagen:', tbError);
         }
-      } else {
-        console.log('Keine tbconnectionid vorhanden - ThingsBoard Update übersprungen');
       }
-      
-      await fetchDevices(); // Refresh the list
-      
-      // Status setzen
-      if (!selectedCustomerForChange.tbconnectionid) {
-        setUpdateStatus({
-          type: 'success',
-          message: 'Customer erfolgreich in lokaler Datenbank geändert! (Keine ThingsBoard-Integration verfügbar)'
-        });
-      } else if (thingsboardSuccess) {
-        if (newCustomerId && newCustomerId !== '__REMOVE__') {
-          setUpdateStatus({
-            type: 'success',
-            message: `Customer erfolgreich von "${selectedCustomerForChange.customer_name}" zu "${devices.find(d => d.customerid === newCustomerId)?.customer_name}" geändert!`
-          });
-        } else {
-          setUpdateStatus({
-            type: 'success',
-            message: `Customer-Zuordnung erfolgreich entfernt! Device "${selectedCustomerForChange.deviceLabel || selectedCustomerForChange.id}" ist jetzt dem Tenant zugeordnet.`
-          });
-        }
-      } else {
-        setUpdateStatus({
-          type: 'warning',
-          message: 'Customer in lokaler Datenbank geändert, aber ThingsBoard Update fehlgeschlagen. Bitte überprüfen Sie die Konsole für Details.'
-        });
+
+      await fetchDevices();
+      if (isBulk) {
+        setSelectedDeviceIds(prev => prev.filter(id => !bulkDeviceIdsForCustomerChange.includes(id)));
+        setBulkDeviceIdsForCustomerChange(null);
       }
-      
-      // Modal nach kurzer Verzögerung schließen
+      const newCustomerName = customerList.find(c => (c.id?.id ?? c.id) === newCustomerId)?.name ?? devices.find(d => d.customerid === newCustomerId)?.customer_name;
+      const tbSkipped = !anyDeviceHadTbConnection && devicesToUpdate.some(d => !d.tbconnectionid);
+      const isBulkRemove = isBulk && newCustomerId === '__REMOVE__';
+      setUpdateStatus({
+        type: tbSkipped ? 'warning' : 'success',
+        message: tbSkipped
+          ? (isBulkRemove
+            ? `Geräte nur lokal: Customer-Zuordnung entfernt. Keine ThingsBoard-Aktualisierung: ausgewählte Geräte haben keine ThingsBoard-Verbindung (tbconnectionid).`
+            : isBulk
+              ? `Geräte nur lokal zu "${newCustomerName}" zugeordnet. Keine ThingsBoard-Aktualisierung: ausgewählte Geräte haben keine ThingsBoard-Verbindung (tbconnectionid). Bitte zuerst "In ThingsBoard anlegen" ausführen.`
+              : `Customer nur lokal geändert. Gerät "${selectedCustomerForChange?.deviceLabel || selectedCustomerForChange?.id}" ist nicht in ThingsBoard angelegt (keine tbconnectionid). Bitte zuerst über "In ThingsBoard anlegen" das Gerät in ThingsBoard erstellen, dann erneut die Customer-Zuordnung ändern.`)
+          : (isBulkRemove
+            ? `Customer-Zuordnung für ${devicesToUpdate.length} Gerät(e) erfolgreich entfernt (lokal und ThingsBoard).`
+            : isBulk
+              ? `${devicesToUpdate.length} Geräte erfolgreich zu "${newCustomerName}" zugewiesen (lokal und ThingsBoard).`
+              : (newCustomerId === '__REMOVE__'
+                ? `Customer-Zuordnung erfolgreich entfernt! Device "${selectedCustomerForChange.deviceLabel || selectedCustomerForChange.id}" ist jetzt dem Tenant zugeordnet.`
+                : `Customer erfolgreich zu "${newCustomerName}" geändert (lokal und ThingsBoard).`))
+      });
       setTimeout(() => {
         setShowChangeCustomerModal(false);
         setSelectedCustomerForChange(null);
         setNewCustomerId('');
         setUpdateStatus(null);
       }, 2000);
-      
     } catch (err) {
       setError(err.message);
-      setUpdateStatus({
-        type: 'error',
-        message: `Fehler: ${err.message}`
-      });
+      setUpdateStatus({ type: 'error', message: `Fehler: ${err.message}` });
     } finally {
       setIsUpdatingCustomer(false);
     }
@@ -825,7 +1386,7 @@ function Inventory() {
   return (
     <div className="container-fluid px-4 mt-4">
       <div className="d-flex justify-content-between align-items-center mb-4">
-        <h2 className="text-white">Inventory</h2>
+        <h2 className="text-black">Inventory</h2>
         <div>
           <Button 
             variant="success" 
@@ -891,9 +1452,14 @@ function Inventory() {
             className="form-select-sm"
           >
             <option value="">Alle Customers</option>
-            {Array.from(new Set(devices.map(d => d.customer_name).filter(Boolean))).sort().map(customer => (
-              <option key={customer} value={customer}>{customer}</option>
-            ))}
+            <option value="Keine Zuordnung">Keine Zuordnung</option>
+            {customerList.map((customer) => {
+              const name = customer.name || '';
+              if (!name) return null;
+              return (
+                <option key={customer.id?.id ?? customer.id} value={name}>{name}</option>
+              );
+            })}
           </Form.Select>
         </div>
         <div className="col-md-2">
@@ -943,6 +1509,105 @@ function Inventory() {
             <option value="false">False</option>
           </Form.Select>
         </div>
+        <div className="col-md-2 d-flex align-items-center">
+          <div className="dropdown" data-bulk-action-dropdown>
+            <Button
+              variant="outline-primary"
+              size="sm"
+              id="bulk-action-dropdown"
+              className="dropdown-toggle d-flex align-items-center"
+              disabled={selectedDeviceIds.length === 0}
+              onClick={() => setBulkActionDropdownOpen(prev => !prev)}
+              aria-expanded={bulkActionDropdownOpen}
+              aria-haspopup="true"
+            >
+              Aktionen {selectedDeviceIds.length > 0 && `(${selectedDeviceIds.length})`}
+            </Button>
+            {bulkActionDropdownOpen && selectedDeviceIds.length > 0 && (
+              <>
+                <div
+                  className="dropdown-menu show position-absolute"
+                  style={{ zIndex: 1050, minWidth: '200px' }}
+                  aria-labelledby="bulk-action-dropdown"
+                >
+                  <button
+                    type="button"
+                    className="dropdown-item"
+                    onClick={() => {
+                      setBulkDeviceIdsForCustomerChange([...selectedDeviceIds]);
+                      setSelectedCustomerForChange({
+                        customer_name: `${selectedDeviceIds.length} Geräte ausgewählt`,
+                        customerid: null
+                      });
+                      setNewCustomerId('');
+                      setShowChangeCustomerModal(true);
+                      setBulkActionDropdownOpen(false);
+                    }}
+                  >
+                    <FontAwesomeIcon icon={faUserEdit} className="me-2" />
+                    Assign Device
+                  </button>
+                  <button
+                    type="button"
+                    className="dropdown-item"
+                    onClick={() => {
+                      setBulkDeviceIdsForCustomerChange([...selectedDeviceIds]);
+                      setSelectedCustomerForChange({
+                        customer_name: `${selectedDeviceIds.length} Geräte ausgewählt`,
+                        customerid: null
+                      });
+                      setNewCustomerId('__REMOVE__');
+                      setShowChangeCustomerModal(true);
+                      setBulkActionDropdownOpen(false);
+                    }}
+                  >
+                    <FontAwesomeIcon icon={faUserEdit} className="me-2" />
+                    Remove Assignment
+                  </button>
+                  <button
+                    type="button"
+                    className="dropdown-item"
+                    onClick={() => {
+                      setBulkActionDropdownOpen(false);
+                      setAssignLnsSelectedLns('');
+                      setAssignLnsSelectedOffer('');
+                      setShowAssignLnsModal(true);
+                    }}
+                  >
+                    <FontAwesomeIcon icon={faCircleNodes} className="me-2" />
+                    Assign LNS
+                  </button>
+                  <button
+                    type="button"
+                    className="dropdown-item"
+                    disabled={isRemovingLns || selectedDeviceIds.length === 0}
+                    onClick={() => {
+                      setBulkActionDropdownOpen(false);
+                      handleRemoveLns();
+                    }}
+                  >
+                    <FontAwesomeIcon icon={faCircleNodes} className="me-2" />
+                    Remove LNS
+                  </button>
+                  <button
+                    type="button"
+                    className="dropdown-item"
+                    onClick={() => handleBulkAddToThingsBoard()}
+                  >
+                    <FontAwesomeIcon icon={faCloudUpload} className="me-2" />
+                    Add to Thingsboard
+                  </button>
+                </div>
+                <div
+                  className="position-fixed"
+                  style={{ top: 0, left: 0, right: 0, bottom: 0, zIndex: 1040 }}
+                  onClick={() => setBulkActionDropdownOpen(false)}
+                  aria-hidden="true"
+                />
+              </>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Filter Reset Button */}
@@ -972,6 +1637,21 @@ function Inventory() {
             boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
           }}>
             <tr>
+              <th className="text-center" style={{ width: 44, backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>
+                <Form.Check
+                  type="checkbox"
+                  ref={selectAllCheckboxRef}
+                  checked={filteredDevices.length > 0 && filteredDevices.every(d => selectedDeviceIds.includes(d.id))}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      setSelectedDeviceIds(filteredDevices.map(d => d.id));
+                    } else {
+                      setSelectedDeviceIds(prev => prev.filter(id => !filteredDevices.some(d => d.id === id)));
+                    }
+                  }}
+                  aria-label="Alle auswählen"
+                />
+              </th>
               <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Devicelabel</th>
               <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Customer</th>
               <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Brand</th>
@@ -981,15 +1661,32 @@ function Inventory() {
               <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Lieferdatum</th>
               <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>DevEUI</th>
               <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>JoinEUI</th>
-              <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Seriennummer</th>
+              <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)', maxWidth: 130, width: 130 }}>Seriennummer</th>
               <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Status</th>
               <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Has Relation</th>
+              <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>LNS Assignment</th>
               <th className="text-start" style={{ backgroundColor: 'var(--bs-table-bg)', borderBottom: '2px solid var(--bs-border-color)' }}>Aktionen</th>
             </tr>
           </thead>
           <tbody>
             {filteredDevices.map((device) => (
               <tr key={device.id}>
+                <td className="text-center" style={{ width: 44, verticalAlign: 'middle' }}>
+                  <Form.Check
+                    type="checkbox"
+                    checked={selectedDeviceIds.includes(device.id)}
+                    onChange={(e) => {
+                      e.stopPropagation();
+                      setSelectedDeviceIds(prev =>
+                        e.target.checked
+                          ? [...prev, device.id]
+                          : prev.filter(id => id !== device.id)
+                      );
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    aria-label={`Gerät ${device.deviceLabel || device.id} auswählen`}
+                  />
+                </td>
                 <td>{device.deviceLabel || 'Kein Label'}</td>
                 <td>
                   <div>
@@ -1006,13 +1703,14 @@ function Inventory() {
                 <td>{device.orderdate ? new Date(device.orderdate).toLocaleDateString('de-DE') : '-'}</td>
                 <td>{device.deveui}</td>
                 <td>{device.joineui}</td>
-                <td>{device.serialnbr}</td>
+                <td style={{ maxWidth: 130 }}>{device.serialnbr}</td>
                 <td>{device.status}</td>
                 <td>
                   <span className={`badge ${device.hasrelation ? 'bg-success' : 'bg-secondary'}`}>
                     {device.hasrelation ? 'True' : 'False'}
                   </span>
                 </td>
+                <td>{device.lns_assignment_name ?? '—'}</td>
                 <td>
                   <Button
                     variant="info"
@@ -1075,10 +1773,11 @@ function Inventory() {
                           <button 
                             className="dropdown-item" 
                             onClick={() => handleCreateInThingsBoard(device)}
-                            disabled={device.tbconnectionid} // Disable if already exists in ThingsBoard
                           >
                             <FontAwesomeIcon icon={faCloudUpload} className="me-2" />
-                            {device.tbconnectionid ? 'Bereits in ThingsBoard' : 'In ThingsBoard anlegen'}
+                            {device.tbconnectionid && String(device.tbconnectionid) !== '0' && String(device.tbconnectionid).length > 10
+                              ? 'In ThingsBoard anlegen / Verknüpfung aktualisieren'
+                              : 'In ThingsBoard anlegen'}
                           </button>
                         </li>
                         <li><hr className="dropdown-divider" /></li>
@@ -1115,6 +1814,11 @@ function Inventory() {
           </Modal.Title>
         </Modal.Header>
         <Modal.Body>
+          {modalMode !== 'view' && (
+            <p className="text-muted small mb-3">
+              <span className="text-danger">*</span> = Pflichtfeld
+            </p>
+          )}
           <Form>
             <Form.Group className="mb-3">
               <Form.Label>Devicelabel</Form.Label>
@@ -1144,7 +1848,9 @@ function Inventory() {
               )}
             </Form.Group>
             <Form.Group className="mb-3">
-              <Form.Label>Brand</Form.Label>
+              <Form.Label>
+                Brand <span className="text-danger">*</span>
+              </Form.Label>
               <Form.Control
                 type="text"
                 value={selectedDevice?.brand_name || ''}
@@ -1157,7 +1863,9 @@ function Inventory() {
               />
             </Form.Group>
             <Form.Group className="mb-3">
-              <Form.Label>Model</Form.Label>
+              <Form.Label>
+                Model <span className="text-danger">*</span>
+              </Form.Label>
               <Form.Control
                 type="text"
                 value={selectedDevice?.model_name || ''}
@@ -1208,7 +1916,9 @@ function Inventory() {
               />
             </Form.Group>
             <Form.Group className="mb-3">
-              <Form.Label>DevEUI</Form.Label>
+              <Form.Label>
+                DevEUI <span className="text-danger">*</span>
+              </Form.Label>
               <Form.Control
                 type="text"
                 value={selectedDevice?.deveui || ''}
@@ -1221,7 +1931,9 @@ function Inventory() {
               />
             </Form.Group>
             <Form.Group className="mb-3">
-              <Form.Label>JoinEUI</Form.Label>
+              <Form.Label>
+                JoinEUI <span className="text-danger">*</span>
+              </Form.Label>
               <Form.Control
                 type="text"
                 value={selectedDevice?.joineui || ''}
@@ -1234,7 +1946,9 @@ function Inventory() {
               />
             </Form.Group>
             <Form.Group className="mb-3">
-              <Form.Label>Seriennummer</Form.Label>
+              <Form.Label>
+                Seriennummer <span className="text-danger">*</span>
+              </Form.Label>
               <Form.Control
                 type="text"
                 value={selectedDevice?.serialnbr || ''}
@@ -1244,6 +1958,21 @@ function Inventory() {
                 })}
                 disabled={modalMode === 'view'}
                 placeholder="Seriennummer eingeben"
+              />
+            </Form.Group>
+            <Form.Group className="mb-3">
+              <Form.Label>
+                AppKey <span className="text-danger">*</span>
+              </Form.Label>
+              <Form.Control
+                type="text"
+                value={selectedDevice?.appkey || ''}
+                onChange={(e) => setSelectedDevice({
+                  ...selectedDevice,
+                  appkey: e.target.value
+                })}
+                disabled={modalMode === 'view'}
+                placeholder="AppKey eingeben"
               />
             </Form.Group>
             <Form.Group className="mb-3">
@@ -1275,6 +2004,13 @@ function Inventory() {
           {modalMode !== 'view' && (
             <Button 
               variant="primary"
+              disabled={modalMode === 'add' && (
+                !(selectedDevice?.deveui ?? '').toString().trim() ||
+                !(selectedDevice?.joineui ?? '').toString().trim() ||
+                !(selectedDevice?.serialnbr ?? '').toString().trim() ||
+                !(selectedDevice?.brand_name ?? '').toString().trim() ||
+                !(selectedDevice?.model_name ?? '').toString().trim()
+              )}
               onClick={() => {
                 if (modalMode === 'add') {
                   handleAdd(selectedDevice);
@@ -1300,19 +2036,26 @@ function Inventory() {
       {/* Change Customer Modal */}
       <Modal
         show={showChangeCustomerModal}
-        onHide={() => setShowChangeCustomerModal(false)}
+        onHide={() => {
+          setShowChangeCustomerModal(false);
+          setBulkDeviceIdsForCustomerChange(null);
+        }}
         size="md"
         centered
       >
         <Modal.Header closeButton>
           <Modal.Title>
-            {newCustomerId ? 'Change Customer' : 'Remove Customer Assignment'}
+            {bulkDeviceIdsForCustomerChange?.length && newCustomerId === '__REMOVE__'
+              ? `Customer-Zuordnung entfernen (${bulkDeviceIdsForCustomerChange.length} Geräte)`
+              : bulkDeviceIdsForCustomerChange?.length
+                ? `Assign Device (${bulkDeviceIdsForCustomerChange.length} Geräte)`
+                : (newCustomerId && newCustomerId !== '__REMOVE__' ? 'Change Customer' : 'Remove Customer Assignment')}
           </Modal.Title>
         </Modal.Header>
         <Modal.Body>
           <Form>
             <Form.Group className="mb-3">
-              <Form.Label>Aktueller Customer</Form.Label>
+              <Form.Label>{bulkDeviceIdsForCustomerChange?.length ? 'Ausgewählte Geräte' : 'Aktueller Customer'}</Form.Label>
               <Form.Control
                 type="text"
                 value={selectedCustomerForChange?.customer_name || 'Kein Customer zugeordnet'}
@@ -1328,48 +2071,59 @@ function Inventory() {
               >
                 <option value="">Customer auswählen...</option>
                 <option value="__REMOVE__">-- Customer-Zuordnung entfernen --</option>
-                {Array.from(new Set(devices.map(d => d.customer_name).filter(Boolean))).sort().map(customerName => {
-                  const customerDevice = devices.find(d => d.customer_name === customerName);
+                {customerList.map((customer) => {
+                  const id = customer.id?.id ?? customer.id;
+                  const name = customer.name || '';
+                  if (!id || !name) return null;
                   return (
-                    <option key={customerDevice.customerid} value={customerDevice.customerid}>
-                      {customerName}
-                    </option>
+                    <option key={id} value={id}>{name}</option>
                   );
                 })}
               </Form.Select>
               {newCustomerId === '__REMOVE__' && (
                 <Form.Text className="text-warning">
-                  <strong>Warnung:</strong> Das Gerät wird dem Tenant zugeordnet und die Customer-ID wird aus der lokalen Datenbank entfernt.
+                  <strong>Warnung:</strong> {bulkDeviceIdsForCustomerChange?.length
+                    ? 'Die Geräte werden dem Tenant zugeordnet und die Customer-ID wird aus der lokalen Datenbank entfernt.'
+                    : 'Das Gerät wird dem Tenant zugeordnet und die Customer-ID wird aus der lokalen Datenbank entfernt.'}
                 </Form.Text>
               )}
             </Form.Group>
             
-            {/* ThingsBoard-Status */}
-            <Form.Group className="mb-3">
-              <Form.Label>ThingsBoard-Status</Form.Label>
-              <Form.Control
-                type="text"
-                value={selectedCustomerForChange?.tbconnectionid ? 
-                  `Verfügbar (ID: ${selectedCustomerForChange.tbconnectionid})` : 
-                  'Nicht verfügbar - Nur lokale Änderung möglich'
-                }
-                disabled={true}
-                className={`bg-light ${selectedCustomerForChange?.tbconnectionid ? 'text-success' : 'text-muted'}`}
-              />
+            {/* ThingsBoard-Status - hide in bulk or show generic message */}
+            {!bulkDeviceIdsForCustomerChange?.length && (
+              <Form.Group className="mb-3">
+                <Form.Label>ThingsBoard-Status</Form.Label>
+                <Form.Control
+                  type="text"
+                  value={selectedCustomerForChange?.tbconnectionid ?
+                    `Verfügbar (ID: ${selectedCustomerForChange.tbconnectionid})` :
+                    'Nicht verfügbar - Nur lokale Änderung möglich'
+                  }
+                  disabled={true}
+                  className={`bg-light ${selectedCustomerForChange?.tbconnectionid ? 'text-success' : 'text-muted'}`}
+                />
+                <Form.Text className="text-muted">
+                  {selectedCustomerForChange?.tbconnectionid ?
+                    (newCustomerId === '__REMOVE__' ?
+                      'Gerät wird dem Tenant zugeordnet und Customer-ID entfernt' :
+                      'Gerät wird auch in ThingsBoard aktualisiert'
+                    ) :
+                    'Gerät existiert nur in der lokalen Datenbank'
+                  }
+                </Form.Text>
+              </Form.Group>
+            )}
+            {bulkDeviceIdsForCustomerChange?.length > 0 && (
               <Form.Text className="text-muted">
-                {selectedCustomerForChange?.tbconnectionid ? 
-                  (newCustomerId === '__REMOVE__' ? 
-                    'Gerät wird dem Tenant zugeordnet und Customer-ID entfernt' : 
-                    'Gerät wird auch in ThingsBoard aktualisiert'
-                  ) : 
-                  'Gerät existiert nur in der lokalen Datenbank'
-                }
+                {newCustomerId === '__REMOVE__'
+                  ? 'Die ausgewählten Geräte werden dem Tenant zugeordnet und die Customer-ID wird entfernt.'
+                  : 'Verbundene Geräte werden auch in ThingsBoard aktualisiert.'}
               </Form.Text>
-            </Form.Group>
+            )}
           </Form>
         </Modal.Body>
         <Modal.Footer>
-          <Button variant="secondary" onClick={() => setShowChangeCustomerModal(false)}>
+          <Button variant="secondary" onClick={() => { setShowChangeCustomerModal(false); setBulkDeviceIdsForCustomerChange(null); }}>
             Abbrechen
           </Button>
           <Button 
@@ -1383,7 +2137,269 @@ function Inventory() {
                 Wird aktualisiert...
               </>
             ) : (
-              newCustomerId === '__REMOVE__' ? 'Customer-Zuordnung entfernen' : 'Customer ändern'
+              bulkDeviceIdsForCustomerChange?.length && newCustomerId !== '__REMOVE__'
+                ? 'Geräte zuweisen'
+                : (newCustomerId === '__REMOVE__' ? 'Customer-Zuordnung entfernen' : 'Customer ändern')
+            )}
+          </Button>
+        </Modal.Footer>
+      </Modal>
+
+      {/* Assign LNS Modal */}
+      <Modal
+        show={showAssignLnsModal}
+        onHide={() => {
+          setShowAssignLnsModal(false);
+          setAssignLnsSelectedLns('');
+          setAssignLnsSelectedOffer('');
+          setAssignLnsSelectedProfile('');
+          setThingsstackInputMethod('manual');
+          setThingsstackFrequencyPlanId('EU_863_870');
+          setThingsstackMacVersion('MAC_V1_0_3');
+          setThingsstackPhyVersion('PHY_V1_0_3_REV_A');
+          setThingsstackBrandId('');
+          setThingsstackModelId('');
+          setThingsstackBrands([]);
+          setThingsstackModels([]);
+          setThingsstackBrandsError(null);
+          setThingsstackModelsError(null);
+        }}
+        size="md"
+        centered
+      >
+        <Modal.Header closeButton>
+          <Modal.Title>
+            Assign LNS {selectedDeviceIds.length > 0 && `(${selectedDeviceIds.length} Geräte)`}
+          </Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <Form>
+            <Form.Group className="mb-3">
+              <Form.Label>LNS</Form.Label>
+              <Form.Select
+                value={assignLnsSelectedLns}
+                onChange={(e) => {
+                  setAssignLnsSelectedLns(e.target.value);
+                  setAssignLnsSelectedOffer('');
+                  setAssignLnsSelectedProfile('');
+                  setThingsstackInputMethod('manual');
+                  setThingsstackFrequencyPlanId('EU_863_870');
+                  setThingsstackMacVersion('MAC_V1_0_3');
+                  setThingsstackPhyVersion('PHY_V1_0_3_REV_A');
+                  setThingsstackBrandId('');
+                  setThingsstackModelId('');
+                }}
+              >
+                <option value="">LNS auswählen...</option>
+                {LNS_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </Form.Select>
+            </Form.Group>
+            <Form.Group className="mb-3">
+              <Form.Label>{assignLnsSelectedLns === 'thingsstack' ? 'Application' : 'Offer / Contract'}</Form.Label>
+              <Form.Select
+                value={assignLnsSelectedOffer}
+                onChange={(e) => {
+                  setAssignLnsSelectedOffer(e.target.value);
+                  setAssignLnsSelectedProfile('');
+                }}
+                disabled={
+                  !assignLnsSelectedLns ||
+                  (assignLnsSelectedLns === 'melita' && melitaOffersLoading) ||
+                  (assignLnsSelectedLns === 'thingsstack' && thingsstackApplicationsLoading)
+                }
+              >
+                <option value="">
+                  {!assignLnsSelectedLns
+                    ? 'Zuerst LNS auswählen'
+                    : assignLnsSelectedLns === 'melita' && melitaOffersLoading
+                      ? 'Lade Offers...'
+                      : assignLnsSelectedLns === 'thingsstack' && thingsstackApplicationsLoading
+                        ? 'Lade Applications...'
+                      : assignLnsSelectedLns === 'melita'
+                        ? 'Offer/Contract auswählen...'
+                        : 'Application auswählen...'}
+                </option>
+                {assignLnsSelectedLns === 'melita' && melitaOffers.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+                {assignLnsSelectedLns === 'thingsstack' && thingsstackApplications.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </Form.Select>
+              {assignLnsSelectedLns === 'melita' && melitaOffersError && (
+                <Form.Text className="text-danger">{melitaOffersError}</Form.Text>
+              )}
+              {assignLnsSelectedLns === 'melita' && !melitaOffersError && (
+                <Form.Text className="text-muted">
+                  Offers werden aus dem Melita LNS geladen.
+                </Form.Text>
+              )}
+              {assignLnsSelectedLns && assignLnsSelectedLns !== 'melita' && (
+                <Form.Text className="text-muted">
+                  Applications werden aus Thingsstack geladen (via mwconnections APIkey/URL).
+                </Form.Text>
+              )}
+              {assignLnsSelectedLns === 'thingsstack' && thingsstackApplicationsError && (
+                <Form.Text className="text-danger">{thingsstackApplicationsError}</Form.Text>
+              )}
+            </Form.Group>
+            {assignLnsSelectedLns === 'thingsstack' && assignLnsSelectedOffer && (
+              <>
+                <Form.Group className="mb-3">
+                  <Form.Label>Input method</Form.Label>
+                  <Form.Select
+                    value={thingsstackInputMethod}
+                    onChange={(e) => {
+                      const mode = e.target.value;
+                      setThingsstackInputMethod(mode);
+                      setThingsstackBrandId('');
+                      setThingsstackModelId('');
+                    }}
+                  >
+                    <option value="manual">Enter device specifics manually</option>
+                    <option value="repository">Select device in Device Repository</option>
+                  </Form.Select>
+                </Form.Group>
+                {thingsstackInputMethod === 'manual' && (
+                  <>
+                    <Form.Group className="mb-3">
+                      <Form.Label>Frequency plan</Form.Label>
+                      <Form.Select
+                        value={thingsstackFrequencyPlanId}
+                        onChange={(e) => setThingsstackFrequencyPlanId(e.target.value)}
+                      >
+                        <option value="EU_863_870">EU_863_870</option>
+                        <option value="EU_863_870_TTN">EU_863_870_TTN</option>
+                        <option value="US_902_928_FSB_2">US_902_928_FSB_2</option>
+                      </Form.Select>
+                    </Form.Group>
+                    <Form.Group className="mb-3">
+                      <Form.Label>LoRaWAN MAC version</Form.Label>
+                      <Form.Select
+                        value={thingsstackMacVersion}
+                        onChange={(e) => setThingsstackMacVersion(e.target.value)}
+                      >
+                        <option value="MAC_V1_0_2">MAC_V1_0_2</option>
+                        <option value="MAC_V1_0_3">MAC_V1_0_3</option>
+                        <option value="MAC_V1_1">MAC_V1_1</option>
+                      </Form.Select>
+                    </Form.Group>
+                    <Form.Group className="mb-3">
+                      <Form.Label>LoRaWAN PHY version</Form.Label>
+                      <Form.Select
+                        value={thingsstackPhyVersion}
+                        onChange={(e) => setThingsstackPhyVersion(e.target.value)}
+                      >
+                        <option value="PHY_V1_0_2_REV_B">PHY_V1_0_2_REV_B</option>
+                        <option value="PHY_V1_0_3_REV_A">PHY_V1_0_3_REV_A</option>
+                        <option value="PHY_V1_1_REV_B">PHY_V1_1_REV_B</option>
+                      </Form.Select>
+                    </Form.Group>
+                  </>
+                )}
+                {thingsstackInputMethod === 'repository' && (
+                  <>
+                    <Form.Group className="mb-3">
+                      <Form.Label>End device brand</Form.Label>
+                      <Form.Select
+                        value={thingsstackBrandId}
+                        onChange={(e) => setThingsstackBrandId(e.target.value)}
+                        disabled={thingsstackBrandsLoading}
+                      >
+                        <option value="">{thingsstackBrandsLoading ? 'Lade Brands...' : 'Brand auswählen...'}</option>
+                        {thingsstackBrands.map((opt) => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </Form.Select>
+                      {thingsstackBrandsError && <Form.Text className="text-danger">{thingsstackBrandsError}</Form.Text>}
+                    </Form.Group>
+                    <Form.Group className="mb-3">
+                      <Form.Label>Model</Form.Label>
+                      <Form.Select
+                        value={thingsstackModelId}
+                        onChange={(e) => setThingsstackModelId(e.target.value)}
+                        disabled={!thingsstackBrandId || thingsstackModelsLoading}
+                      >
+                        <option value="">
+                          {!thingsstackBrandId ? 'Zuerst Brand auswählen' : (thingsstackModelsLoading ? 'Lade Models...' : 'Model auswählen...')}
+                        </option>
+                        {thingsstackModels.map((opt) => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </Form.Select>
+                      {thingsstackModelsError && <Form.Text className="text-danger">{thingsstackModelsError}</Form.Text>}
+                    </Form.Group>
+                  </>
+                )}
+              </>
+            )}
+            {assignLnsSelectedLns === 'melita' && assignLnsSelectedOffer && (
+              <Form.Group className="mb-3">
+                <Form.Label>Device Profile</Form.Label>
+                <Form.Select
+                  value={assignLnsSelectedProfile}
+                  onChange={(e) => setAssignLnsSelectedProfile(e.target.value)}
+                  disabled={melitaProfilesLoading}
+                >
+                  <option value="">
+                    {melitaProfilesLoading ? 'Lade Device Profiles...' : 'Device Profile auswählen...'}
+                  </option>
+                  {melitaProfiles.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </Form.Select>
+                {melitaProfilesError && (
+                  <Form.Text className="text-danger">{melitaProfilesError}</Form.Text>
+                )}
+              </Form.Group>
+            )}
+            {assignLnsError && (
+              <Alert variant="danger" onClose={() => setAssignLnsError(null)} dismissible>
+                {assignLnsError}
+              </Alert>
+            )}
+          </Form>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setShowAssignLnsModal(false);
+              setAssignLnsSelectedLns('');
+              setAssignLnsSelectedOffer('');
+              setAssignLnsSelectedProfile('');
+              setThingsstackInputMethod('manual');
+              setThingsstackFrequencyPlanId('EU_863_870');
+              setThingsstackMacVersion('MAC_V1_0_3');
+              setThingsstackPhyVersion('PHY_V1_0_3_REV_A');
+              setThingsstackBrandId('');
+              setThingsstackModelId('');
+              setAssignLnsError(null);
+            }}
+            disabled={isAssigningLns}
+          >
+            Abbrechen
+          </Button>
+          <Button
+            variant="primary"
+            onClick={handleAssignLns}
+            disabled={
+              !assignLnsSelectedLns ||
+              !assignLnsSelectedOffer ||
+              (assignLnsSelectedLns === 'thingsstack' && thingsstackInputMethod === 'repository' && (!thingsstackBrandId || !thingsstackModelId)) ||
+              (assignLnsSelectedLns === 'melita' && (!assignLnsSelectedOffer || !assignLnsSelectedProfile)) ||
+              isAssigningLns
+            }
+          >
+            {isAssigningLns ? (
+              <>
+                <Spinner animation="border" size="sm" className="me-2" />
+                Wird zugewiesen...
+              </>
+            ) : (
+              'Assign LNS'
             )}
           </Button>
         </Modal.Footer>

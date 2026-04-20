@@ -5,10 +5,13 @@ import { getConnection } from '../../../lib/db';
 import { getMssqlConfig } from '../../../lib/mssqlConfig';
 import mqtt from 'mqtt';
 import fs from 'fs';
-import { debugLog, debugWarn } from '../../../lib/appDebug';
+import { getMelitaApiConnection, getMelitaToken } from "../../../lib/melitaAuth";
 
 // Preshared Key für Authentifizierung (optional, für externe Clients)
 const LNS_API_KEY = process.env.LNS_API_KEY;
+const MELITA_DOWNLINK_ENDPOINT = '/api/iot-gateway/lorawan/{deviceEui}/queue';
+const DEFAULT_HTTP_DOWNLINK_PATH = '/api/downlink';
+const SUPPORTED_INTEGRATIONS = new Set(['ttn', 'melita']);
 
 // Hilfsfunktion zur Authentifizierung
 function authenticateRequest(req) {
@@ -36,6 +39,148 @@ function authenticateRequest(req) {
   }
   
   return false;
+}
+
+function normalizeIntegration(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return '';
+  if (raw.includes('melita')) return 'melita';
+  if (raw.includes('thingpark') || raw.includes('actility')) return 'thingpark';
+  if (raw.includes('ttn') || raw.includes('tti') || raw.includes('thingsstack')) return 'ttn';
+  return raw;
+}
+
+function sanitizeHex(input) {
+  return String(input || '').trim().replace(/\s+/g, '').toLowerCase();
+}
+
+function normalizeBaseUrl(url) {
+  const raw = String(url || '').trim();
+  if (!raw) return '';
+  if (/^https?:\/\//i.test(raw)) return raw.replace(/\/+$/, '');
+  return `https://${raw}`.replace(/\/+$/, '');
+}
+
+function resolveHexPayload(body = {}) {
+  const frmPayload = body.frm_payload ?? body.payloadHex;
+  if (frmPayload != null && String(frmPayload).trim() !== '') {
+    const hex = sanitizeHex(frmPayload);
+    if (!/^[0-9a-f]+$/i.test(hex)) {
+      throw new Error('Invalid HEX string format');
+    }
+    return hex;
+  }
+
+  const rawPayload = body.payload;
+  const encoding = String(body.payloadEncoding || '').trim().toLowerCase();
+  if (rawPayload == null || String(rawPayload).trim() === '') {
+    throw new Error('frm_payload (HEX) or payload is required');
+  }
+
+  if (!encoding || encoding === 'hex') {
+    const hex = sanitizeHex(rawPayload);
+    if (!/^[0-9a-f]+$/i.test(hex)) {
+      throw new Error('Invalid HEX string format');
+    }
+    return hex;
+  }
+
+  if (encoding === 'base64') {
+    const base64Value = String(rawPayload).trim();
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(base64Value)) {
+      throw new Error('Invalid base64 string format');
+    }
+    return Buffer.from(base64Value, 'base64').toString('hex');
+  }
+
+  throw new Error('Unsupported payloadEncoding. Use hex or base64.');
+}
+
+async function sendDownlinkToMelita({ deviceEui, payloadHex, confirmed, fPort }) {
+  const melitaConn = await getMelitaApiConnection();
+  if (!melitaConn?.apiKey || !melitaConn?.baseUrl) {
+    throw new Error('Melita API not configured');
+  }
+  const token = await getMelitaToken({ apiKey: melitaConn.apiKey, baseUrl: melitaConn.baseUrl });
+  const cleanEui = String(deviceEui || '').trim().replace(/^eui-/i, '');
+  const payloadBase64 = Buffer.from(payloadHex, 'hex').toString('base64');
+  const endpoint = MELITA_DOWNLINK_ENDPOINT.replace('{deviceEui}', encodeURIComponent(cleanEui));
+  const url = `${String(melitaConn.baseUrl).replace(/\/+$/, '')}${endpoint}`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      accept: 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      confirmed: !!confirmed,
+      data: payloadBase64,
+      devEUI: cleanEui,
+      fPort: Number(fPort),
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`Melita downlink failed: ${response.status} ${text}`.trim());
+  }
+  return response.json().catch(() => ({}));
+}
+
+async function sendDownlinkOverHttpsAdapter({
+  connection,
+  deviceEui,
+  payloadHex,
+  confirmed,
+  fPort,
+  priority,
+  integration,
+  applicationId,
+}) {
+  const baseUrl = normalizeBaseUrl(connection?.url);
+  if (!baseUrl) throw new Error('HTTPS connection URL missing');
+
+  const payloadBase64 = Buffer.from(payloadHex, 'hex').toString('base64');
+  const configuredPath = String(process.env.LNS_HTTP_DOWNLINK_PATH || DEFAULT_HTTP_DOWNLINK_PATH).trim();
+  const downlinkPath = configuredPath.startsWith('/') ? configuredPath : `/${configuredPath}`;
+  const url = `${baseUrl}${downlinkPath}`;
+
+  const headers = {
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+  };
+  const apiKey = String(connection?.apiKey || '').trim();
+  const username = String(connection?.username || connection?.user || '').trim();
+  const password = String(connection?.passwort || connection?.password || '').trim();
+  if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`;
+    headers['x-api-key'] = apiKey;
+  } else if (username && password) {
+    headers.Authorization = `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
+  }
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      integration: normalizeIntegration(integration),
+      applicationId: String(applicationId || '').trim(),
+      deviceEui: String(deviceEui || '').trim().replace(/^eui-/i, ''),
+      fPort: Number(fPort),
+      confirmed: !!confirmed,
+      priority,
+      payloadHex,
+      payloadBase64,
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`HTTPS downlink failed: ${response.status} ${text}`.trim());
+  }
+  return response.json().catch(() => ({}));
 }
 
 /**
@@ -75,26 +220,33 @@ export default async function handler(req, res) {
     
     // Für Logging: Email aus Session oder 'api-key' für externe Clients
     const userEmail = session?.user?.email || 'api-key-client';
+    const userRole = Number(session?.user?.role);
+    const isSuperAdmin = userRole === 1;
 
     // Request-Body validieren
-    const { deviceId, frm_payload, confirmed = false, priority = 'NORMAL' } = req.body;
+    const { deviceId, confirmed = false, priority = 'NORMAL', command } = req.body || {};
 
     if (!deviceId) {
       return res.status(400).json({ error: 'deviceId (ThingsBoard Device ID) is required' });
     }
 
-    if (!frm_payload) {
-      return res.status(400).json({ error: 'frm_payload (HEX) is required' });
+    let payloadHex;
+    try {
+      payloadHex = resolveHexPayload(req.body || {});
+    } catch (payloadErr) {
+      return res.status(400).json({ error: payloadErr.message });
     }
 
-    // HEX-Payload validieren
-    if (typeof frm_payload !== 'string') {
-      return res.status(400).json({ error: 'frm_payload must be a HEX string' });
-    }
-
-    // HEX-String validieren
-    if (!/^[0-9a-fA-F]+$/.test(frm_payload)) {
-      return res.status(400).json({ error: 'Invalid HEX string format' });
+    // Authorization rule:
+    // - Superadmin (role=1): can send both RAW HEX and preset commands.
+    // - Regular users: only preset commands, identified by "command" in request body.
+    // - API key clients keep existing behavior.
+    const isPresetCommandFlow = typeof command === 'string' && command.trim() !== '';
+    if (session && !isApiKeyAuth && !isSuperAdmin && !isPresetCommandFlow) {
+      return res.status(403).json({
+        error: 'Insufficient permissions for RAW HEX downlink',
+        details: 'Nur Superadmins dürfen RAW HEX senden. Reguläre Benutzer dürfen nur Preset-Kommandos senden.',
+      });
     }
 
     // Priority validieren
@@ -103,15 +255,15 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: `priority must be one of: ${validPriorities.join(', ')}` });
     }
 
-    // ThingsBoard-Authentifizierung
+    // ThingsBoard-Authentifizierung (tenant credentials for server-side operations)
     const THINGSBOARD_URL = process.env.THINGSBOARD_URL;
-    const THINGSBOARD_USERNAME = process.env.THINGSBOARD_USERNAME;
-    const THINGSBOARD_PASSWORD = process.env.THINGSBOARD_PASSWORD;
+    const tbUser = process.env.TENNANT_THINGSBOARD_USERNAME || process.env.THINGSBOARD_USERNAME;
+    const tbPass = process.env.TENNANT_THINGSBOARD_PASSWORD || process.env.THINGSBOARD_PASSWORD;
 
-    if (!THINGSBOARD_URL || !THINGSBOARD_USERNAME || !THINGSBOARD_PASSWORD) {
+    if (!THINGSBOARD_URL || !tbUser || !tbPass) {
       return res.status(500).json({
         error: 'ThingsBoard configuration incomplete',
-        details: 'Missing THINGSBOARD_URL, THINGSBOARD_USERNAME, or THINGSBOARD_PASSWORD in environment variables'
+        details: 'Missing THINGSBOARD_URL and TENNANT_THINGSBOARD_USERNAME/PASSWORD (or THINGSBOARD_USERNAME/PASSWORD) in environment variables'
       });
     }
 
@@ -124,8 +276,8 @@ export default async function handler(req, res) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          username: THINGSBOARD_USERNAME,
-          password: THINGSBOARD_PASSWORD
+          username: tbUser,
+          password: tbPass
         }),
       });
 
@@ -214,6 +366,43 @@ export default async function handler(req, res) {
 
       // name2 aus integration und applicationid erstellen
       name2 = `${integration}:${applicationid}`;
+
+      const normalizedIntegration = normalizeIntegration(integration);
+      if (!SUPPORTED_INTEGRATIONS.has(normalizedIntegration)) {
+        return res.status(422).json({
+          error: 'Unsupported integration for downlink delivery',
+          integration: normalizedIntegration || 'unknown',
+          supportedIntegrations: Array.from(SUPPORTED_INTEGRATIONS),
+        });
+      }
+      if (normalizedIntegration === 'melita') {
+        const melitaResult = await sendDownlinkToMelita({
+          deviceEui,
+          payloadHex,
+          confirmed,
+          fPort: Number(req.body?.fPort ?? f_port),
+        });
+
+        return res.status(200).json({
+          success: true,
+          message: 'Downlink message sent successfully',
+          integration: normalizedIntegration,
+          transport: 'https',
+          encoding: { input: 'hex', provider: 'base64' },
+          deviceId,
+          deviceEui,
+          payload: {
+            frm_payload_hex: payloadHex,
+            frm_payload_base64: Buffer.from(payloadHex, 'hex').toString('base64'),
+            confirmed,
+            f_port: Number(req.body?.fPort ?? f_port),
+            priority,
+          },
+          result: melitaResult,
+          timestamp: new Date().toISOString(),
+          user: userEmail,
+        });
+      }
     } catch (error) {
       console.error('[LNS] Error fetching ThingsBoard attributes:', error);
       return res.status(500).json({
@@ -223,8 +412,8 @@ export default async function handler(req, res) {
       });
     }
 
-    // Weiter mit der bestehenden Logik, verwende die ermittelten Werte
-    // (name2, deviceEui, f_port wurden jetzt aus ThingsBoard geholt)
+    // Weiter mit der bestehenden Logik; fPort kann pro Request überschrieben werden.
+    const effectiveFPort = Number(req.body?.fPort ?? f_port);
 
     const mssqlConfig = getMssqlConfig();
 
@@ -264,9 +453,9 @@ export default async function handler(req, res) {
           connectionResult = await pool.request()
             .input('name2', sql.NVarChar, name2)
             .query(`
-              SELECT name2, [user] as username, passwort, url, type
+              SELECT name2, [user] as username, passwort, url, type, [APIkey] AS apiKey
               FROM ${tableName}
-              WHERE name2 = @name2 AND type = 0
+              WHERE name2 = @name2
             `);
           // Erfolgreich, breche Schleife ab
           break;
@@ -281,7 +470,7 @@ export default async function handler(req, res) {
       // debugLog('************************************************')   
       
       // Wenn alle Versuche fehlgeschlagen sind
-      if (!connectionResult || lastError) {
+      if (!connectionResult) {
         console.error('[LNS] Database query error:', lastError);
         return res.status(500).json({
           error: 'Database query failed',
@@ -304,9 +493,9 @@ export default async function handler(req, res) {
 
     if (connectionResult.recordset.length === 0) {
       return res.status(404).json({ 
-        error: 'Network connection not found or not MQTT type',
+        error: 'Network connection not found',
         name2: name2,
-        details: 'No connection found with the specified name2 and type=0 (MQTT)'
+        details: 'No connection found with the specified name2'
       });
     }
 
@@ -319,6 +508,41 @@ export default async function handler(req, res) {
       if (parts.length >= 2) {
         applicationId = parts.slice(1).join(':'); // Falls mehrere Doppelpunkte vorhanden sind
       }
+    }
+
+    const connectionType = Number(connection.type);
+    const normalizedIntegration = normalizeIntegration(deviceAttributes.integration);
+    if (connectionType === 1) {
+      const httpResult = await sendDownlinkOverHttpsAdapter({
+        connection,
+        deviceEui,
+        payloadHex,
+        confirmed,
+        fPort: effectiveFPort,
+        priority,
+        integration: normalizedIntegration,
+        applicationId,
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'Downlink message sent successfully',
+        integration: normalizedIntegration || 'unknown',
+        transport: 'https',
+        encoding: { input: 'hex', provider: 'hex/base64' },
+        deviceId,
+        deviceEui,
+        payload: {
+          frm_payload_hex: payloadHex,
+          frm_payload_base64: Buffer.from(payloadHex, 'hex').toString('base64'),
+          confirmed,
+          f_port: effectiveFPort,
+          priority,
+        },
+        result: httpResult,
+        timestamp: new Date().toISOString(),
+        user: userEmail,
+      });
     }
 
     
@@ -397,7 +621,7 @@ export default async function handler(req, res) {
     });
 
     // HEX-Payload zu Base64 konvertieren (wie im Beispiel)
-    const hexBuffer = Buffer.from(frm_payload, 'hex');
+    const hexBuffer = Buffer.from(payloadHex, 'hex');
     const base64Payload = hexBuffer.toString('base64');
 
     // Device EUI Format normalisieren: Falls kein "eui-" Präfix vorhanden ist, hinzufügen
@@ -413,7 +637,7 @@ export default async function handler(req, res) {
     const downlinkMessage = {
       downlinks: [
         {
-          f_port: parseInt(f_port),
+          f_port: parseInt(effectiveFPort),
           frm_payload: base64Payload,
           confirmed: confirmed,
           priority: priority
@@ -451,8 +675,8 @@ export default async function handler(req, res) {
             deviceEuiNormalized: normalizedDeviceEui,
             topic: topic,
             payload: {
-              f_port: parseInt(f_port),
-              frm_payload_hex: frm_payload,
+              f_port: parseInt(effectiveFPort),
+              frm_payload_hex: payloadHex,
               frm_payload_base64: base64Payload,
               confirmed: confirmed,
               priority: priority
