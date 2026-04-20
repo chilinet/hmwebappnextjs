@@ -1,6 +1,6 @@
 import { useRouter } from 'next/router';
 import { useSession } from 'next-auth/react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faArrowLeft, faBuilding, faIndustry, faMicrochip, faChevronDown, faChevronRight, faRotateRight, faPlus, faCheck, faXmark, faMinus, faSearch, faTimes, faImage, faUpload, faTrash, faEye, faStar, faEdit, faSitemap } from '@fortawesome/free-solid-svg-icons';
 import { Tree } from '@minoru/react-dnd-treeview';
@@ -73,6 +73,10 @@ export default function Structure() {
   const [selectedDevice, setSelectedDevice] = useState('');
   const [heaterDevices, setHeaterDevices] = useState([]);
   const [operationalDevice, setOperationalDevice] = useState('');
+  /** Nur bei echtem Node-Wechsel Bilder leeren (nicht beim Tab-Wechsel). */
+  const lastImagesNodeRef = useRef(null);
+  /** Verhindert, dass ein verzögertes /assets-Response einen bereits gewechselten Node überschreibt. */
+  const assetDetailsFetchTargetRef = useRef(null);
 
   // Check if user has Superadmin role
   useEffect(() => {
@@ -162,14 +166,22 @@ export default function Structure() {
     }
   }, [customerData?.customerid]);
 
-  // Load images when a node is selected
+  // Bilder nur laden wenn Tab „Bilder“ aktiv — spart 1–2 Requests pro Node-Wechsel
   useEffect(() => {
-    if (selectedNode?.id && !selectedNode.id.startsWith('temp_')) {
-      fetchImages(selectedNode.id);
-    } else {
+    if (!selectedNode?.id || selectedNode.id.startsWith('temp_')) {
       setImages([]);
+      lastImagesNodeRef.current = null;
+      return;
     }
-  }, [selectedNode?.id]);
+    const idChanged = lastImagesNodeRef.current !== selectedNode.id;
+    if (idChanged) {
+      setImages([]);
+      lastImagesNodeRef.current = selectedNode.id;
+    }
+    if (activeTab === 'images') {
+      fetchImages(selectedNode.id);
+    }
+  }, [selectedNode?.id, activeTab]);
 
   // Load devices when image type changes to "Heizkörper"
   useEffect(() => {
@@ -323,9 +335,12 @@ export default function Structure() {
 
   const fetchNodeDetails = async (node) => {
     if (!node) return;
-    
+
+    const nodeId = node.id;
+    assetDetailsFetchTargetRef.current = nodeId;
+
     const baseDetails = {
-      id: node.id,
+      id: nodeId,
       name: node.name || node.text,
       label: node.label || node.text,
       type: node.type || node.data?.type || '',
@@ -337,42 +352,78 @@ export default function Structure() {
       hasPir: node.hasPir ?? node.data?.hasPir ?? false
     };
 
-    // Bei bestehendem Asset (UUID) Server-Attribute aus ThingsBoard (u. a. operationalMode, extTempDevice)
-    const isExistingAsset = node.id && typeof node.id === 'string' && !node.id.startsWith('temp_') && node.id.length > 30;
+    // Sofort aus Baumdaten anzeigen — ThingsBoard-Request läuft danach (fühlt sich schneller an)
+    setNodeDetails(baseDetails);
+    setOperationalMode(String(baseDetails.operationalMode));
+    setOperationalDevice(baseDetails.operationalDevice || '');
+
+    // Bei bestehendem Asset (UUID) Server-Attribute nachziehen (überschreibt bei Bedarf)
+    const isExistingAsset =
+      nodeId &&
+      typeof nodeId === 'string' &&
+      !nodeId.startsWith('temp_') &&
+      nodeId.length > 30;
     if (isExistingAsset && session?.token) {
       try {
-        const res = await fetch(`/api/config/assets/${node.id}`, {
-          headers: { 'Authorization': `Bearer ${session.token}` }
+        const res = await fetch(`/api/config/assets/${nodeId}`, {
+          headers: { Authorization: `Bearer ${session.token}` }
         });
         if (res.ok) {
           const data = await res.json();
+          if (assetDetailsFetchTargetRef.current !== nodeId) {
+            return;
+          }
           const attr = data.attributes;
           if (attr) {
-            if (attr.hasPir !== undefined) {
-              baseDetails.hasPir = attr.hasPir === true || attr.hasPir === 'true';
-            }
-            if (attr.operationalMode !== undefined && attr.operationalMode !== null) {
-              baseDetails.operationalMode = normalizeStructureOperationalMode(attr.operationalMode);
-            }
-            const extDev =
-              attr.operationalDevice !== undefined && attr.operationalDevice !== null && attr.operationalDevice !== ''
-                ? attr.operationalDevice
-                : attr.extTempDevice;
-            if (extDev !== undefined && extDev !== null && extDev !== '') {
-              const devStr = typeof extDev === 'object' && extDev?.id?.id ? extDev.id.id : String(extDev);
-              baseDetails.operationalDevice = devStr;
-              baseDetails.extTempDevice = devStr;
-            }
+            setNodeDetails((prev) => {
+              if (!prev || prev.id !== nodeId) return prev;
+              const next = { ...prev };
+              if (attr.hasPir !== undefined) {
+                next.hasPir = attr.hasPir === true || attr.hasPir === 'true';
+              }
+              if (attr.operationalMode !== undefined && attr.operationalMode !== null) {
+                next.operationalMode = normalizeStructureOperationalMode(attr.operationalMode);
+              }
+              const extDev =
+                attr.operationalDevice !== undefined &&
+                attr.operationalDevice !== null &&
+                attr.operationalDevice !== ''
+                  ? attr.operationalDevice
+                  : attr.extTempDevice;
+              if (extDev !== undefined && extDev !== null && extDev !== '') {
+                const devStr =
+                  typeof extDev === 'object' && extDev?.id?.id ? extDev.id.id : String(extDev);
+                next.operationalDevice = devStr;
+                next.extTempDevice = devStr;
+              }
+              return next;
+            });
+            setOperationalMode((prev) => {
+              if (attr.operationalMode !== undefined && attr.operationalMode !== null) {
+                return String(normalizeStructureOperationalMode(attr.operationalMode));
+              }
+              return prev;
+            });
+            setOperationalDevice((prev) => {
+              const extDev =
+                attr.operationalDevice !== undefined &&
+                attr.operationalDevice !== null &&
+                attr.operationalDevice !== ''
+                  ? attr.operationalDevice
+                  : attr.extTempDevice;
+              if (extDev !== undefined && extDev !== null && extDev !== '') {
+                const devStr =
+                  typeof extDev === 'object' && extDev?.id?.id ? extDev.id.id : String(extDev);
+                return devStr;
+              }
+              return prev;
+            });
           }
         }
       } catch (e) {
         console.warn('Could not fetch asset attributes from ThingsBoard:', e);
       }
     }
-
-    setNodeDetails(baseDetails);
-    setOperationalMode(String(baseDetails.operationalMode));
-    setOperationalDevice(baseDetails.operationalDevice || '');
   };
 
   const handleNodeSelect = (node) => {
@@ -1205,45 +1256,22 @@ export default function Structure() {
   // Image management functions
   const fetchImages = async (assetId) => {
     if (!assetId) return;
-    
+
     setLoadingImages(true);
     try {
-      // Lade sowohl Bilder als auch Geräte parallel
-      const [imagesResponse, devicesResponse] = await Promise.all([
-        fetch(`/api/structure/images/${assetId}`, {
-          headers: {
-            'Authorization': `Bearer ${session.token}`
-          }
-        }),
-        fetch(`/api/config/assets/${assetId}/devices`, {
-          headers: {
-            'Authorization': `Bearer ${session.token}`
-          }
-        })
-      ]);
+      const imagesResponse = await fetch(`/api/structure/images/${assetId}`, {
+        headers: {
+          Authorization: `Bearer ${session.token}`
+        }
+      });
 
       if (!imagesResponse.ok) {
         throw new Error('Failed to fetch images');
       }
 
-      if (!devicesResponse.ok) {
-        throw new Error('Failed to fetch devices');
-      }
-
       const imagesData = await imagesResponse.json();
-      const devicesData = await devicesResponse.json();
-      
-      // Setze die Geräte für die Device-Label-Funktion
-      setDevices(devicesData.assigned || []);
-      
-      // Setze die Bilder
       setImages(imagesData.images || []);
-      
-      console.log('Bilder und Geräte geladen:', {
-        images: imagesData.images,
-        devices: devicesData.assigned
-      });
-      
+      // Geräte: separater useEffect (fetchDevices) — kein doppelter /devices-Aufruf
     } catch (error) {
       console.error('Error fetching images:', error);
       setError('Fehler beim Laden der Bilder');
