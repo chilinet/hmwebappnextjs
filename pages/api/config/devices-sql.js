@@ -3,6 +3,7 @@ import { authOptions } from '../auth/[...nextauth]';
 import { getPgConnection } from '../../../lib/pgdb.js';
 import { withPoolRetry } from '../../../lib/db';
 import sql from 'mssql';
+import { debugLog, debugWarn } from '../../../lib/appDebug';
 import {
   SUBTREE_CTE,
   DEVICE_SELECT_BODY,
@@ -132,7 +133,7 @@ export default async function handler(req, res) {
     try {
       serialById = await getSerialNumbersByTbConnectionIds(rows.map((r) => r.device_id));
     } catch (e) {
-      console.warn('devices-sql: inventory (MSSQL) skipped:', e.message);
+      debugWarn('devices-sql: inventory (MSSQL) skipped:', e.message);
     }
 
     const devices = rows.map((row) => mapRowToDevice(row, serialById));

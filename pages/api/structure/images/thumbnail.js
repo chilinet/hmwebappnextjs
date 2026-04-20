@@ -3,6 +3,7 @@ import { authOptions } from '../../auth/[...nextauth]';
 import sharp from 'sharp';
 import fs from 'fs';
 import path from 'path';
+import { debugLog, debugWarn } from '../../../../lib/appDebug';
 
 // Thumbnail-Konfiguration
 const THUMBNAIL_CONFIG = {
@@ -62,7 +63,7 @@ const generateThumbnail = async (imageUrl, imageId) => {
     const thumbnailPath = getThumbnailPath(imageId);
     fs.writeFileSync(thumbnailPath, thumbnailBuffer);
     
-    console.log(`Thumbnail generated for image ${imageId}: ${thumbnailPath}`);
+    debugLog(`Thumbnail generated for image ${imageId}: ${thumbnailPath}`);
     
     return getThumbnailUrl(imageId);
   } catch (error) {

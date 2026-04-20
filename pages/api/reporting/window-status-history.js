@@ -1,4 +1,5 @@
 import { getPgConnection } from '../../../lib/pgdb.js';
+import { debugLog, debugWarn } from '../../../lib/appDebug';
 
 // Preshared Key für Authentifizierung
 const PRESHARED_KEY = process.env.REPORTING_PRESHARED_KEY || 'default-reporting-key-2024';
@@ -114,7 +115,7 @@ export default async function handler(req, res) {
       const startTs = startDate.getTime();
       const endTs = endDate.getTime();
       
-      console.log('Window Status History API Query:', {
+      debugLog('Window Status History API Query:', {
         deviceId,
         startTs,
         endTs,

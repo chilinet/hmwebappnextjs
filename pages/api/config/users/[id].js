@@ -1,8 +1,9 @@
 import { getServerSession } from 'next-auth/next';
 import sql from 'mssql';
 import { authOptions } from '../../../../lib/authOptions';
-import { convertToTreeViewFormat, normAssetId } from '../../../../lib/heating-control/treeUtils';
+import { validateDefaultEntryAssetForCustomer } from '../../../../lib/userDefaultEntryAsset';
 import { withPoolRetry } from '../../../../lib/db';
+import { debugLog, debugWarn } from '../../../../lib/appDebug';
 
 export default async function handler(req, res) {
   const { id } = req.query
@@ -23,16 +24,16 @@ export default async function handler(req, res) {
     });
   }
 
-  console.log('************************************************');
-  console.log(req.method);
-  console.log('************************************************');
+  debugLog('************************************************');
+  debugLog(req.method);
+  debugLog('************************************************');
 
   try {
     await withPoolRetry(async (pool) => {
     switch (req.method) {
       case 'GET':
         // Einzelnen Benutzer laden
-        console.log('GET');
+        debugLog('GET');
         const userResult = await pool.request()
           .input('id', sql.Int, id)
           .query(`
@@ -63,7 +64,7 @@ export default async function handler(req, res) {
         }
 
         const userData = user.recordset[0]
-        console.log('Raw user data from DB:', userData) // Debug Log
+        debugLog('Raw user data from DB:', userData) // Debug Log
 
         // Wenn ein Customer ID vorhanden ist, hole die Daten von ThingsBoard
         if (userData.customerid) {
@@ -84,7 +85,7 @@ export default async function handler(req, res) {
           }
         }
 
-        console.log('Processed user data:', userData) // Debug Log
+        debugLog('Processed user data:', userData) // Debug Log
 
         return res.status(200).json({
           success: true,
@@ -111,7 +112,7 @@ export default async function handler(req, res) {
           email, firstName, lastName, role, customerid, status,
           defaultEntryAssetId, defaultEntryOverrideUser
         } = req.body;
-        console.log('Updating user:', { id, email, firstName, lastName, role, customerid, status, defaultEntryAssetId, defaultEntryOverrideUser });
+        debugLog('Updating user:', { id, email, firstName, lastName, role, customerid, status, defaultEntryAssetId, defaultEntryOverrideUser });
 
         const wantsEntryUpdate = defaultEntryAssetId !== undefined || defaultEntryOverrideUser !== undefined;
 
@@ -187,26 +188,18 @@ export default async function handler(req, res) {
             if (targetRow.recordset.length === 0) {
               return res.status(404).json({ success: false, error: 'Zielbenutzer nicht gefunden' });
             }
-            const cid = targetRow.recordset[0].customerid;
-            if (!cid) {
-              return res.status(400).json({ success: false, error: 'Kunde fehlt – kein Einstiegsknoten möglich' });
-            }
-            const treeRes = await pool.request()
-              .input('customer_id', sql.UniqueIdentifier, cid)
-              .query(`SELECT tree FROM customer_settings WHERE customer_id = @customer_id`);
-            if (treeRes.recordset.length === 0) {
-              return res.status(400).json({ success: false, error: 'Keine Struktur für diesen Kunden' });
-            }
-            let treeParsed;
-            try {
-              treeParsed = JSON.parse(treeRes.recordset[0].tree);
-            } catch {
-              return res.status(500).json({ success: false, error: 'Strukturdaten ungültig' });
-            }
-            const flat = convertToTreeViewFormat(Array.isArray(treeParsed) ? treeParsed : []);
-            const found = flat.some((n) => n.id && normAssetId(n.id) === normAssetId(raw));
-            if (!found) {
-              return res.status(400).json({ success: false, error: 'Knoten gehört nicht zur Mandantenstruktur' });
+            const dbCustomer = targetRow.recordset[0].customerid;
+            const effectiveCustomerId =
+              customerid !== undefined &&
+              customerid !== null &&
+              String(customerid).trim() !== ''
+                ? String(customerid).trim()
+                : dbCustomer
+                  ? String(dbCustomer).trim()
+                  : null;
+            const v = await validateDefaultEntryAssetForCustomer(pool, effectiveCustomerId, raw);
+            if (!v.ok) {
+              return res.status(v.status).json({ success: false, error: v.error });
             }
           }
           updateFields.push('default_entry_asset_id = @defaultEntryAssetId');
@@ -264,7 +257,7 @@ export default async function handler(req, res) {
 
       case 'DELETE':
         // Benutzer löschen
-        console.log('DELETE');
+        debugLog('DELETE');
         await pool.request()
           .input('id', sql.Int, id)
           .query(`
@@ -278,7 +271,7 @@ export default async function handler(req, res) {
         })
 
       default:
-        console.log('default');
+        debugLog('default');
         res.setHeader('Allow', ['GET', 'PUT', 'DELETE'])
         res.status(405).end(`Method ${req.method} Not Allowed`)
     }

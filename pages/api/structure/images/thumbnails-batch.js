@@ -3,6 +3,7 @@ import { authOptions } from '../../auth/[...nextauth]';
 import sharp from 'sharp';
 import fs from 'fs';
 import path from 'path';
+import { debugLog, debugWarn } from '../../../../lib/appDebug';
 
 // Thumbnail-Konfiguration
 const THUMBNAIL_CONFIG = {
@@ -48,7 +49,7 @@ const generateThumbnail = async (imageUrl, imageId, req) => {
       fullImageUrl = `${baseUrl}${imageUrl}`;
     }
     
-    console.log(`Fetching image from: ${fullImageUrl}`);
+    debugLog(`Fetching image from: ${fullImageUrl}`);
     
     // Lade das Originalbild mit Session-Cookies
     const response = await fetch(fullImageUrl, {
@@ -76,7 +77,7 @@ const generateThumbnail = async (imageUrl, imageId, req) => {
     const thumbnailPath = getThumbnailPath(imageId);
     fs.writeFileSync(thumbnailPath, thumbnailBuffer);
     
-    console.log(`Thumbnail generated for image ${imageId}: ${thumbnailPath}`);
+    debugLog(`Thumbnail generated for image ${imageId}: ${thumbnailPath}`);
     
     return getThumbnailUrl(imageId);
   } catch (error) {

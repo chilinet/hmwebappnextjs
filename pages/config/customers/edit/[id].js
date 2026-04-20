@@ -23,7 +23,8 @@ export default function EditCustomer() {
     phone: '',
     tb_username: '',
     tb_password: '',
-    prefix: ''
+    prefix: '',
+    heatplan_on_level: false
   })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -40,13 +41,18 @@ export default function EditCustomer() {
     console.log('Fetching customer with ID:', id);
     console.log('+++++++++++++++++++++++++++++++++++++++++');
     try {
-      const [customerResponse, settingsResponse] = await Promise.all([
+      const [customerResponse, settingsResponse, attributesResponse] = await Promise.all([
         fetch(`/api/config/customers/${id}`, {
           headers: {
             'Authorization': `Bearer ${session.token}`
           }
         }),
         fetch(`/api/config/customers/${id}/settings`, {
+          headers: {
+            'Authorization': `Bearer ${session.token}`
+          }
+        }),
+        fetch(`/api/config/customers/${id}/attributes`, {
           headers: {
             'Authorization': `Bearer ${session.token}`
           }
@@ -59,6 +65,11 @@ export default function EditCustomer() {
 
       const customerData = await customerResponse.json();
       const settingsData = await settingsResponse.json();
+      let heatplan_on_level = false;
+      if (attributesResponse.ok) {
+        const attributesData = await attributesResponse.json();
+        heatplan_on_level = !!attributesData.heatplan_on_level;
+      }
       
      // console.log('+++++++++++++++++++++++++++++++++++++++++');
      // console.log('Customer Data:', customerData);
@@ -69,7 +80,8 @@ export default function EditCustomer() {
         ...customerData.data,
         tb_username: settingsData.data.tb_username || '',
         tb_password: settingsData.data.tb_password || '',
-        prefix: settingsData.data.prefix || ''
+        prefix: settingsData.data.prefix || '',
+        heatplan_on_level
       });
     } catch (error) {
       setError('Fehler beim Laden der Kundendaten');
@@ -113,7 +125,18 @@ export default function EditCustomer() {
         })
       });
 
-      if (!customerResponse.ok || !settingsResponse.ok) {
+      const attributesSaveResponse = await fetch(`/api/config/customers/${id}/attributes`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.token}`
+        },
+        body: JSON.stringify({
+          heatplan_on_level: !!customer.heatplan_on_level
+        })
+      });
+
+      if (!customerResponse.ok || !settingsResponse.ok || !attributesSaveResponse.ok) {
         throw new Error('Fehler beim Speichern');
       }
 
@@ -126,8 +149,16 @@ export default function EditCustomer() {
   };
 
   const handleChange = (e) => {
-    const { name, value } = e.target;
-    
+    const { name, value, type, checked } = e.target;
+
+    if (type === 'checkbox') {
+      setCustomer((prev) => ({
+        ...prev,
+        [name]: checked
+      }));
+      return;
+    }
+
     if (name === 'prefix') {
       const upperValue = value.toUpperCase();
       if (upperValue.length <= 10 && /^[A-Z]*$/.test(upperValue)) {
@@ -190,6 +221,22 @@ export default function EditCustomer() {
                     />
                     <div className="form-text">
                       Nur Großbuchstaben erlaubt (A-Z)
+                    </div>
+                  </div>
+
+                  <div className="col-md-6 mb-3 d-flex align-items-end">
+                    <div className="form-check">
+                      <input
+                        type="checkbox"
+                        className="form-check-input"
+                        id="heatplan_on_level"
+                        name="heatplan_on_level"
+                        checked={!!customer.heatplan_on_level}
+                        onChange={handleChange}
+                      />
+                      <label className="form-check-label" htmlFor="heatplan_on_level">
+                        Heizplan auch Struktur
+                      </label>
                     </div>
                   </div>
 

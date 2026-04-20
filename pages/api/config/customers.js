@@ -1,5 +1,6 @@
 import { getSession } from 'next-auth/react'
 import jwt from 'jsonwebtoken'
+import { debugLog, debugWarn } from '../../../lib/appDebug';
 
 const JWT_SECRET = process.env.NEXTAUTH_SECRET
 
@@ -35,7 +36,7 @@ export default async function handler(req, res) {
       tbToken = decoded.tbToken
     }
     
-   // console.log('tbToken : ', tbToken);
+   // debugLog('tbToken : ', tbToken);
 
     if (req.method === 'GET') {
       const response = await fetch(`${process.env.THINGSBOARD_URL}/api/customers?pageSize=1000&page=0`, {

@@ -143,6 +143,172 @@ function formatHallSensorTelemetryLabel(v) {
   return String(v);
 }
 
+const REPORTING_PROXY_KEY = 'QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD';
+/** Kurzzeit-Cache + In-Flight-Dedupe für reporting-proxy limit=1 (Kacheln / Unterräume). */
+const REPORTING_LATEST_TTL_MS = 45_000;
+const reportingLatestByDeviceId = new Map();
+const reportingLatestInflight = new Map();
+
+function peekReportingLatest(deviceId) {
+  const e = reportingLatestByDeviceId.get(deviceId);
+  if (!e) return null;
+  if (Date.now() - e.t > REPORTING_LATEST_TTL_MS) {
+    reportingLatestByDeviceId.delete(deviceId);
+    return null;
+  }
+  return e.row;
+}
+
+function storeReportingLatest(deviceId, row) {
+  if (!row) return;
+  reportingLatestByDeviceId.set(deviceId, { t: Date.now(), row });
+}
+
+/**
+ * Neueste Zeile (limit=1) pro Gerät; zwischen Räumen wiederverwendbar.
+ * @param {string} deviceId
+ * @param {{ signal?: AbortSignal; skipCache?: boolean }} [options]
+ */
+async function fetchReportingLatestRow(deviceId, options = {}) {
+  const { signal, skipCache = false } = options;
+  if (!deviceId) return null;
+  if (!skipCache) {
+    const cached = peekReportingLatest(deviceId);
+    if (cached) return cached;
+    const pending = reportingLatestInflight.get(deviceId);
+    if (pending) {
+      try {
+        return await pending;
+      } catch {
+        return null;
+      }
+    }
+  }
+
+  const task = (async () => {
+    try {
+      const response = await fetch(
+        `/api/reporting-proxy?entity_id=${encodeURIComponent(deviceId)}&limit=1&key=${REPORTING_PROXY_KEY}`,
+        {
+          headers: { Authorization: `Bearer ${REPORTING_PROXY_KEY}` },
+          signal
+        }
+      );
+      if (!response.ok) return null;
+      const data = await response.json();
+      if (!data.success || !data.data?.length) return null;
+      const row = data.data[0];
+      if (!skipCache) storeReportingLatest(deviceId, row);
+      return row;
+    } catch (e) {
+      if (e?.name === 'AbortError') throw e;
+      return null;
+    } finally {
+      if (!skipCache) reportingLatestInflight.delete(deviceId);
+    }
+  })();
+
+  if (!skipCache) reportingLatestInflight.set(deviceId, task);
+  return task;
+}
+
+/** Übersicht (Unterknoten-Telemetrie): Snapshot pro Eltern-Knoten + Mandant, 5 Min gültig. */
+const OVERVIEW_TELEMETRY_TTL_MS = 5 * 60 * 1000;
+const OVERVIEW_TELEMETRY_SS_PREFIX = 'hmOverviewTel:v1:';
+const overviewTelemetryByKey = new Map();
+/** Zuletzt gesetzter Mandant für Übersicht-Cache (Modul-Scope: kein Ref nötig, robust bei HMR). */
+let overviewTelemetryLastCustomerId = null;
+
+function overviewTelemetryCacheKey(parentNodeId, customerId) {
+  return `${customerId || 'nocust'}:${parentNodeId || 'noparent'}`;
+}
+
+function overviewTelemetrySessionKey(cacheKey) {
+  return `${OVERVIEW_TELEMETRY_SS_PREFIX}${cacheKey}`;
+}
+
+function clearOverviewTelemetryStores() {
+  overviewTelemetryByKey.clear();
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    const toRemove = [];
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const k = sessionStorage.key(i);
+      if (k?.startsWith(OVERVIEW_TELEMETRY_SS_PREFIX)) toRemove.push(k);
+    }
+    toRemove.forEach((k) => sessionStorage.removeItem(k));
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+function readOverviewTelemetryFromSession(key) {
+  if (typeof sessionStorage === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(overviewTelemetrySessionKey(key));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (
+      !parsed ||
+      typeof parsed.t !== 'number' ||
+      !parsed.data ||
+      typeof parsed.data !== 'object'
+    ) {
+      sessionStorage.removeItem(overviewTelemetrySessionKey(key));
+      return null;
+    }
+    if (Date.now() - parsed.t > OVERVIEW_TELEMETRY_TTL_MS) {
+      sessionStorage.removeItem(overviewTelemetrySessionKey(key));
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeOverviewTelemetryToSession(key, entry) {
+  if (typeof sessionStorage === 'undefined') return;
+  try {
+    sessionStorage.setItem(
+      overviewTelemetrySessionKey(key),
+      JSON.stringify(entry)
+    );
+  } catch {
+    /* ignore quota */
+  }
+}
+
+function getOverviewTelemetryCached(parentNodeId, customerId) {
+  const key = overviewTelemetryCacheKey(parentNodeId, customerId);
+  let e = overviewTelemetryByKey.get(key);
+  if (!e) {
+    e = readOverviewTelemetryFromSession(key);
+    if (e) overviewTelemetryByKey.set(key, e);
+  }
+  if (!e) return null;
+  if (Date.now() - e.t > OVERVIEW_TELEMETRY_TTL_MS) {
+    overviewTelemetryByKey.delete(key);
+    if (typeof sessionStorage !== 'undefined') {
+      try {
+        sessionStorage.removeItem(overviewTelemetrySessionKey(key));
+      } catch {
+        /* ignore */
+      }
+    }
+    return null;
+  }
+  return e.data;
+}
+
+function setOverviewTelemetryCached(parentNodeId, customerId, telemetryMap) {
+  if (!parentNodeId || !customerId || !telemetryMap) return;
+  const key = overviewTelemetryCacheKey(parentNodeId, customerId);
+  const entry = { t: Date.now(), data: { ...telemetryMap } };
+  overviewTelemetryByKey.set(key, entry);
+  writeOverviewTelemetryToSession(key, entry);
+}
+
 export default function HeatingControl() {
   const router = useRouter();
   const { data: session, status } = useSession({
@@ -212,8 +378,10 @@ export default function HeatingControl() {
   // Temperature state (API only)
   const [deviceTemperatures, setDeviceTemperatures] = useState({});
 
-  // AbortController for cancelling requests
-  const [abortController, setAbortController] = useState(null);
+  /** Erhöht bei jedem Knotenwechsel — verhindert veraltete setState nach schnellem Umschalten. */
+  const roomLoadGenerationRef = useRef(0);
+  /** Bricht laufende Node-Fetches ab (Reporting, Verlauf) beim neuen Knoten. */
+  const roomDataAbortRef = useRef(null);
 
   // Time range selection
   const [selectedTimeRange, setSelectedTimeRange] = useState('7d'); // Default: 7 days
@@ -713,6 +881,7 @@ export default function HeatingControl() {
   const fetchTreeData = useCallback(async () => {
     if (!customerData?.customerid) {
       debugLog('⏳ No customer ID available for tree data');
+      setLoading(false);
       return;
     }
     
@@ -748,12 +917,16 @@ export default function HeatingControl() {
     }
   }, [customerData?.customerid, session?.token]);
 
-  const fetchNodeDetails = async (nodeId) => {
+  const fetchNodeDetails = async (nodeId, loadGen, signal) => {
     if (!nodeId || !customerData?.customerid) return;
+    const stillCurrent = () =>
+      loadGen === undefined || loadGen === roomLoadGenerationRef.current;
     
     try {
-      setLoadingDetails(true);
-      setNodeDetails(null);
+      if (stillCurrent()) {
+        setLoadingDetails(true);
+        setNodeDetails(null);
+      }
       
       debugLog('🟢 [DEBUG] fetchNodeDetails - Fetching asset:', nodeId);
       const response = await fetch(`/api/config/assets/${nodeId}`, {
@@ -761,7 +934,8 @@ export default function HeatingControl() {
           'Authorization': `Bearer ${session.token}`,
           'Cache-Control': 'no-cache'
         },
-        cache: 'no-store'
+        cache: 'no-store',
+        signal
       });
 
       debugLog('🟢 [DEBUG] fetchNodeDetails - Response status:', response.status, response.statusText);
@@ -778,7 +952,8 @@ export default function HeatingControl() {
       debugLog('🟢 [DEBUG] fetchNodeDetails - runStatus type:', typeof nodeData?.attributes?.runStatus);
       debugLog('🟢 [DEBUG] fetchNodeDetails - runStatus is PIR:', isPirRunStatus(nodeData?.attributes?.runStatus));
       debugLog('🟢 [DEBUG] fetchNodeDetails - runStatus === "fix":', nodeData?.attributes?.runStatus === 'fix');
-      
+
+      if (!stillCurrent()) return;
       setNodeDetails(nodeData);
       
       // Update selectedNode.data to keep it in sync with nodeDetails
@@ -856,18 +1031,23 @@ export default function HeatingControl() {
         setOriginalWindowSensor(false); // Fallback-Wert
       }
     } catch (err) {
+      if (err?.name === 'AbortError') return;
       console.error('Error fetching node details:', err);
     } finally {
-      setLoadingDetails(false);
+      if (stillCurrent()) setLoadingDetails(false);
     }
   };
 
-  const fetchTemperature = async (node) => {
+  const fetchTemperature = async (node, loadGen, signal) => {
     if (!node || !session?.token) return;
+    const canApply = () =>
+      loadGen === undefined || loadGen === roomLoadGenerationRef.current;
     
     try {
-      setLoadingTemperature(true);
-      setCurrentTemperature(null);
+      if (canApply()) {
+        setLoadingTemperature(true);
+        setCurrentTemperature(null);
+      }
       
       const operationalMode = node.data?.operationalMode || node.operationalMode;
       const extTempDevice = node.data?.extTempDevice || node.extTempDevice;
@@ -875,127 +1055,85 @@ export default function HeatingControl() {
       debugLog('Fetching temperature for operationalMode:', operationalMode, 'extTempDevice:', extTempDevice);
       
       if (operationalMode === 2) {
-        // Use external temperature device for both temperature and target temperature
         if (extTempDevice) {
-          // Fetch latest data from reporting API
-          const response = await fetch(
-            `/api/reporting-proxy?entity_id=${extTempDevice}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
-            {
-              headers: {
-                'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
+          let latestData;
+          try {
+            latestData = await fetchReportingLatestRow(extTempDevice, { signal });
+          } catch (e) {
+            if (e?.name === 'AbortError') return;
+            throw e;
+          }
+          if (!canApply()) return;
+          if (latestData) {
+            debugLog('External temperature latest data:', latestData);
+            const temperature = latestData.sensor_temperature;
+            const targetTemperature = latestData.target_temperature;
+            debugLog('External temperature raw value:', temperature);
+            debugLog('External target temperature raw value:', targetTemperature);
+            if (temperature !== undefined && temperature !== null) {
+              const numTemp = Number(temperature);
+              debugLog('External temperature converted:', numTemp);
+              if (!isNaN(numTemp) && numTemp > -50 && numTemp < 100 && canApply()) {
+                setCurrentTemperature({
+                  value: numTemp,
+                  source: 'external',
+                  deviceId: extTempDevice
+                });
+              } else if (!isNaN(numTemp)) {
+                debugWarn('External temperature out of reasonable range:', numTemp);
               }
             }
-          );
-          
-          if (response.ok) {
-            const data = await response.json();
-            debugLog('External temperature API response:', data);
-            if (data.success && data.data && data.data.length > 0) {
-              const latestData = data.data[0];
-              debugLog('External temperature latest data:', latestData);
-              const temperature = latestData.sensor_temperature;
-              const targetTemperature = latestData.target_temperature;
-              const valveOpen = latestData.percent_valve_open;
-              
-              debugLog('External temperature raw value:', temperature);
-              debugLog('External target temperature raw value:', targetTemperature);
-              debugLog('External valve open raw value:', valveOpen);
-              
-              if (temperature !== undefined && temperature !== null) {
-                const numTemp = Number(temperature);
-                debugLog('External temperature converted:', numTemp);
-                
-                if (!isNaN(numTemp) && numTemp > -50 && numTemp < 100) {
-                  setCurrentTemperature({
-                    value: numTemp,
-                    source: 'external',
-                    deviceId: extTempDevice
-                  });
-                } else {
-                  debugWarn('External temperature out of reasonable range:', numTemp);
-                }
-              }
-              
-              if (targetTemperature !== undefined && targetTemperature !== null) {
-                const numTargetTemp = Number(targetTemperature);
-                debugLog('External target temperature converted:', numTargetTemp);
-                
-                if (!isNaN(numTargetTemp) && numTargetTemp > -50 && numTargetTemp < 100) {
-                  setCurrentTargetTemperature({
-                    value: numTargetTemp,
-                    source: 'external',
-                    deviceId: extTempDevice
-                  });
-                } else {
-                  debugWarn('External target temperature out of reasonable range:', numTargetTemp);
-                }
-              }
-              
-              // For operationalMode 2, calculate average valve open from all devices
-              // instead of using external device valve open
-              const relatedDevices = node.relatedDevices || node.data?.relatedDevices || [];
-              debugLog('DEBUG: relatedDevices for valve open:', relatedDevices);
-              debugLog('DEBUG: relatedDevices length:', relatedDevices.length);
-              if (relatedDevices.length > 0) {
-                debugLog('Calculating average valve open from all devices for operationalMode 2');
-                // Extract device IDs from relatedDevices objects
-                const deviceIds = relatedDevices.map(device => {
-                  if (typeof device === 'string') {
-                    return device;
-                  } else if (device.id) {
-                    return device.id;
-                  } else if (device.deviceId) {
-                    return device.deviceId;
-                  }
-                  return null;
-                }).filter(id => id !== null);
-                
-                debugLog('DEBUG: extracted device IDs:', deviceIds);
-                
-                const valveOpenPromises = deviceIds.map(async (deviceId) => {
-                  try {
-                    const response = await fetch(
-                      `/api/reporting-proxy?entity_id=${deviceId}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
-                      {
-                        headers: {
-                          'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
-                        }
-                      }
-                    );
-                    
-                    if (response.ok) {
-                      const data = await response.json();
-                      if (data.success && data.data && data.data.length > 0) {
-                        const valveOpen = data.data[0].percent_valve_open;
-                        return valveOpen !== null && valveOpen !== undefined ? Number(valveOpen) : 0;
-                      }
-                    }
-                    return 0;
-                  } catch (error) {
-                    debugWarn(`Error fetching valve open for device ${deviceId}:`, error);
-                    return 0;
-                  }
+            if (targetTemperature !== undefined && targetTemperature !== null) {
+              const numTargetTemp = Number(targetTemperature);
+              debugLog('External target temperature converted:', numTargetTemp);
+              if (!isNaN(numTargetTemp) && numTargetTemp > -50 && numTargetTemp < 100 && canApply()) {
+                setCurrentTargetTemperature({
+                  value: numTargetTemp,
+                  source: 'external',
+                  deviceId: extTempDevice
                 });
-                
-                const valveOpenValues = await Promise.all(valveOpenPromises);
-                const validValveValues = valveOpenValues.filter(val => !isNaN(val) && val >= 0 && val <= 100);
-                const averageValveOpen = validValveValues.length > 0 
-                  ? validValveValues.reduce((sum, val) => sum + val, 0) / validValveValues.length 
-                  : 0;
-                
-                debugLog('Average valve open from all devices:', averageValveOpen);
+              } else if (!isNaN(numTargetTemp)) {
+                debugWarn('External target temperature out of reasonable range:', numTargetTemp);
+              }
+            }
+            const relatedDevices = node.relatedDevices || node.data?.relatedDevices || [];
+            debugLog('DEBUG: relatedDevices for valve open:', relatedDevices);
+            if (relatedDevices.length > 0) {
+              const deviceIds = relatedDevices.map(device => {
+                if (typeof device === 'string') return device;
+                if (device.id) return device.id;
+                if (device.deviceId) return device.deviceId;
+                return null;
+              }).filter(id => id !== null);
+              const valveOpenPromises = deviceIds.map(async (deviceId) => {
+                try {
+                  const row = await fetchReportingLatestRow(deviceId, { signal });
+                  const vo = row?.percent_valve_open;
+                  return vo !== null && vo !== undefined ? Number(vo) : 0;
+                } catch (e) {
+                  if (e?.name === 'AbortError') throw e;
+                  debugWarn(`Error fetching valve open for device ${deviceId}:`, e);
+                  return 0;
+                }
+              });
+              const valveOpenValues = await Promise.all(valveOpenPromises);
+              if (!canApply()) return;
+              const validValveValues = valveOpenValues.filter(val => !isNaN(val) && val >= 0 && val <= 100);
+              const averageValveOpen = validValveValues.length > 0
+                ? validValveValues.reduce((sum, val) => sum + val, 0) / validValveValues.length
+                : 0;
+              debugLog('Average valve open from all devices:', averageValveOpen);
+              if (canApply()) {
                 setCurrentValveOpen({
                   value: averageValveOpen,
                   source: 'average',
                   deviceCount: validValveValues.length
                 });
-              } else {
-                debugWarn('No related devices found for valve open calculation');
-                setCurrentValveOpen({
-                  value: 0,
-                  source: 'average',
-                  deviceCount: 0
-                });
+              }
+            } else {
+              debugWarn('No related devices found for valve open calculation');
+              if (canApply()) {
+                setCurrentValveOpen({ value: 0, source: 'average', deviceCount: 0 });
               }
             }
           }
@@ -1003,41 +1141,31 @@ export default function HeatingControl() {
       } else if (operationalMode === 10) {
         // Use external temperature device for temperature only, average for target temperature and valve open
         if (extTempDevice) {
-          const response = await fetch(
-            `/api/reporting-proxy?entity_id=${extTempDevice}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
-            {
-              headers: {
-                'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
-              }
-            }
-          );
-          
-          if (response.ok) {
-            const data = await response.json();
-            if (data.success && data.data && data.data.length > 0) {
-              const latestData = data.data[0];
-              const temperature = latestData.sensor_temperature;
-              debugLog('External temperature raw value:', temperature);
-              
-              if (temperature !== undefined && temperature !== null) {
-                const numTemp = Number(temperature);
-                debugLog('External temperature converted:', numTemp);
-                
-                if (!isNaN(numTemp) && numTemp > -50 && numTemp < 100) {
-                  setCurrentTemperature({
-                    value: numTemp,
-                    source: 'external',
-                    deviceId: extTempDevice
-                  });
-                } else {
-                  debugWarn('External temperature out of reasonable range:', numTemp);
-                }
+          let latestData;
+          try {
+            latestData = await fetchReportingLatestRow(extTempDevice, { signal });
+          } catch (e) {
+            if (e?.name === 'AbortError') return;
+            throw e;
+          }
+          if (!canApply()) return;
+          if (latestData) {
+            const temperature = latestData.sensor_temperature;
+            debugLog('External temperature raw value:', temperature);
+            if (temperature !== undefined && temperature !== null) {
+              const numTemp = Number(temperature);
+              if (!isNaN(numTemp) && numTemp > -50 && numTemp < 100 && canApply()) {
+                setCurrentTemperature({
+                  value: numTemp,
+                  source: 'external',
+                  deviceId: extTempDevice
+                });
+              } else if (!isNaN(numTemp)) {
+                debugWarn('External temperature out of reasonable range:', numTemp);
               }
             }
           }
         }
-        
-        // Load target temperature and valve open from related devices (average)
         const relatedDevices = node.relatedDevices || node.data?.relatedDevices || [];
         if (relatedDevices.length > 0) {
           const deviceIds = relatedDevices.map(device => {
@@ -1046,70 +1174,30 @@ export default function HeatingControl() {
             }
             return device.id;
           }).filter(id => id);
-          
           if (deviceIds.length > 0) {
-            const targetTemperaturePromises = deviceIds.map(async (deviceId) => {
-              try {
-                const response = await fetch(
-                  `/api/reporting-proxy?entity_id=${deviceId}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
-                  {
-                    headers: {
-                      'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
-                    }
-                  }
-                );
-                
-                if (response.ok) {
-                  const data = await response.json();
-                  if (data.success && data.data && data.data.length > 0) {
-                    return data.data[0].target_temperature;
-                  }
+            const perDeviceRows = await Promise.all(
+              deviceIds.map(async (deviceId) => {
+                try {
+                  return await fetchReportingLatestRow(deviceId, { signal });
+                } catch (e) {
+                  if (e?.name === 'AbortError') throw e;
+                  debugWarn(`Error fetching telemetry for device ${deviceId}:`, e);
                   return null;
                 }
-              } catch (error) {
-                debugWarn(`Error fetching target temperature for device ${deviceId}:`, error);
-              }
-              return null;
-            });
-
-            const valveOpenPromises = deviceIds.map(async (deviceId) => {
-              try {
-                const response = await fetch(
-                  `/api/reporting-proxy?entity_id=${deviceId}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
-                  {
-                    headers: {
-                      'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
-                    }
-                  }
-                );
-                
-                if (response.ok) {
-                  const data = await response.json();
-                  if (data.success && data.data && data.data.length > 0) {
-                    return data.data[0].percent_valve_open;
-                  }
-                  return null;
-                }
-              } catch (error) {
-                debugWarn(`Error fetching valve open for device ${deviceId}:`, error);
-              }
-              return null;
-            });
-            
-            const targetTemperatures = await Promise.all(targetTemperaturePromises);
-            const valveOpens = await Promise.all(valveOpenPromises);
-            
+              })
+            );
+            if (!canApply()) return;
+            const targetTemperatures = perDeviceRows.map((row) => row?.target_temperature ?? null);
+            const valveOpens = perDeviceRows.map((row) => row?.percent_valve_open ?? null);
             const validTargetTemperatures = targetTemperatures
               .filter(temp => temp !== null && temp !== undefined)
               .map(temp => Number(temp))
               .filter(temp => !isNaN(temp) && temp > -50 && temp < 100);
-
             const validValveOpens = valveOpens
               .filter(valve => valve !== null && valve !== undefined)
               .map(valve => Number(valve))
               .filter(valve => !isNaN(valve) && valve >= 0 && valve <= 100);
-            
-            if (validTargetTemperatures.length > 0) {
+            if (validTargetTemperatures.length > 0 && canApply()) {
               const avgTargetTemp = validTargetTemperatures.reduce((sum, temp) => sum + temp, 0) / validTargetTemperatures.length;
               setCurrentTargetTemperature({
                 value: avgTargetTemp,
@@ -1117,8 +1205,7 @@ export default function HeatingControl() {
                 deviceCount: validTargetTemperatures.length
               });
             }
-
-            if (validValveOpens.length > 0) {
+            if (validValveOpens.length > 0 && canApply()) {
               const avgValveOpen = validValveOpens.reduce((sum, valve) => sum + valve, 0) / validValveOpens.length;
               setCurrentValveOpen({
                 value: avgValveOpen,
@@ -1140,87 +1227,27 @@ export default function HeatingControl() {
           }).filter(id => id);
           
           if (deviceIds.length > 0) {
-            // Fetch latest data for all devices
-            const sensorTemperaturePromises = deviceIds.map(async (deviceId) => {
-              try {
-                const response = await fetch(
-                  `/api/reporting-proxy?entity_id=${deviceId}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
-                  {
-                    headers: {
-                      'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
-                    }
-                  }
-                );
-                
-                if (response.ok) {
-                  const data = await response.json();
-                  if (data.success && data.data && data.data.length > 0) {
-                    return {
-                      sensor_temperature: data.data[0].sensor_temperature
-                    };
-                  }
+            const perDeviceRows = await Promise.all(
+              deviceIds.map(async (deviceId) => {
+                try {
+                  return await fetchReportingLatestRow(deviceId, { signal });
+                } catch (e) {
+                  if (e?.name === 'AbortError') throw e;
+                  debugWarn(`Error fetching temperature row for device ${deviceId}:`, e);
+                  return null;
                 }
-              } catch (error) {
-                debugWarn(`Error fetching temperature for device ${deviceId}:`, error);
-              }
-              return { sensor_temperature: null };
-            });
-
-            // Fetch target temperature
-            const targetTemperaturePromises = deviceIds.map(async (deviceId) => {
-              try {
-                const response = await fetch(
-                  `/api/reporting-proxy?entity_id=${deviceId}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
-                  {
-                    headers: {
-                      'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
-                    }
-                  }
-                );
-                
-                if (response.ok) {
-                  const data = await response.json();
-                  if (data.success && data.data && data.data.length > 0) {
-                    return {
-                      targetTemperature: data.data[0].target_temperature
-                    };
-                  }
-                }
-              } catch (error) {
-                debugWarn(`Error fetching target temperature for device ${deviceId}:`, error);
-              }
-              return { targetTemperature: null };
-            });
-
-            // Fetch valve open percentage
-            const valveOpenPromises = deviceIds.map(async (deviceId) => {
-              try {
-                const response = await fetch(
-                  `/api/reporting-proxy?entity_id=${deviceId}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
-                  {
-                    headers: {
-                      'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
-                    }
-                  }
-                );
-                
-                if (response.ok) {
-                  const data = await response.json();
-                  if (data.success && data.data && data.data.length > 0) {
-                    return {
-                      valveOpen: data.data[0].percent_valve_open
-                    };
-                  }
-                }
-              } catch (error) {
-                debugWarn(`Error fetching valve open for device ${deviceId}:`, error);
-              }
-              return { valveOpen: null };
-            });
-            
-            const sensorResults = await Promise.all(sensorTemperaturePromises);
-            const targetResults = await Promise.all(targetTemperaturePromises);
-            const valveOpenResults = await Promise.all(valveOpenPromises);
+              })
+            );
+            if (!canApply()) return;
+            const sensorResults = perDeviceRows.map((row) =>
+              row ? { sensor_temperature: row.sensor_temperature } : { sensor_temperature: null }
+            );
+            const targetResults = perDeviceRows.map((row) =>
+              row ? { targetTemperature: row.target_temperature } : { targetTemperature: null }
+            );
+            const valveOpenResults = perDeviceRows.map((row) =>
+              row ? { valveOpen: row.percent_valve_open } : { valveOpen: null }
+            );
             debugLog('Raw sensor temperature data from API:', sensorResults);
             debugLog('Raw target temperature data from API:', targetResults);
             debugLog('Raw valve open data from API:', valveOpenResults);
@@ -1256,7 +1283,7 @@ export default function HeatingControl() {
             debugLog('Valid target temperatures after filtering:', validTargetTemperatures);
             debugLog('Valid valve open after filtering:', validValveOpen);
             
-            if (validTemperatures.length > 0) {
+            if (validTemperatures.length > 0 && canApply()) {
               const averageTemp = validTemperatures.reduce((sum, temp) => sum + temp, 0) / validTemperatures.length;
               debugLog('Calculated average temperature:', averageTemp);
               
@@ -1298,18 +1325,23 @@ export default function HeatingControl() {
         }
       }
     } catch (error) {
+      if (error?.name === 'AbortError') return;
       console.error('Error fetching temperature:', error);
     } finally {
-      setLoadingTemperature(false);
+      if (canApply()) setLoadingTemperature(false);
     }
   };
 
-  const fetchTemperatureHistory = async (node, timeRange = null) => {
+  const fetchTemperatureHistory = async (node, timeRange = null, loadGen, historySignal) => {
     if (!node || !session?.token) return;
+    const canApplyHist = () =>
+      loadGen === undefined || loadGen === roomLoadGenerationRef.current;
     
     try {
-      setLoadingTemperatureHistory(true);
-      setRoomTimeseries([]);
+      if (canApplyHist()) {
+        setLoadingTemperatureHistory(true);
+        setRoomTimeseries([]);
+      }
       
       const operationalMode = node.data?.operationalMode || node.operationalMode;
       const extTempDevice = node.data?.extTempDevice || node.extTempDevice;
@@ -1348,7 +1380,8 @@ export default function HeatingControl() {
               {
                 headers: {
                   'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
-                }
+                },
+                signal: historySignal
               }
             );
           
@@ -1432,7 +1465,8 @@ export default function HeatingControl() {
                         {
                           headers: {
                             'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
-                          }
+                          },
+                          signal: historySignal
                         }
                       );
                       
@@ -1505,6 +1539,7 @@ export default function HeatingControl() {
                 });
               }
               
+              if (!canApplyHist()) return;
               setRoomTimeseries(
                 mergeRoomTimeseriesPoints(historyData, targetHistoryData, valveOpenHistoryData)
               );
@@ -1522,7 +1557,8 @@ export default function HeatingControl() {
             {
               headers: {
                 Authorization: `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
-              }
+              },
+              signal: historySignal
             }
           );
 
@@ -1577,7 +1613,8 @@ export default function HeatingControl() {
                   {
                     headers: {
                       'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
-                    }
+                    },
+                    signal: historySignal
                   }
                 );
                 
@@ -1633,6 +1670,7 @@ export default function HeatingControl() {
             valveHist = valveOpenHistoryData;
           }
         }
+        if (!canApplyHist()) return;
         setRoomTimeseries(mergeRoomTimeseriesPoints(sensorHist, targetHist, valveHist));
       } else {
         // Use average temperature from related devices
@@ -1656,7 +1694,8 @@ export default function HeatingControl() {
                   {
                     headers: {
                       'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
-                    }
+                    },
+                    signal: historySignal
                   }
                 );
                 
@@ -1759,6 +1798,7 @@ export default function HeatingControl() {
             debugLog('Valve open data points count:', valveOpenHistoryData.length);
             debugLog('First temperature data point:', historyData[0]);
             debugLog('Last temperature data point:', historyData[historyData.length - 1]);
+            if (!canApplyHist()) return;
             setRoomTimeseries(
               mergeRoomTimeseriesPoints(historyData, targetHistoryData, valveOpenHistoryData)
             );
@@ -1766,9 +1806,10 @@ export default function HeatingControl() {
         }
       }
     } catch (error) {
+      if (error?.name === 'AbortError') return;
       console.error('Error fetching temperature history:', error);
     } finally {
-      setLoadingTemperatureHistory(false);
+      if (canApplyHist()) setLoadingTemperatureHistory(false);
     }
   };
 
@@ -2142,6 +2183,11 @@ export default function HeatingControl() {
     debugLog('Node operationalMode:', node.operationalMode);
     debugLog('Node hasDevices:', node.hasDevices);
     debugLog('=== hasDevices VALUE ===', node.hasDevices, '=== TYPE ===', typeof node.hasDevices);
+
+    roomDataAbortRef.current?.abort();
+    roomDataAbortRef.current = new AbortController();
+    const nodeFetchSignal = roomDataAbortRef.current.signal;
+    const loadGen = ++roomLoadGenerationRef.current;
     
     // Set loading state and clear previous data
     setLoadingNodeData(true);
@@ -2163,9 +2209,9 @@ export default function HeatingControl() {
       setActiveTab('overview');  // Verlauf für Nodes mit Geräten
     }
     
-    fetchNodeDetails(node.id);
-    fetchTemperature(node);
-    fetchTemperatureHistory(node);
+    fetchNodeDetails(node.id, loadGen, nodeFetchSignal);
+    fetchTemperature(node, loadGen, nodeFetchSignal);
+    fetchTemperatureHistory(node, null, loadGen, nodeFetchSignal);
     
     // Initialize scheduler plan from node data
     const schedulerPlanValue = node.data?.schedulerPlan;
@@ -2223,22 +2269,46 @@ export default function HeatingControl() {
   };
 
   // Function to fetch telemetry data for a node
-  const fetchNodeTelemetry = async (node) => {
-    if (!node || !node.relatedDevices || node.relatedDevices.length === 0) {
-      // Fetch runStatus from ThingsBoard even if no devices
-      let runStatus = null;
-      if (node.id) {
-        try {
-          const assetResponse = await fetch(`/api/config/assets/${node.id}`);
-          if (assetResponse.ok) {
-            const assetData = await assetResponse.json();
-            runStatus = assetData.attributes?.runStatus || null;
-          }
-        } catch (error) {
-          debugWarn(`Error fetching runStatus for node ${node.id}:`, error);
+  const fetchNodeTelemetry = async (node, loadGen, signal) => {
+    const stale = () =>
+      loadGen !== undefined && loadGen !== roomLoadGenerationRef.current;
+
+    const fetchAssetRunStatus = async () => {
+      if (!node?.id) return null;
+      try {
+        const assetResponse = await fetch(`/api/config/assets/${node.id}`, { signal });
+        if (assetResponse.ok) {
+          const assetData = await assetResponse.json();
+          return assetData.attributes?.runStatus || null;
         }
+      } catch (error) {
+        if (error?.name === 'AbortError') throw error;
+        debugWarn(`Error fetching runStatus for node ${node.id}:`, error);
       }
-      return { currentTemp: null, targetTemp: null, valvePosition: null, batteryVoltage: null, rssi: null, runStatus: runStatus || node.runStatus || null };
+      return null;
+    };
+
+    if (!node) {
+      return {
+        currentTemp: null,
+        targetTemp: null,
+        valvePosition: null,
+        batteryVoltage: null,
+        rssi: null,
+        runStatus: null
+      };
+    }
+
+    if (!node.relatedDevices || node.relatedDevices.length === 0) {
+      const runStatus = await fetchAssetRunStatus();
+      return {
+        currentTemp: null,
+        targetTemp: null,
+        valvePosition: null,
+        batteryVoltage: null,
+        rssi: null,
+        runStatus: runStatus || node.runStatus || null
+      };
     }
 
     try {
@@ -2250,68 +2320,51 @@ export default function HeatingControl() {
       }).filter(id => id);
 
       if (deviceIds.length === 0) {
-        // Fetch runStatus from ThingsBoard even if no devices
-        let runStatus = null;
-        if (node.id) {
-          try {
-            const assetResponse = await fetch(`/api/config/assets/${node.id}`);
-            if (assetResponse.ok) {
-              const assetData = await assetResponse.json();
-              runStatus = assetData.attributes?.runStatus || null;
-            }
-          } catch (error) {
-            debugWarn(`Error fetching runStatus for node ${node.id}:`, error);
-          }
-        }
-        return { currentTemp: null, targetTemp: null, valvePosition: null, batteryVoltage: null, rssi: null, runStatus: runStatus || node.runStatus || null };
+        const runStatus = await fetchAssetRunStatus();
+        return {
+          currentTemp: null,
+          targetTemp: null,
+          valvePosition: null,
+          batteryVoltage: null,
+          rssi: null,
+          runStatus: runStatus || node.runStatus || null
+        };
       }
 
-      // Fetch runStatus from ThingsBoard for the asset
-      let runStatus = null;
-      if (node.id) {
-        try {
-          const assetResponse = await fetch(`/api/config/assets/${node.id}`);
-          if (assetResponse.ok) {
-            const assetData = await assetResponse.json();
-            runStatus = assetData.attributes?.runStatus || null;
-          }
-        } catch (error) {
-          debugWarn(`Error fetching runStatus for node ${node.id}:`, error);
-        }
-      }
-
-      // Fetch latest data for all devices
+      // runStatus (Asset) und Reporting-Zeilen pro Gerät parallel (reporting-proxy)
       const devicePromises = deviceIds.map(async (deviceId) => {
         try {
-          const response = await fetch(
-            `/api/reporting-proxy?entity_id=${deviceId}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
-            {
-              headers: {
-                'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
-              }
-            }
-          );
-
-          if (response.ok) {
-            const data = await response.json();
-            if (data.success && data.data && data.data.length > 0) {
-              const latestData = data.data[0];
-              return {
-                sensorTemperature: latestData.sensor_temperature,
-                targetTemperature: latestData.target_temperature,
-                valvePosition: latestData.percent_valve_open,
-                batteryVoltage: latestData.battery_voltage,
-                rssi: latestData.rssi
-              };
-            }
+          const latestData = await fetchReportingLatestRow(deviceId, { signal });
+          if (latestData) {
+            return {
+              sensorTemperature: latestData.sensor_temperature,
+              targetTemperature: latestData.target_temperature,
+              valvePosition: latestData.percent_valve_open,
+              batteryVoltage: latestData.battery_voltage,
+              rssi: latestData.rssi
+            };
           }
         } catch (error) {
+          if (error?.name === 'AbortError') throw error;
           debugWarn(`Error fetching telemetry for device ${deviceId}:`, error);
         }
         return { sensorTemperature: null, targetTemperature: null, valvePosition: null, batteryVoltage: null, rssi: null };
       });
 
-      const deviceResults = await Promise.all(devicePromises);
+      const [runStatus, deviceResults] = await Promise.all([
+        fetchAssetRunStatus(),
+        Promise.all(devicePromises)
+      ]);
+      if (stale()) {
+        return {
+          currentTemp: null,
+          targetTemp: null,
+          valvePosition: null,
+          batteryVoltage: null,
+          rssi: null,
+          runStatus: runStatus || node.runStatus || null
+        };
+      }
       
       // Calculate averages
       const validTemperatures = deviceResults
@@ -2359,6 +2412,16 @@ export default function HeatingControl() {
         ? validRssiValues.reduce((sum, rssi) => sum + rssi, 0) / validRssiValues.length 
         : null;
 
+      if (stale()) {
+        return {
+          currentTemp: null,
+          targetTemp: null,
+          valvePosition: null,
+          batteryVoltage: null,
+          rssi: null,
+          runStatus: runStatus || node.runStatus || null
+        };
+      }
       return {
         currentTemp: avgCurrentTemp,
         targetTemp: avgTargetTemp,
@@ -2368,6 +2431,16 @@ export default function HeatingControl() {
         runStatus: runStatus || node.runStatus || null
       };
     } catch (error) {
+      if (error?.name === 'AbortError') {
+        return {
+          currentTemp: null,
+          targetTemp: null,
+          valvePosition: null,
+          batteryVoltage: null,
+          rssi: null,
+          runStatus: node.runStatus || null
+        };
+      }
       console.error('Error fetching node telemetry:', error);
       // Try to fetch runStatus even on error
       let runStatus = null;
@@ -2387,34 +2460,70 @@ export default function HeatingControl() {
   };
 
   // Function to fetch telemetry for all subordinate nodes
-  const fetchSubordinateTelemetry = useCallback(async (subordinates) => {
-    if (!subordinates || subordinates.length === 0) {
-      setSubordinateTelemetry({});
-      return;
-    }
+  // options.policy: 'prefer-cache' = innerhalb TTL nur Cache; sonst Netzwerk. 'network' = immer laden (z. B. Intervall).
+  // options.silent: true = Ladezustand nicht anfassen (Hintergrund-Refresh).
+  const fetchSubordinateTelemetry = useCallback(
+    async (subordinates, loadGen, signal, options = {}) => {
+      const { parentNodeId, customerId, policy = 'network', silent = false } = options;
 
-    setLoadingSubordinateTelemetry(true);
-    try {
-      const telemetryPromises = subordinates.map(async (node) => {
-        const telemetry = await fetchNodeTelemetry(node);
-        return { nodeId: node.id, telemetry };
-      });
+      if (!subordinates || subordinates.length === 0) {
+        setSubordinateTelemetry({});
+        return;
+      }
 
-      const results = await Promise.all(telemetryPromises);
-      const telemetryMap = {};
-      
-      results.forEach(({ nodeId, telemetry }) => {
-        telemetryMap[nodeId] = telemetry;
-      });
+      if (
+        policy === 'prefer-cache' &&
+        parentNodeId &&
+        customerId
+      ) {
+        const cached = getOverviewTelemetryCached(parentNodeId, customerId);
+        if (cached) {
+          debugLog('Übersicht: Telemetrie aus Cache (≤5 min)', parentNodeId);
+          setSubordinateTelemetry({ ...cached });
+          if (!silent) setLoadingSubordinateTelemetry(false);
+          return;
+        }
+      }
 
-      setSubordinateTelemetry(telemetryMap);
-    } catch (error) {
-      console.error('Error fetching subordinate telemetry:', error);
-      setSubordinateTelemetry({});
-    } finally {
-      setLoadingSubordinateTelemetry(false);
-    }
-  }, []);
+      if (!silent) {
+        setSubordinateTelemetry({});
+        setLoadingSubordinateTelemetry(true);
+      }
+      try {
+        const telemetryPromises = subordinates.map(async (node) => {
+          const telemetry = await fetchNodeTelemetry(node, loadGen, signal);
+          return { nodeId: node.id, telemetry };
+        });
+
+        const results = await Promise.all(telemetryPromises);
+        if (loadGen !== undefined && loadGen !== roomLoadGenerationRef.current) {
+          return;
+        }
+        const telemetryMap = {};
+
+        results.forEach(({ nodeId, telemetry }) => {
+          telemetryMap[nodeId] = telemetry;
+        });
+
+        setSubordinateTelemetry(telemetryMap);
+        if (parentNodeId && customerId) {
+          setOverviewTelemetryCached(parentNodeId, customerId, telemetryMap);
+        }
+      } catch (error) {
+        if (error?.name === 'AbortError') return;
+        console.error('Error fetching subordinate telemetry:', error);
+        setSubordinateTelemetry({});
+      } finally {
+        if (
+          !silent &&
+          (loadGen === undefined || loadGen === roomLoadGenerationRef.current)
+        ) {
+          setLoadingSubordinateTelemetry(false);
+        }
+      }
+    },
+    []
+  );
 
   const getTemperatureChartOptionForRender = (timeRange = null) => {
     const synchronizedData = synchronizeChartData(roomTimeseries, debugLog);
@@ -2477,8 +2586,10 @@ export default function HeatingControl() {
     if (currentCustomerId && currentCustomerId !== lastLoadedCustomerIdRef.current) {
       lastLoadedCustomerIdRef.current = currentCustomerId;
       fetchTreeData();
+    } else if (customerData != null && !currentCustomerId) {
+      setLoading(false);
     }
-  }, [customerData?.customerid, fetchTreeData]);
+  }, [customerData?.customerid, customerData, fetchTreeData]);
 
   useEffect(() => {
     defaultEntryAppliedRef.current = false;
@@ -2538,10 +2649,53 @@ export default function HeatingControl() {
     if (activeTab === 'empty' && selectedNode) {
       const { subordinates } = getAllSubordinateNodes(selectedNode.id, visibleTreeData);
       if (subordinates.length > 0) {
-        fetchSubordinateTelemetry(subordinates);
+        const gen = roomLoadGenerationRef.current;
+        const signal = roomDataAbortRef.current?.signal;
+        fetchSubordinateTelemetry(subordinates, gen, signal, {
+          parentNodeId: selectedNode.id,
+          customerId: customerData?.customerid,
+          policy: 'prefer-cache',
+        });
       }
     }
-  }, [activeTab, selectedNode, visibleTreeData, fetchSubordinateTelemetry]);
+  }, [activeTab, selectedNode, visibleTreeData, customerData?.customerid, fetchSubordinateTelemetry]);
+
+  // Übersicht alle 5 Minuten im Hintergrund aktualisieren (nur Tab „Übersicht“)
+  useEffect(() => {
+    if (activeTab !== 'empty' || !selectedNode?.id || !customerData?.customerid) return;
+
+    const id = setInterval(() => {
+      const { subordinates } = getAllSubordinateNodes(selectedNode.id, visibleTreeData);
+      if (subordinates.length === 0) return;
+      const gen = roomLoadGenerationRef.current;
+      const signal = roomDataAbortRef.current?.signal;
+      debugLog('Übersicht: periodische Aktualisierung (5 min)');
+      fetchSubordinateTelemetry(subordinates, gen, signal, {
+        parentNodeId: selectedNode.id,
+        customerId: customerData.customerid,
+        policy: 'network',
+        silent: true,
+      });
+    }, 5 * 60 * 1000);
+
+    return () => clearInterval(id);
+  }, [
+    activeTab,
+    selectedNode?.id,
+    visibleTreeData,
+    customerData?.customerid,
+    fetchSubordinateTelemetry,
+  ]);
+
+  useEffect(() => {
+    const id = customerData?.customerid;
+    if (id == null || id === '') return;
+    const prev = overviewTelemetryLastCustomerId;
+    if (prev != null && prev !== id) {
+      clearOverviewTelemetryStores();
+    }
+    overviewTelemetryLastCustomerId = id;
+  }, [customerData?.customerid]);
 
   // Update settings values from nodeDetails when they are loaded (direkt aus ThingsBoard)
   // Diese Werte werden immer direkt aus ThingsBoard geholt, nicht aus dem tree Feld
@@ -2617,50 +2771,39 @@ export default function HeatingControl() {
     }
   }, [selectedNode, openNodes]);
 
-  // Fallback function to fetch temperatures via API
-  const fetchTemperaturesViaAPI = useCallback(async (deviceIds) => {
-    if (!session?.token || !deviceIds.length) return;
+  // Fallback function to fetch temperatures via API (nutzt gleichen Kurz-Cache wie Unterräume)
+  const fetchTemperaturesViaAPI = useCallback(async (deviceIds, options = {}) => {
+    if (!deviceIds?.length) return;
+    const { signal, skipCache = false } = options;
 
     try {
       debugLog('🌡️ Fetching temperatures via API for devices:', deviceIds);
       
       const temperaturePromises = deviceIds.map(async (deviceId) => {
         try {
-          const response = await fetch(
-            `/api/reporting-proxy?entity_id=${deviceId}&limit=1&key=QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`,
-            {
-              headers: {
-                'Authorization': `Bearer QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD`
+          const row = await fetchReportingLatestRow(deviceId, { signal, skipCache });
+          const temperature = row?.sensor_temperature;
+          if (temperature !== undefined && temperature !== null) {
+            setDeviceTemperatures(prev => ({
+              ...prev,
+              [deviceId]: {
+                temperature,
+                timestamp: Date.now()
               }
-            }
-          );
-
-          if (response.ok) {
-            const data = await response.json();
-            if (data.success && data.data && data.data.length > 0) {
-              const temperature = data.data[0].sensor_temperature;
-              
-              if (temperature !== undefined && temperature !== null) {
-                setDeviceTemperatures(prev => ({
-                  ...prev,
-                  [deviceId]: {
-                    temperature: temperature,
-                    timestamp: Date.now()
-                  }
-                }));
-              }
-            }
+            }));
           }
         } catch (error) {
+          if (error?.name === 'AbortError') throw error;
           debugWarn(`Error fetching temperature for device ${deviceId}:`, error);
         }
       });
 
       await Promise.all(temperaturePromises);
     } catch (error) {
+      if (error?.name === 'AbortError') return;
       console.error('Error fetching temperatures via API:', error);
     }
-  }, [session?.token]);
+  }, []);
 
   // Subscribe to device temperatures when devices change
   useEffect(() => {
@@ -2673,17 +2816,17 @@ export default function HeatingControl() {
       }).filter(id => id);
 
       if (deviceIds.length > 0) {
+        const ac = new AbortController();
         debugLog('🌡️ Fetching temperatures via API...');
-        // Fetch temperatures via API
-        fetchTemperaturesViaAPI(deviceIds);
+        fetchTemperaturesViaAPI(deviceIds, { signal: ac.signal });
         
-        // Set up automatic refresh every 30 seconds
         const interval = setInterval(() => {
           debugLog('🔄 Auto-refreshing temperatures...');
-          fetchTemperaturesViaAPI(deviceIds);
+          fetchTemperaturesViaAPI(deviceIds, { signal: ac.signal, skipCache: true });
         }, 30000);
         
         return () => {
+          ac.abort();
           clearInterval(interval);
         };
       }
@@ -2697,10 +2840,18 @@ export default function HeatingControl() {
 
   if (status === 'loading') {
     return (
-      <div className="d-flex justify-content-center align-items-center" style={{ minHeight: '400px' }}>
-        <div className="spinner-border text-primary" role="status">
-          <span className="visually-hidden">Laden...</span>
+      <div
+        className="d-flex flex-column justify-content-center align-items-center bg-white"
+        style={{ minHeight: '100vh', width: '100%' }}
+      >
+        <div
+          className="spinner-border text-primary"
+          role="status"
+          style={{ width: '3rem', height: '3rem' }}
+        >
+          <span className="visually-hidden">Laden…</span>
         </div>
+        <p className="mt-3 text-muted mb-0 small">Laden…</p>
       </div>
     );
   }
@@ -2711,6 +2862,27 @@ export default function HeatingControl() {
 
   return (
     <DndProvider backend={HTML5Backend}>
+      {loading && (
+        <div
+          className="position-fixed top-0 start-0 w-100 h-100 d-flex flex-column align-items-center justify-content-center"
+          style={{
+            zIndex: 1080,
+            backgroundColor: 'rgba(255, 255, 255, 0.92)',
+            pointerEvents: 'all'
+          }}
+          aria-busy="true"
+          aria-live="polite"
+        >
+          <div
+            className="spinner-border text-primary"
+            role="status"
+            style={{ width: '3rem', height: '3rem' }}
+          >
+            <span className="visually-hidden">Struktur wird geladen…</span>
+          </div>
+          <p className="mt-3 text-muted mb-0 small">Struktur wird geladen…</p>
+        </div>
+      )}
       <style jsx>{`
         .responsive-cards {
           display: flex;
@@ -2913,22 +3085,20 @@ export default function HeatingControl() {
                overflow: 'hidden'
              }}
            >
-                  <div className="card-header bg-white border-secondary" style={{ flexShrink: 0 }}>
-                    <h5 className="mb-0 d-flex align-items-center justify-content-between">
-                      <div className="d-flex align-items-center">
-                        <FontAwesomeIcon icon={faBuilding} className="me-2 text-primary" />
-                        Heizungssteuerung
-                      </div>
-                      {isMobile && (
+                  {isMobile && (
+                    <div className="card-header bg-white border-secondary py-2" style={{ flexShrink: 0 }}>
+                      <div className="d-flex justify-content-end">
                         <button
+                          type="button"
                           className="btn btn-sm btn-outline-secondary"
                           onClick={() => setShowTree(false)}
+                          aria-label="Struktur schließen"
                         >
                           <FontAwesomeIcon icon={faTimes} />
                         </button>
-                      )}
-                    </h5>
-                  </div>
+                      </div>
+                    </div>
+                  )}
             <div className="card-body tree-container" style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
               {/* Suchfeld für Tree */}
               <div className="tree-header" style={{ flexShrink: 0 }}>
@@ -2994,7 +3164,7 @@ export default function HeatingControl() {
                               }
                               return device.id;
                             }).filter(id => id);
-                            fetchTemperaturesViaAPI(deviceIds);
+                            fetchTemperaturesViaAPI(deviceIds, { skipCache: true });
                           }}
                           title="Temperaturen aktualisieren"
                         >
@@ -3093,18 +3263,11 @@ export default function HeatingControl() {
                 {/* Fixed Header and Tabs - not scrollable */}
                 <div className="p-4 pb-0" style={{ flexShrink: 0, backgroundColor: 'white', borderBottom: '1px solid #dee2e6' }}>
                   <div className="node-details">
-                    <div className="d-flex align-items-center mb-3">
-                      <FontAwesomeIcon 
-                        icon={getIconForType(selectedNode.type)} 
-                        className="me-3 text-primary" 
-                        size="2x"
-                      />
-                      <div>
-                        <h4 className="mb-1">{selectedNode.label || selectedNode.name}</h4>
-                        <span className="badge bg-secondary">
-                          {getNodeTypeLabel(selectedNode.type)}
-                        </span>
-                      </div>
+                    <div className="mb-3">
+                      <h4 className="mb-1">{selectedNode.label || selectedNode.name}</h4>
+                      <span className="badge bg-secondary">
+                        {getNodeTypeLabel(selectedNode.type)}
+                      </span>
                     </div>
 
                     {/* Tab Navigation */}
@@ -4286,7 +4449,12 @@ if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runS
                       <div className="tab-pane fade show active">
                         {(() => {
                           const { path, subordinates } = getAllSubordinateNodes(selectedNode?.id, visibleTreeData);
-                          
+                          const subordinatesSorted = [...subordinates].sort((a, b) => {
+                            const la = String(a.label ?? a.name ?? a.text ?? '').toLocaleLowerCase('de');
+                            const lb = String(b.label ?? b.name ?? b.text ?? '').toLocaleLowerCase('de');
+                            return la.localeCompare(lb, 'de', { sensitivity: 'base' });
+                          });
+
                           // Get all subordinates without filtering to calculate the difference
                           const getAllSubordinatesWithoutFilter = (nodeId, nodes = visibleTreeData) => {
                             const findNode = (nodeList, targetId) => {
@@ -4353,9 +4521,9 @@ if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runS
 
                               {/* Untergeordnete Nodes */}
                               <div className="mb-4">
-                                {subordinates.length > 0 ? (
+                                {subordinatesSorted.length > 0 ? (
                                   <div className="row">
-                                    {subordinates.map((node) => (
+                                    {subordinatesSorted.map((node) => (
                                       <div key={node.id} className="col-md-6 col-lg-4 mb-3">
                                         <div className="card h-100">
                                           <div className="card-body">
@@ -4407,9 +4575,19 @@ if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runS
                                               </p>
                                             )}
                                             
-                                            {/* Temperature and Valve Data */}
-                                            {subordinateTelemetry[node.id] && (
-                                              <div className="mt-3">
+                                            {/* Temperature and Valve Data — Spinner pro Kachel solange Telemetrie lädt */}
+                                            <div className="mt-3" style={{ minHeight: '4.5rem' }}>
+                                              {loadingSubordinateTelemetry ? (
+                                                <div className="d-flex align-items-center justify-content-center py-3">
+                                                  <div
+                                                    className="spinner-border spinner-border-sm text-primary"
+                                                    role="status"
+                                                    aria-busy="true"
+                                                  >
+                                                    <span className="visually-hidden">Lade Daten…</span>
+                                                  </div>
+                                                </div>
+                                              ) : subordinateTelemetry[node.id] ? (
                                                 <div className="row text-center">
                                                   {subordinateTelemetry[node.id].currentTemp !== null && (
                                                     <div className="col-3">
@@ -4472,15 +4650,12 @@ if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runS
                                                     </div>
                                                   )}
                                                 </div>
-                                                {loadingSubordinateTelemetry && (
-                                                  <div className="text-center mt-2">
-                                                    <div className="spinner-border spinner-border-sm text-primary" role="status">
-                                                      <span className="visually-hidden">Laden...</span>
-                                                    </div>
-                                                  </div>
-                                                )}
-                                              </div>
-                                            )}
+                                              ) : (
+                                                <div className="text-center text-muted small py-2">
+                                                  Keine Telemetriedaten
+                                                </div>
+                                              )}
+                                            </div>
                                             
                                             <button
                                               className="btn btn-sm btn-outline-primary mt-2"
@@ -4676,7 +4851,12 @@ if (customerData?.customerid && (runStatus === 'schedule' || isPirRunStatus(runS
                           setSelectedTimeRange(option.value);
                           setShowTimeRangeModal(false);
                           if (selectedNode) {
-                            fetchTemperatureHistory(selectedNode, option.value);
+                            fetchTemperatureHistory(
+                              selectedNode,
+                              option.value,
+                              roomLoadGenerationRef.current,
+                              undefined
+                            );
                           }
                         }}
                       >

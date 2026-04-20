@@ -1,5 +1,6 @@
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../auth/[...nextauth]';
+import { debugLog, debugWarn } from '../../../../lib/appDebug';
 import {
   loadCustomerSettingsTree,
   resolveDevicePathFromCustomerTree,
@@ -83,7 +84,7 @@ export default async function handler(req, res) {
           
           allAlarms = allAlarms.concat(deviceAlarms);
         } else {
-          console.warn(`Failed to fetch alarms for device ${deviceId}:`, deviceAlarmsResponse.status);
+          debugWarn(`Failed to fetch alarms for device ${deviceId}:`, deviceAlarmsResponse.status);
         }
       } catch (deviceError) {
         console.error(`Error fetching alarms for device ${deviceId}:`, deviceError);
@@ -101,18 +102,18 @@ export default async function handler(req, res) {
     // Limit total alarms to prevent overwhelming the UI
     const maxTotalAlarms = 50;
     if (allAlarms.length > maxTotalAlarms) {
-      console.log(`Limiting alarms from ${allAlarms.length} to ${maxTotalAlarms} most recent`);
+      debugLog(`Limiting alarms from ${allAlarms.length} to ${maxTotalAlarms} most recent`);
       allAlarms = allAlarms.slice(0, maxTotalAlarms);
     }
     
     // Use the collected alarms instead of a single response
     let transformedAlarms = allAlarms;
 
-    console.log('Alarms collection completed. Processing collected alarms...');
+    debugLog('Alarms collection completed. Processing collected alarms...');
     
     // If we have alarms, try to get device names for better display
     if (transformedAlarms.length > 0) {
-      console.log('Processing alarms:', transformedAlarms.length);
+      debugLog('Processing alarms:', transformedAlarms.length);
       
       // Ensure alarms have the required fields and are all strings/numbers
       transformedAlarms = transformedAlarms.map(alarm => {
@@ -232,15 +233,15 @@ export default async function handler(req, res) {
         };
       });
       try {
-        console.log('Attempting to fetch device names from ThingsBoard');
-        console.log('Device IDs to fetch names for:', deviceIds);
+        debugLog('Attempting to fetch device names from ThingsBoard');
+        debugLog('Device IDs to fetch names for:', deviceIds);
         
         // Try multiple approaches to get device names
         let deviceMap = {};
         
         // Approach 1: Try to get devices by IDs
         try {
-          console.log('Trying to fetch devices by IDs:', deviceIds);
+          debugLog('Trying to fetch devices by IDs:', deviceIds);
           const devicesResponse = await fetch(`${TB_API_URL}/api/devices?deviceIds=${deviceIds}`, {
             method: 'GET',
             headers: {
@@ -249,7 +250,7 @@ export default async function handler(req, res) {
             }
           });
 
-          console.log('Device names response:', {
+          debugLog('Device names response:', {
             status: devicesResponse.status,
             statusText: devicesResponse.statusText,
             url: `${TB_API_URL}/api/devices?deviceIds=${deviceIds}`
@@ -257,7 +258,7 @@ export default async function handler(req, res) {
 
           if (devicesResponse.ok) {
             const devicesData = await devicesResponse.json();
-            console.log('Device names data received:', {
+            debugLog('Device names data received:', {
               hasData: !!devicesData,
               dataLength: devicesData?.data?.length || 0,
               dataKeys: devicesData ? Object.keys(devicesData) : [],
@@ -267,7 +268,7 @@ export default async function handler(req, res) {
             
             if (devicesData.data) {
               devicesData.data.forEach(device => {
-                console.log('Processing device:', device);
+                debugLog('Processing device:', device);
                 
                 // Extract device ID from various possible formats
                 let deviceId;
@@ -283,28 +284,28 @@ export default async function handler(req, res) {
                 const deviceName = device.name || device.title || device.displayName || 'Unknown Device';
                 const deviceLabel = device.label || device.name || device.title || 'Unknown Device';
                 
-                console.log(`Mapping device: ${deviceId} -> ${deviceName} (${deviceLabel})`);
+                debugLog(`Mapping device: ${deviceId} -> ${deviceName} (${deviceLabel})`);
                 deviceMap[deviceId] = {
                   name: deviceName,
                   label: deviceLabel
                 };
               });
             } else {
-              console.warn('No devices.data found in response');
+              debugWarn('No devices.data found in response');
             }
           } else {
-            console.warn('Failed to fetch device names by IDs:', devicesResponse.status);
+            debugWarn('Failed to fetch device names by IDs:', devicesResponse.status);
             const errorText = await devicesResponse.text();
-            console.warn('Error response:', errorText);
+            debugWarn('Error response:', errorText);
           }
         } catch (error) {
-          console.warn('Error fetching device names by IDs:', error.message);
+          debugWarn('Error fetching device names by IDs:', error.message);
         }
         
         // Approach 2: If no devices found, try to get all devices and filter
         if (Object.keys(deviceMap).length === 0) {
           try {
-            console.log('Trying to fetch all devices and filter...');
+            debugLog('Trying to fetch all devices and filter...');
             const allDevicesResponse = await fetch(`${TB_API_URL}/api/devices?pageSize=1000`, {
               method: 'GET',
               headers: {
@@ -315,7 +316,7 @@ export default async function handler(req, res) {
             
             if (allDevicesResponse.ok) {
               const allDevicesData = await allDevicesResponse.json();
-              console.log('All devices response:', {
+              debugLog('All devices response:', {
                 hasData: !!allDevicesData,
                 dataLength: allDevicesData?.data?.length || 0
               });
@@ -339,20 +340,20 @@ export default async function handler(req, res) {
                       name: deviceName,
                       label: deviceLabel
                     };
-                    console.log(`Found device in all devices: ${deviceId} -> ${deviceName} (${deviceLabel})`);
+                    debugLog(`Found device in all devices: ${deviceId} -> ${deviceName} (${deviceLabel})`);
                   }
                 });
               }
             }
           } catch (error) {
-            console.warn('Error fetching all devices:', error.message);
+            debugWarn('Error fetching all devices:', error.message);
           }
         }
 
         // Approach 3: Try to get device info individually for each device ID
         if (Object.keys(deviceMap).length === 0) {
           try {
-            console.log('Trying to fetch device info individually...');
+            debugLog('Trying to fetch device info individually...');
             for (const deviceId of deviceIdArray) {
               try {
                 const individualDeviceResponse = await fetch(`${TB_API_URL}/api/device/${deviceId}`, {
@@ -365,7 +366,7 @@ export default async function handler(req, res) {
                 
                 if (individualDeviceResponse.ok) {
                   const deviceData = await individualDeviceResponse.json();
-                  console.log(`Individual device ${deviceId} data:`, deviceData);
+                  debugLog(`Individual device ${deviceId} data:`, deviceData);
                   
                   const deviceName = deviceData.name || deviceData.title || deviceData.displayName || 'Unknown Device';
                   const deviceLabel = deviceData.label || deviceData.name || deviceData.title || 'Unknown Device';
@@ -374,20 +375,20 @@ export default async function handler(req, res) {
                     name: deviceName,
                     label: deviceLabel
                   };
-                  console.log(`Individual device mapping: ${deviceId} -> ${deviceName} (${deviceLabel})`);
+                  debugLog(`Individual device mapping: ${deviceId} -> ${deviceName} (${deviceLabel})`);
                 } else {
-                  console.warn(`Failed to fetch individual device ${deviceId}:`, individualDeviceResponse.status);
+                  debugWarn(`Failed to fetch individual device ${deviceId}:`, individualDeviceResponse.status);
                 }
               } catch (error) {
-                console.warn(`Error fetching individual device ${deviceId}:`, error.message);
+                debugWarn(`Error fetching individual device ${deviceId}:`, error.message);
               }
             }
           } catch (error) {
-            console.warn('Error fetching devices individually:', error.message);
+            debugWarn('Error fetching devices individually:', error.message);
           }
         }
 
-        console.log('Final device map:', deviceMap);
+        debugLog('Final device map:', deviceMap);
 
         // Add device names and labels to alarms
         transformedAlarms.forEach(alarm => {
@@ -403,10 +404,10 @@ export default async function handler(req, res) {
           if (deviceInfo) {
             alarm.deviceName = deviceInfo.name;
             alarm.deviceLabel = deviceInfo.label;
-            console.log(`Using device map for ${lookupDeviceId}: ${deviceInfo.name} (${deviceInfo.label})`);
+            debugLog(`Using device map for ${lookupDeviceId}: ${deviceInfo.name} (${deviceInfo.label})`);
           } else {
             // Fallback: Try to extract device info from the alarm data itself
-            console.log(`No device info found for ${lookupDeviceId}, trying to extract from alarm data:`, alarm);
+            debugLog(`No device info found for ${lookupDeviceId}, trying to extract from alarm data:`, alarm);
             
             // Look for device information in the alarm data
             const alarmDeviceName = alarm.deviceName || alarm.device?.name || alarm.device?.label || alarm.originator?.name;
@@ -415,17 +416,17 @@ export default async function handler(req, res) {
             if (alarmDeviceName && alarmDeviceName !== 'unknown') {
               alarm.deviceName = alarmDeviceName;
               alarm.deviceLabel = alarmDeviceLabel || alarmDeviceName;
-              console.log(`Extracted from alarm data: ${alarmDeviceName} (${alarmDeviceLabel || alarmDeviceName})`);
+              debugLog(`Extracted from alarm data: ${alarmDeviceName} (${alarmDeviceLabel || alarmDeviceName})`);
             } else {
               // Last resort: Create a more user-friendly device name
               const shortId = lookupDeviceId.length > 8 ? lookupDeviceId.substring(0, 8) + '...' : lookupDeviceId;
               alarm.deviceName = `Device ${shortId}`;
               alarm.deviceLabel = `Device ${shortId}`;
-              console.log(`Using fallback device name: Device ${shortId}`);
+              debugLog(`Using fallback device name: Device ${shortId}`);
             }
           }
           
-          console.log(`Final alarm ${alarm.id}: deviceId=${lookupDeviceId}, deviceName=${alarm.deviceName}, deviceLabel=${alarm.deviceLabel}`);
+          debugLog(`Final alarm ${alarm.id}: deviceId=${lookupDeviceId}, deviceName=${alarm.deviceName}, deviceLabel=${alarm.deviceLabel}`);
         });
 
         try {
@@ -456,7 +457,7 @@ export default async function handler(req, res) {
             });
           }
         } catch (pathErr) {
-          console.warn('Alarm device path enrichment failed:', pathErr?.message);
+          debugWarn('Alarm device path enrichment failed:', pathErr?.message);
           transformedAlarms.forEach((a) => {
             a.devicePath = null;
           });
@@ -467,14 +468,14 @@ export default async function handler(req, res) {
       }
     }
 
-    console.log('Returning alarms data:', {
+    debugLog('Returning alarms data:', {
       count: transformedAlarms.length,
       hasDeviceNames: transformedAlarms.some(alarm => alarm.deviceName)
     });
     
     // Return empty array if no alarms found (this is not an error)
     if (transformedAlarms.length === 0) {
-      console.log('No alarms found for the specified devices');
+      debugLog('No alarms found for the specified devices');
     }
     
     return res.status(200).json(transformedAlarms);
@@ -487,7 +488,7 @@ export default async function handler(req, res) {
     
     // For development/testing, return mock data instead of error
     if (process.env.NODE_ENV === 'development') {
-      console.log('Returning mock alarms data for development');
+      debugLog('Returning mock alarms data for development');
       const mockAlarms = [
         {
           id: 'mock_alarm_1',

@@ -3,6 +3,7 @@ import { authOptions } from "../../auth/[...nextauth]";
 import { getConnection } from "../../../../lib/db";
 import sql from 'mssql';
 import { getCachedUnassignedDevices, setCachedUnassignedDevices } from '../../../../lib/utils/deviceCache';
+import { debugLog, debugWarn } from '../../../../lib/appDebug';
 
 export default async function handler(req, res) {
   const session = await getServerSession(req, res, authOptions);
@@ -34,7 +35,7 @@ export default async function handler(req, res) {
         break; // Erfolgreich, beende die Schleife
       } catch (error) {
         if ((error.code === 'ECONNCLOSED' || error.code === 'ECONNRESET') && retries > 1) {
-          console.log(`Database connection closed, retrying... (${retries - 1} retries left)`);
+          debugLog(`Database connection closed, retrying... (${retries - 1} retries left)`);
           retries--;
           // Kurz warten vor dem Retry
           await new Promise(resolve => setTimeout(resolve, 500));
@@ -54,12 +55,12 @@ export default async function handler(req, res) {
     // Prüfe zuerst den Cache für unassigned devices
     let cachedUnassigned = getCachedUnassignedDevices(customerId);
     if (cachedUnassigned) {
-      console.log(`Cache hit for unassigned devices (customer ${customerId}), returning ${cachedUnassigned.length} cached devices`);
+      debugLog(`Cache hit for unassigned devices (customer ${customerId}), returning ${cachedUnassigned.length} cached devices`);
       return res.json(cachedUnassigned);
     }
 
     // Cache miss - hole alle Devices des Customers (mit Pagination)
-    console.log(`Cache miss for unassigned devices (customer ${customerId}), fetching from ThingsBoard...`);
+    debugLog(`Cache miss for unassigned devices (customer ${customerId}), fetching from ThingsBoard...`);
     
     // Lade alle Devices mit Pagination und Timeouts
     const allDevices = [];
@@ -95,7 +96,7 @@ export default async function handler(req, res) {
             throw new Error(`Failed to fetch devices (page ${page}): ${devicesResponse.status}`);
           }
           // Wenn bereits Devices geladen wurden, breche ab und verwende diese
-          console.warn(`Stopping pagination after error on page ${page}, using ${allDevices.length} already loaded devices`);
+          debugWarn(`Stopping pagination after error on page ${page}, using ${allDevices.length} already loaded devices`);
           break;
         }
 
@@ -107,7 +108,7 @@ export default async function handler(req, res) {
         hasNext = devicesData.hasNext || (devicesData.totalPages && page + 1 < devicesData.totalPages);
         page++;
         
-        console.log(`Loaded page ${page - 1}: ${pageDevices.length} devices (total so far: ${allDevices.length})`);
+        debugLog(`Loaded page ${page - 1}: ${pageDevices.length} devices (total so far: ${allDevices.length})`);
       } catch (fetchError) {
         if (timeoutId) clearTimeout(timeoutId);
         // Prüfe auf verschiedene Timeout-Fehler
@@ -119,7 +120,7 @@ export default async function handler(req, res) {
           fetchError.cause?.code === 'UND_ERR_SOCKET';
         
         if (isTimeoutError) {
-          console.warn(`Timeout while fetching devices (page ${page}), using ${allDevices.length} already loaded devices`);
+          debugWarn(`Timeout while fetching devices (page ${page}), using ${allDevices.length} already loaded devices`);
           // Bei Timeout: verwende bereits geladene Devices
           if (allDevices.length === 0) {
             throw new Error(`Timeout while fetching devices: No devices loaded`);
@@ -132,10 +133,10 @@ export default async function handler(req, res) {
     }
     
     if (page >= maxPages) {
-      console.warn(`Reached max pages limit (${maxPages}), loaded ${allDevices.length} devices`);
+      debugWarn(`Reached max pages limit (${maxPages}), loaded ${allDevices.length} devices`);
     }
     
-    console.log(`Total devices loaded: ${allDevices.length}`);
+    debugLog(`Total devices loaded: ${allDevices.length}`);
 
     // Hilfsfunktion zum Abrufen aller Attribute für ein Device mit Timeout
     const fetchAllDeviceAttributes = async (deviceId) => {
@@ -174,13 +175,13 @@ export default async function handler(req, res) {
             clearTimeout(timeoutId);
             // Ignoriere Timeout-Fehler und Abort-Fehler stillschweigend
             if (fetchError.name !== 'AbortError' && !fetchError.message?.includes('timeout')) {
-              console.warn(`Error fetching ${scope} attributes for device ${deviceId}:`, fetchError.message || fetchError);
+              debugWarn(`Error fetching ${scope} attributes for device ${deviceId}:`, fetchError.message || fetchError);
             }
           }
         } catch (error) {
           // Ignoriere Fehler beim Abrufen einzelner Scopes
           if (!error.message?.includes('timeout') && !error.message?.includes('aborted')) {
-            console.warn(`Error fetching ${scope} attributes for device ${deviceId}:`, error.message || error);
+            debugWarn(`Error fetching ${scope} attributes for device ${deviceId}:`, error.message || error);
           }
         }
       }
@@ -223,7 +224,7 @@ export default async function handler(req, res) {
 
               // Debug: Log alle Attribute für das erste Device
               if (allDevices.indexOf(device) === 0) {
-                console.log('All attributes for first unassigned device:', allAttributes);
+                debugLog('All attributes for first unassigned device:', allAttributes);
               }
 
               return {
@@ -235,14 +236,14 @@ export default async function handler(req, res) {
           } catch (fetchError) {
             clearTimeout(timeoutId);
             if (fetchError.name !== 'AbortError' && !fetchError.message?.includes('timeout')) {
-              console.warn(`Error fetching relations for device ${device.id.id}:`, fetchError.message || fetchError);
+              debugWarn(`Error fetching relations for device ${device.id.id}:`, fetchError.message || fetchError);
             }
             return null;
           }
         } catch (error) {
           // Ignoriere Fehler beim Verarbeiten einzelner Devices
           if (!error.message?.includes('timeout') && !error.message?.includes('aborted')) {
-            console.warn(`Error processing device ${device.id.id}:`, error.message || error);
+            debugWarn(`Error processing device ${device.id.id}:`, error.message || error);
           }
           return null;
         }
@@ -259,7 +260,7 @@ export default async function handler(req, res) {
 
     // Speichere im Cache (5 Minuten TTL)
     setCachedUnassignedDevices(customerId, unassignedDevices, 5 * 60 * 1000);
-    console.log(`Cached ${unassignedDevices.length} unassigned devices for customer ${customerId}`);
+    debugLog(`Cached ${unassignedDevices.length} unassigned devices for customer ${customerId}`);
 
     return res.json(unassignedDevices);
 

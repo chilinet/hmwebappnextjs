@@ -2,6 +2,7 @@ import { getPgConnection } from '../../../lib/pgdb';
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../auth/[...nextauth]";
 import axios from 'axios';
+import { debugLog, debugWarn } from '../../../lib/appDebug';
 
 // Function to resolve attribute name to key_id
 async function resolveKey(client, key) {
@@ -45,7 +46,7 @@ async function getLatestSensorValues(client, deviceIds, keys) {
       );
       keyNames[key] = nameResult.rows[0]?.key || key;
     } catch (error) {
-      console.warn(`Warning: Could not resolve key '${key}': ${error.message}`);
+      debugWarn(`Warning: Could not resolve key '${key}': ${error.message}`);
       keyIds[key] = null;
       keyNames[key] = key;
     }
@@ -215,7 +216,7 @@ export default async function handler(req, res) {
       const jwt = require('jsonwebtoken');
       const decoded = jwt.verify(token, process.env.NEXTAUTH_SECRET);
       isAuthenticated = true;
-      console.log('Mobile token verified for user:', decoded.username);
+      debugLog('Mobile token verified for user:', decoded.username);
     } catch (err) {
       console.error('JWT verification failed:', err);
     }
@@ -226,7 +227,7 @@ export default async function handler(req, res) {
     const session = await getServerSession(req, res, authOptions);
     if (session?.user) {
       isAuthenticated = true;
-      console.log('Session verified for user:', session.user.name);
+      debugLog('Session verified for user:', session.user.name);
     }
   }
 
@@ -311,7 +312,7 @@ export default async function handler(req, res) {
       
       // Try ThingsBoard fallback if available
       if (tbToken) {
-        console.log('Trying ThingsBoard fallback...');
+        debugLog('Trying ThingsBoard fallback...');
         try {
           const fallbackData = await getDataFromThingsBoard(deviceIds, keyList, tbToken);
           return res.status(200).json({

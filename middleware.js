@@ -1,15 +1,16 @@
 import { withAuth } from "next-auth/middleware"
 import { NextResponse } from "next/server"
 import { getToken } from "next-auth/jwt"
+import { debugLog } from "./lib/appDebug"
 
 // Redirect to our custom signin page
 export async function middleware(request) {
-  console.log('Middleware called for:', request.url);
+  debugLog('Middleware called for:', request.url);
   
   // Fix URL issues in production
   if (process.env.NODE_ENV === 'production' && request.url.includes('localhost')) {
     const correctedUrl = request.url.replace('localhost:3000', 'webapptest.heatmanager.cloud');
-    console.log('Correcting URL from', request.url, 'to', correctedUrl);
+    debugLog('Correcting URL from', request.url, 'to', correctedUrl);
     return NextResponse.redirect(correctedUrl);
   }
   
@@ -22,11 +23,11 @@ export async function middleware(request) {
       });
       
       if (!token) {
-        console.log('No token found, redirecting to signin');
+        debugLog('No token found, redirecting to signin');
         return NextResponse.redirect(new URL('/auth/signin', request.url));
       }
       
-      console.log('Token found, allowing access');
+      debugLog('Token found, allowing access');
     } catch (error) {
       console.error('Token validation error:', error);
       return NextResponse.redirect(new URL('/auth/signin', request.url));

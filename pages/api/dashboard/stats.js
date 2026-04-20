@@ -2,6 +2,7 @@ import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]';
 import { getConnection } from '../../../lib/db';
 import { getPgConnection } from '../../../lib/pgdb.js';
+import { debugLog, debugWarn } from '../../../lib/appDebug';
 import {
   normalizeUuid,
   fetchDefaultEntryAssetId,
@@ -97,7 +98,7 @@ async function fetchAllDevices(customerId, tbToken) {
       const totalPages = devicesData.totalPages || Math.ceil(totalElements / pageSize);
       hasNext = devices.length === pageSize && (page + 1) < totalPages;
 
-      console.log(`Fetched page ${page}: ${devices.length} devices (total so far: ${allDevices.length})`);
+      debugLog(`Fetched page ${page}: ${devices.length} devices (total so far: ${allDevices.length})`);
       
       page++;
     } catch (error) {
@@ -127,11 +128,11 @@ async function fetchThingsBoardAlarmCount(tbToken, customerId) {
     if (alarmsResponse.ok) {
       const alarmsData = await alarmsResponse.json();
       const n = alarmsData.totalElements || 0;
-      console.log(`Successfully fetched ${n} alarms`);
+      debugLog(`Successfully fetched ${n} alarms`);
       return n;
     }
   } catch (alarmError) {
-    console.log('Failed to fetch alarms:', alarmError.message);
+    debugLog('Failed to fetch alarms:', alarmError.message);
   }
   return 0;
 }
@@ -161,7 +162,7 @@ async function getDashboardStats(pool, customerId, session) {
             activeDevices = Number(row.active_devices) || 0;
             inactiveDevices = Number(row.inactive_devices) || 0;
             deviceStatsFromSql = true;
-            console.log(
+            debugLog(
               `Dashboard stats: device counts from SQL (${devicesCount} total, ${activeDevices} active, ${inactiveDevices} inactive)`
             );
           }
@@ -169,19 +170,19 @@ async function getDashboardStats(pool, customerId, session) {
           pgClient.release();
         }
       } catch (pgErr) {
-        console.warn('Dashboard stats: PostgreSQL device counts failed:', pgErr.message);
+        debugWarn('Dashboard stats: PostgreSQL device counts failed:', pgErr.message);
       }
     }
 
     // ThingsBoard: nur noch Fallback für Gerätezahlen, weiterhin Quelle für Alarme
     if (!deviceStatsFromSql && session?.tbToken && process.env.THINGSBOARD_URL) {
       try {
-        console.log('Dashboard stats: attempting ThingsBoard device counts (fallback)...');
+        debugLog('Dashboard stats: attempting ThingsBoard device counts (fallback)...');
         const devices = await fetchAllDevices(customerId, session.tbToken);
         devicesCount = devices.length;
         activeDevices = devices.filter((device) => device.active === true).length;
         inactiveDevices = devices.filter((device) => device.active === false).length;
-        console.log(
+        debugLog(
           `Successfully fetched ${devicesCount} devices from ThingsBoard (${activeDevices} active, ${inactiveDevices} inactive)`
         );
       } catch (apiError) {
@@ -195,7 +196,7 @@ async function getDashboardStats(pool, customerId, session) {
 
     // MSSQL-Fallback nur wenn weder SQL noch TB Gerätezahlen geliefert haben
     if (!deviceStatsFromSql && devicesCount === 0 && !(session?.tbToken && process.env.THINGSBOARD_URL)) {
-      console.log('Falling back to local database (assets count)...');
+      debugLog('Falling back to local database (assets count)...');
       try {
         const totalDevicesResult = await pool.request()
           .input('customerId', sql.UniqueIdentifier, customerId)
@@ -205,13 +206,13 @@ async function getDashboardStats(pool, customerId, session) {
             WHERE a.customer_id = @customerId
           `);
         devicesCount = totalDevicesResult.recordset[0]?.totalDevices || 0;
-        console.log(`Found ${devicesCount} assets in local database`);
+        debugLog(`Found ${devicesCount} assets in local database`);
       } catch (dbError) {
         console.error('Database error:', dbError);
       }
     }
 
-    console.log(`Final devices count: ${devicesCount}, alarms count: ${alarmsCount}`);
+    debugLog(`Final devices count: ${devicesCount}, alarms count: ${alarmsCount}`);
 
     return {
       devices: devicesCount,

@@ -2,6 +2,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../../auth/[...nextauth]";
 import sql from "mssql";
 import { getConnection } from "../../../../../lib/db";
+import { debugLog, debugWarn } from '../../../../../lib/appDebug';
 
 export default async function handler(req, res) {
   if (req.method !== "PUT") {
@@ -118,9 +119,9 @@ async function updateTreeInDB(userId, nodeId, newParentId) {
   // Verwenden der `moveNode`-Funktion zur Aktualisierung des Baums
   const updatedTree = moveNode(currentTree, nodeId, newParentId);
 
-  console.log("+++++++++++++++++++++++++++++++ ");
-  console.log(JSON.stringify(updatedTree));
-  console.log("+++++++++++++++++++++++++++++++ ");
+  debugLog("+++++++++++++++++++++++++++++++ ");
+  debugLog(JSON.stringify(updatedTree));
+  debugLog("+++++++++++++++++++++++++++++++ ");
 
   // Baum in der Datenbank speichern
   await pool.request()

@@ -1,3 +1,5 @@
+import { debugLog, debugWarn } from '../../../lib/appDebug';
+
 // Preshared Key für Authentifizierung
 const PRESHARED_KEY = process.env.REPORTING_PRESHARED_KEY || 'default-reporting-key-2024';
 const REPORTING_URL = process.env.REPORTING_URL || 'http://localhost:3000';
@@ -54,7 +56,7 @@ export default async function handler(req, res) {
     
     const fullUrl = `${reportingApiUrl}?${queryParams.toString()}`;
     
-    console.log('Calling external reporting API:', fullUrl);
+    debugLog('Calling external reporting API:', fullUrl);
     
     try {
       // Timeout für große Datenmengen: 90 Sekunden für 30/90 Tage, 60 Sekunden für 7 Tage, 30 Sekunden für 24h

@@ -1,6 +1,7 @@
 import { getConnection } from '../../../lib/db';
 import sql from 'mssql';
 import crypto from 'crypto';
+import { debugLog, debugWarn } from '../../../lib/appDebug';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -53,8 +54,8 @@ export default async function handler(req, res) {
     const user = userResult.recordset[0];
     
     // Debug: Überprüfe den Benutzer
-    console.log('User data:', user);
-    console.log('User ID type:', typeof user.userid, 'Value:', user.userid);
+    debugLog('User data:', user);
+    debugLog('User ID type:', typeof user.userid, 'Value:', user.userid);
     
     if (!user.userid) {
       throw new Error('User ID is missing or undefined');
@@ -122,7 +123,7 @@ export default async function handler(req, res) {
     }
 
     const emailResult = await emailResponse.json();
-    console.log('Password reset email sent successfully:', emailResult);
+    debugLog('Password reset email sent successfully:', emailResult);
 
     return res.status(200).json({
       success: true,

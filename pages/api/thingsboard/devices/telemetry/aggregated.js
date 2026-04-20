@@ -1,6 +1,7 @@
 import { getServerSession } from 'next-auth/next';
 import { getSession } from 'next-auth/react';
 import jwt from 'jsonwebtoken';
+import { debugLog, debugWarn } from '../../../../../lib/appDebug';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
@@ -139,7 +140,7 @@ export default async function handler(req, res) {
             
             if (response.ok) {
               const latestData = await response.json();
-              console.log(`[hall_sensor_state] Latest data for device ${deviceId}:`, latestData);
+              debugLog(`[hall_sensor_state] Latest data for device ${deviceId}:`, latestData);
               // Convert latest values format to timeseries format
               if (latestData && latestData[attribute]) {
                 historicalData = {
@@ -148,12 +149,12 @@ export default async function handler(req, res) {
                     value: latestData[attribute].value
                   }]
                 };
-                console.log(`[hall_sensor_state] Converted historicalData:`, historicalData);
+                debugLog(`[hall_sensor_state] Converted historicalData:`, historicalData);
               } else {
-                console.log(`[hall_sensor_state] No data found in latestData for attribute ${attribute}:`, latestData);
+                debugLog(`[hall_sensor_state] No data found in latestData for attribute ${attribute}:`, latestData);
               }
             } else {
-              console.log(`[hall_sensor_state] Latest values API failed for device ${deviceId}:`, response.status, response.statusText);
+              debugLog(`[hall_sensor_state] Latest values API failed for device ${deviceId}:`, response.status, response.statusText);
             }
           } catch (error) {
             console.error(`[hall_sensor_state] Latest values API error for device ${deviceId}:`, error);
@@ -282,10 +283,10 @@ export default async function handler(req, res) {
               originalDataPoints: filteredData.length
             });
           } else {
-            console.log(`Device ${deviceId} has no data in the specified time range for key ${attribute}`);
+            debugLog(`Device ${deviceId} has no data in the specified time range for key ${attribute}`);
           }
         } else {
-          console.log(`Device ${deviceId} has no data for key ${attribute}`);
+          debugLog(`Device ${deviceId} has no data for key ${attribute}`);
         }
       } catch (error) {
         console.error(`Error fetching telemetry for device ${deviceId}:`, error);

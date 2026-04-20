@@ -1,6 +1,7 @@
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../../../../auth/[...nextauth]';
 import { fetchWithTokenRefresh } from '../../../../../../lib/utils/fetchWithTokenRefresh';
+import { debugLog, debugWarn } from '../../../../../../lib/appDebug';
 
 export default async function handler(req, res) {
   const session = await getServerSession(req, res, authOptions);
@@ -37,7 +38,7 @@ export default async function handler(req, res) {
         }
 
         const attributes = await response.json();
-        //console.log('Customer attributes:', attributes);
+        //debugLog('Customer attributes:', attributes);
         
         // Look for the plans attribute
         const plansAttribute = attributes.find(attr => attr.key === 'plans');
@@ -63,7 +64,7 @@ export default async function handler(req, res) {
           });
         }
 
-        //console.log('Parsed plans:', plans);
+        //debugLog('Parsed plans:', plans);
 
         return res.status(200).json({
           plans: plans

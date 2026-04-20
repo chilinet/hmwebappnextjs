@@ -9,7 +9,9 @@ const reportingUrlForClient =
 
 const nextConfig = {
   env: {
-    NEXT_PUBLIC_REPORTING_URL: reportingUrlForClient
+    NEXT_PUBLIC_REPORTING_URL: reportingUrlForClient,
+    // Client-Bundle: gleiche DEBUG-Variable wie serverseitig (.env DEBUG=true)
+    NEXT_PUBLIC_DEBUG: process.env.DEBUG ?? '',
   },
   experimental: {
     // 'appDir' entfernen, da es nicht mehr benötigt wird

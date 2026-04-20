@@ -5,6 +5,7 @@ import { getConnection } from '../../../lib/db';
 import { getMssqlConfig } from '../../../lib/mssqlConfig';
 import mqtt from 'mqtt';
 import fs from 'fs';
+import { debugLog, debugWarn } from '../../../lib/appDebug';
 
 // Preshared Key für Authentifizierung (optional, für externe Clients)
 const LNS_API_KEY = process.env.LNS_API_KEY;
@@ -275,9 +276,9 @@ export default async function handler(req, res) {
           continue;
         }
       }
-      // console.log('************************************************')
-      // console.log(connectionResult);
-      // console.log('************************************************')   
+      // debugLog('************************************************')
+      // debugLog(connectionResult);
+      // debugLog('************************************************')   
       
       // Wenn alle Versuche fehlgeschlagen sind
       if (!connectionResult || lastError) {
@@ -321,9 +322,9 @@ export default async function handler(req, res) {
     }
 
     
-   // console.log('************************************************')
-   // console.log(connection);
-   // console.log('************************************************')
+   // debugLog('************************************************')
+   // debugLog(connection);
+   // debugLog('************************************************')
 
     // username aus connection holen (kann als 'username' oder 'user' kommen)
     const username = connection.username || connection.user;
@@ -356,7 +357,7 @@ export default async function handler(req, res) {
     // Prüfen ob CA-Datei existiert
     const caFileExists = fs.existsSync(caFilePath);
     if (!caFileExists) {
-      console.warn(`[LNS] CA file not found at ${caFilePath}, proceeding without CA verification`);
+      debugWarn(`[LNS] CA file not found at ${caFilePath}, proceeding without CA verification`);
     }
 
     // URL parsen: Falls Port bereits enthalten ist, trennen
@@ -386,7 +387,7 @@ export default async function handler(req, res) {
       ...(caFileExists && { ca: fs.readFileSync(caFilePath) })
     };
     
-    console.log(`[LNS] MQTT connection options:`, {
+    debugLog(`[LNS] MQTT connection options:`, {
       hostname: mqttOptions.hostname,
       port: mqttOptions.port,
       protocol: mqttOptions.protocol,
@@ -425,7 +426,7 @@ export default async function handler(req, res) {
       const client = mqtt.connect(mqttOptions);
 
       client.on('connect', () => {
-        console.log(`[LNS] MQTT connected to ${connection.url}`);
+        debugLog(`[LNS] MQTT connected to ${connection.url}`);
         
         // Nachricht publizieren
         client.publish(topic, JSON.stringify(downlinkMessage), { qos: 1 }, (err) => {
@@ -440,7 +441,7 @@ export default async function handler(req, res) {
             });
           }
 
-          console.log(`[LNS] Downlink message sent successfully to topic: ${topic}`);
+          debugLog(`[LNS] Downlink message sent successfully to topic: ${topic}`);
           
           resolve({
             success: true,

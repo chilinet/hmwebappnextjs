@@ -1,5 +1,6 @@
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../auth/[...nextauth]";
+import { debugLog, debugWarn } from '../../../lib/appDebug';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -47,7 +48,7 @@ export default async function handler(req, res) {
     // Make request to ThingsBoard
     const thingsboardUrl = `${process.env.THINGSBOARD_URL}/api/owner/${type}/${customerId}/DEVICE/${deviceId}`;
     
-    console.log(`Making ThingsBoard request to: ${thingsboardUrl}`);
+    debugLog(`Making ThingsBoard request to: ${thingsboardUrl}`);
     
     const response = await fetch(thingsboardUrl, {
       method: 'POST',

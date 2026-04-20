@@ -1,6 +1,7 @@
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from '../auth/[...nextauth]';
 import oauth2Helper from '../../../lib/oauth2Helper';
+import { debugLog, debugWarn } from '../../../lib/appDebug';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -32,7 +33,7 @@ export default async function handler(req, res) {
       html: html,
     };
 
-    console.log('Sending email via Microsoft Graph:', {
+    debugLog('Sending email via Microsoft Graph:', {
       from: mailOptions.from,
       to: mailOptions.to,
       subject: mailOptions.subject
@@ -40,7 +41,7 @@ export default async function handler(req, res) {
 
     const result = await oauth2Helper.sendMail(mailOptions);
 
-    console.log('Email sent successfully via Microsoft Graph:', result.status);
+    debugLog('Email sent successfully via Microsoft Graph:', result.status);
 
     return res.status(200).json({
       success: true,

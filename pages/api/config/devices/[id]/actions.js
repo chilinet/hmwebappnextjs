@@ -1,6 +1,7 @@
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../../auth/[...nextauth]";
 import { getConnection } from "../../../../../lib/db";
+import { debugLog, debugWarn } from '../../../../../lib/appDebug';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -18,11 +19,11 @@ export default async function handler(req, res) {
     const { action, parameters, device } = req.body;
 
     // Debug-Logging
-    console.log('API Debug - Request query:', req.query);
-    console.log('API Debug - Request body:', req.body);
-    console.log('API Debug - Extracted deviceId:', deviceId);
-    console.log('API Debug - Extracted action:', action);
-    console.log('API Debug - Device object:', device);
+    debugLog('API Debug - Request query:', req.query);
+    debugLog('API Debug - Request body:', req.body);
+    debugLog('API Debug - Extracted deviceId:', deviceId);
+    debugLog('API Debug - Extracted action:', action);
+    debugLog('API Debug - Device object:', device);
 
     if (!deviceId) {
       return res.status(400).json({ error: 'Device ID is required' });
@@ -154,24 +155,24 @@ export default async function handler(req, res) {
       const result = await connection.request().query(`SELECT nwconnectionid FROM inventory WHERE deviceid = '${deviceId}'`);
       if (result.recordset && result.recordset.length > 0) {
         integrationType = result.recordset[0].nwconnectionid;
-        console.log(`[DEVICE ACTION] Integration type for device ${deviceId}: ${integrationType}`);
+        debugLog(`[DEVICE ACTION] Integration type for device ${deviceId}: ${integrationType}`);
       } else {
-        console.log(`[DEVICE ACTION] Could not find inventory data for device ${deviceId}`);
+        debugLog(`[DEVICE ACTION] Could not find inventory data for device ${deviceId}`);
       }
     } catch (error) {
-      console.log(`[DEVICE ACTION] Error fetching inventory data: ${error.message}`);
+      debugLog(`[DEVICE ACTION] Error fetching inventory data: ${error.message}`);
     }
 
     // Aktuelle Zeit für Logging
     const timestamp = new Date().toISOString();
     
     // Log der Aktion mit Device-Profile-Informationen
-    console.log(`[DEVICE ACTION] ${timestamp} - Device: ${deviceId}, Type: ${deviceType}, Profile: ${deviceProfile.name}, Action: ${action}, Integration Type: ${integrationType}, User: ${session.user.email}, Parameters:`, parameters || 'none');
+    debugLog(`[DEVICE ACTION] ${timestamp} - Device: ${deviceId}, Type: ${deviceType}, Profile: ${deviceProfile.name}, Action: ${action}, Integration Type: ${integrationType}, User: ${session.user.email}, Parameters:`, parameters || 'none');
 
     // Melita API Integration für vicki Reset mit Integrationstyp 1
     if (deviceType === 'vicki' && action === 'reset' && integrationType === 1) {
       try {
-        console.log(`[DEVICE ACTION] Sending reset command to Melita API for vicki device ${deviceId}`);
+        debugLog(`[DEVICE ACTION] Sending reset command to Melita API for vicki device ${deviceId}`);
         
         // Hex 0x30 in Base64 konvertieren
         const hexCommand = '30';
@@ -195,14 +196,14 @@ export default async function handler(req, res) {
 
         if (melitaResponse.ok) {
           const melitaResult = await melitaResponse.json();
-          console.log(`[DEVICE ACTION] Melita API call successful:`, melitaResult);
+          debugLog(`[DEVICE ACTION] Melita API call successful:`, melitaResult);
         } else {
           const melitaError = await melitaResponse.text();
-          console.log(`[DEVICE ACTION] Melita API call failed: ${melitaResponse.status} - ${melitaError}`);
+          debugLog(`[DEVICE ACTION] Melita API call failed: ${melitaResponse.status} - ${melitaError}`);
         }
         
       } catch (melitaError) {
-        console.log(`[DEVICE ACTION] Error calling Melita API: ${melitaError.message}`);
+        debugLog(`[DEVICE ACTION] Error calling Melita API: ${melitaError.message}`);
       }
     }
 

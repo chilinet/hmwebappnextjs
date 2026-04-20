@@ -1,6 +1,6 @@
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/router';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import Layout from '@/components/Layout';
 import { Card, Badge, ProgressBar } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -27,6 +27,78 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 import Head from 'next/head';
 import { getReportingPublicBaseUrl } from '@/lib/reportingPublicUrl';
+import { debugLog, debugWarn } from '@/lib/appDebug';
+
+/** Vorschau im Bereich „ALARME & MELDUNGEN“; die volle Liste lädt nur /alarms. */
+const HOME_ALARMS_PREVIEW_LIMIT = 3;
+
+/** Kurzer In-Memory-Cache pro Browser-Tab (Startseite), um wiederholte API-Last zu reduzieren. */
+const HOME_INDEX_CACHE_TTL_MS = 45_000;
+const homeIndexCache = new Map();
+
+function homeIndexCacheGet(key) {
+  const e = homeIndexCache.get(key);
+  if (!e) return undefined;
+  if (Date.now() - e.t > HOME_INDEX_CACHE_TTL_MS) {
+    homeIndexCache.delete(key);
+    return undefined;
+  }
+  return e.data;
+}
+
+function homeIndexCacheSet(key, data) {
+  homeIndexCache.set(key, { t: Date.now(), data });
+}
+
+/**
+ * GET JSON mit TTL-Cache. cacheKey muss Mandant/Zeitraum/Einstieg abbilden (nicht die volle URL mit rollierendem „now“).
+ * @param {{ bypassCache?: boolean }} [options] — bei true: immer Netzwerk, Cache nur schreiben
+ * @returns {{ ok: true, data: any, fromCache?: boolean } | { ok: false, status: number, body: any }}
+ */
+async function homeIndexCachedJson(url, cacheKey, options = {}) {
+  const { bypassCache = false } = options;
+  if (!bypassCache) {
+    const hit = homeIndexCacheGet(cacheKey);
+    if (hit !== undefined) {
+      debugLog('Home: cache hit', cacheKey);
+      return { ok: true, data: hit, fromCache: true };
+    }
+  }
+  const res = await fetch(url);
+  const text = await res.text();
+  let parsed;
+  try {
+    parsed = text ? JSON.parse(text) : null;
+  } catch {
+    parsed = { raw: text };
+  }
+  if (!res.ok) {
+    return { ok: false, status: res.status, body: parsed };
+  }
+  homeIndexCacheSet(cacheKey, parsed);
+  return { ok: true, data: parsed, fromCache: false };
+}
+
+/** Letzter erfolgreicher Dashboard-Stand (Stale-while-revalidate beim Navigieren). */
+const HOME_SNAPSHOT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+let homePageSnapshot = null;
+
+function readHomePageSnapshot(customerIdStr) {
+  if (!homePageSnapshot || homePageSnapshot.customerId !== customerIdStr) return null;
+  if (Date.now() - homePageSnapshot.at > HOME_SNAPSHOT_MAX_AGE_MS) {
+    homePageSnapshot = null;
+    return null;
+  }
+  return homePageSnapshot;
+}
+
+function writeHomePageSnapshot(customerIdStr, payload) {
+  homePageSnapshot = {
+    customerId: customerIdStr,
+    at: Date.now(),
+    ...payload,
+  };
+}
 
 export default function Home() {
   const { data: session, status } = useSession();
@@ -46,6 +118,11 @@ export default function Home() {
   const [heatDemandError, setHeatDemandError] = useState(null);
   /** default_entry_asset_id für Reporting (Fenster + Wärmeanforderung / customer-hourly-avg) */
   const [reportingSubtreeStartId, setReportingSubtreeStartId] = useState(null);
+
+  const selectedTimePeriodRef = useRef('24h');
+  useEffect(() => {
+    selectedTimePeriodRef.current = selectedTimePeriod;
+  }, [selectedTimePeriod]);
 
   // Time period options
   const timePeriodOptions = [
@@ -86,7 +163,7 @@ export default function Home() {
 
   // Function to handle time period change
   const handleTimePeriodChange = async (period) => {
-    console.log('handleTimePeriodChange called with period:', period);
+    debugLog('handleTimePeriodChange called with period:', period);
     setSelectedTimePeriod(period);
     setShowTimeModal(false);
     setHeatDemandError(null);
@@ -97,7 +174,7 @@ export default function Home() {
         const { startDate, endDate } = getDateRange(period);
         const limit = period === '24h' ? 24 : period === '7d' ? 168 : period === '30d' ? 720 : 2160;
         
-        console.log('Fetching data for period:', period, 'startDate:', startDate, 'endDate:', endDate, 'limit:', limit);
+        debugLog('Fetching data for period:', period, 'startDate:', startDate, 'endDate:', endDate, 'limit:', limit);
         
         const heatParams = new URLSearchParams({
           customer_id: String(session.user.customerid),
@@ -108,23 +185,21 @@ export default function Home() {
         if (reportingSubtreeStartId) {
           heatParams.set('start_id', reportingSubtreeStartId);
         }
-        const heatDemandResponse = await fetch(
-          `/api/dashboard/heat-demand?${heatParams.toString()}`
-        );
+        const heatUrl = `/api/dashboard/heat-demand?${heatParams.toString()}`;
+        const heatCacheKey = `home:heat:${String(session.user.customerid)}:${reportingSubtreeStartId || 'none'}:${period}`;
+        const heatRes = await homeIndexCachedJson(heatUrl, heatCacheKey);
         
-        if (heatDemandResponse.ok) {
-          const heatDemandData = await heatDemandResponse.json();
-          console.log('Heat demand data received for period:', period, heatDemandData);
-          setHeatDemandData(heatDemandData);
+        if (heatRes.ok) {
+          debugLog('Heat demand data received for period:', period, heatRes.data);
+          setHeatDemandData(heatRes.data);
           setHeatDemandError(null);
         } else {
-          const errorData = await heatDemandResponse.json().catch(() => ({}));
-          const errorMessage = errorData.message || `Fehler beim Laden der Daten (Status: ${heatDemandResponse.status})`;
-          console.warn('Failed to fetch heat demand data for period:', period, errorMessage);
+          const errorData = heatRes.body || {};
+          const errorMessage = errorData.message || `Fehler beim Laden der Daten (Status: ${heatRes.status})`;
+          debugWarn('Failed to fetch heat demand data for period:', period, errorMessage);
           setHeatDemandError(errorMessage);
           
-          // Bei Timeout-Fehler spezielle Meldung
-          if (heatDemandResponse.status === 504) {
+          if (heatRes.status === 504) {
             setHeatDemandError('Die Anfrage hat zu lange gedauert. Bitte versuchen Sie es mit einem kürzeren Zeitraum oder versuchen Sie es später erneut.');
           }
         }
@@ -135,7 +210,7 @@ export default function Home() {
         setLoadingHeatDemand(false);
       }
     } else {
-      console.warn('No customer ID in session');
+      debugWarn('No customer ID in session');
       setLoadingHeatDemand(false);
     }
   };
@@ -191,7 +266,7 @@ export default function Home() {
     });
   };
 
-  // Helper function to calculate alarm statistics (same logic as alarms page)
+  // Nur sinnvoll, falls irgendwo genutzt: Daten auf Startseite = Vorschau (max. HOME_ALARMS_PREVIEW_LIMIT).
   const getAlarmStats = () => {
     if (!alarmsData?.data || alarmsData.data.length === 0) {
       return { 
@@ -282,22 +357,22 @@ export default function Home() {
 
   // Helper function to get weather history chart data
   const getWeatherHistoryChartData = () => {
-    console.log('Weather history data structure:', weatherHistoryData);
+    debugLog('Weather history data structure:', weatherHistoryData);
     
     if (!weatherHistoryData?.list || weatherHistoryData.list.length === 0) {
-      console.log('No weather history data available');
+      debugLog('No weather history data available');
       return [];
     }
 
     // Take all 24 hours (hourly data) and sort chronologically (oldest first, newest last)
     const data = weatherHistoryData.list;
-    console.log('Processing weather data:', data.length, 'items');
+    debugLog('Processing weather data:', data.length, 'items');
     
     // Sort data by timestamp (dt) in ascending order (oldest first, newest last)
     // This ensures the chart shows time progression from left to right
     const sortedData = [...data].sort((a, b) => a.dt - b.dt);
     
-    console.log('Sorted weather data (first 3 items):', sortedData.slice(0, 3).map(item => ({
+    debugLog('Sorted weather data (first 3 items):', sortedData.slice(0, 3).map(item => ({
       dt: item.dt,
       time: new Date(item.dt * 1000).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }),
       temp: item.main.temp
@@ -325,10 +400,9 @@ export default function Home() {
       return [];
     }
 
-    // Sort by createdTime descending (newest first) and take first 3
     const sortedAlarms = [...alarmsData.data]
       .sort((a, b) => new Date(b.createdTime || b.startTs) - new Date(a.createdTime || a.startTs))
-      .slice(0, 3);
+      .slice(0, HOME_ALARMS_PREVIEW_LIMIT);
 
     return sortedAlarms.map(alarm => {
       const alarmTime = new Date(alarm.createdTime || alarm.startTs);
@@ -342,11 +416,20 @@ export default function Home() {
         year: 'numeric'
       });
 
+      const labelRaw = alarm.device?.label;
+      const deviceLabel =
+        labelRaw != null && String(labelRaw).trim() !== ''
+          ? String(labelRaw).trim()
+          : null;
+
       return {
         id: alarm.id?.id,
+        deviceId: alarm.device?.id != null ? String(alarm.device.id) : null,
         type: alarm.type || 'Unbekannter Alarm',
         severity: alarm.severity || 'UNKNOWN',
         device: alarm.originatorLabel || alarm.device?.name || 'Unbekanntes Gerät',
+        deviceLabel,
+        devicePath: alarm.devicePath || null,
         time: timeString,
         date: dateString,
         acknowledged: !!alarm.ackTs,
@@ -361,142 +444,168 @@ export default function Home() {
     }
   }, [status, router]);
 
-  useEffect(() => {
-    async function fetchDashboardData() {
-      if (session?.user?.customerid) {
-        try {
-          // Fetch basic dashboard stats
-          const statsResponse = await fetch(`/api/dashboard/stats?customerId=${session.user.customerid}`);
-          
-          if (!statsResponse.ok) {
-            const errorData = await statsResponse.json();
-            throw new Error(errorData.error || 'Failed to fetch dashboard data');
-          }
-          
-          const statsData = await statsResponse.json();
-          console.log('Dashboard stats received:', statsData);
-          setDashboardData(statsData);
+  const fetchDashboardData = useCallback(
+    async ({ silent = false, forceRefresh = false } = {}) => {
+      if (!session?.user?.customerid) {
+        if (!silent) setLoading(false);
+        return;
+      }
 
-          let reportingStartId = null;
-          try {
-            const meRes = await fetch('/api/config/users/me');
-            if (meRes.ok) {
-              const me = await meRes.json();
-              if (me.defaultEntryAssetId) {
-                reportingStartId = me.defaultEntryAssetId;
-              }
-            }
-          } catch (e) {
-            console.warn('index: /api/config/users/me failed', e);
-          }
-          setReportingSubtreeStartId(reportingStartId);
+      const customerIdStr = String(session.user.customerid);
+      const bypass = forceRefresh;
 
-          // Fetch heat demand data for last 24 hours (rolling window)
-          const now = new Date();
-          const startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000); // 24 hours ago
+      if (!silent) {
+        setError(null);
+      }
 
-          const startDate = startTime.toISOString();
-          const endDate = now.toISOString();
+      try {
+        // Welle 1: Stats und /me parallel (gecached, bypass bei Hintergrund-Refresh)
+        const [statsRes, meRes] = await Promise.all([
+          homeIndexCachedJson(
+            `/api/dashboard/stats?customerId=${customerIdStr}`,
+            `home:stats:${customerIdStr}`,
+            { bypassCache: bypass }
+          ),
+          homeIndexCachedJson('/api/config/users/me', `home:me:${customerIdStr}`, {
+            bypassCache: bypass,
+          }).catch((e) => {
+            debugWarn('index: /api/config/users/me failed', e);
+            return { ok: false };
+          }),
+        ]);
 
-          const heatParamsInitial = new URLSearchParams({
-            customer_id: String(session.user.customerid),
-            start_date: startDate,
-            end_date: endDate,
-            limit: '24'
-          });
-          if (reportingStartId) {
-            heatParamsInitial.set('start_id', reportingStartId);
-          }
-          const heatDemandResponse = await fetch(
-            `/api/dashboard/heat-demand?${heatParamsInitial.toString()}`
+        if (!statsRes.ok) {
+          throw new Error(
+            statsRes.body?.error || statsRes.body?.message || 'Failed to fetch dashboard data'
           );
-          
-          if (heatDemandResponse.ok) {
-            const heatDemandData = await heatDemandResponse.json();
-            console.log('Heat demand data received:', heatDemandData);
-            setHeatDemandData(heatDemandData);
-          } else {
-            console.warn('Failed to fetch heat demand data, using fallback');
-          }
+        }
 
-          // Fetch all active alarms for statistics (optional Teilbaum wie Heat-Demand)
-          const alarmsParams = new URLSearchParams({
-            customer_id: String(session.user.customerid),
-            status: 'ACTIVE',
-            limit: '100',
+        debugLog('Dashboard stats received:', statsRes.data);
+        setDashboardData(statsRes.data);
+
+        let reportingStartId = null;
+        if (meRes.ok && meRes.data?.defaultEntryAssetId) {
+          reportingStartId = meRes.data.defaultEntryAssetId;
+        }
+        setReportingSubtreeStartId(reportingStartId);
+
+        const now = new Date();
+        const startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        const startDate = startTime.toISOString();
+        const endDate = now.toISOString();
+
+        const heatParamsInitial = new URLSearchParams({
+          customer_id: customerIdStr,
+          start_date: startDate,
+          end_date: endDate,
+          limit: '24',
+        });
+        if (reportingStartId) {
+          heatParamsInitial.set('start_id', reportingStartId);
+        }
+
+        const alarmsParams = new URLSearchParams({
+          customer_id: customerIdStr,
+          status: 'ACTIVE',
+          limit: String(HOME_ALARMS_PREVIEW_LIMIT),
+          offset: '0',
+        });
+        if (reportingStartId) {
+          alarmsParams.set('start_id', reportingStartId);
+        }
+
+        const heatUrl = `/api/dashboard/heat-demand?${heatParamsInitial.toString()}`;
+        const heatCacheKey = `home:heat:24h:${customerIdStr}:${reportingStartId || 'none'}`;
+        const alarmsUrl = `/api/alarms?${alarmsParams.toString()}`;
+        const alarmsCacheKey = `home:alarms:${customerIdStr}:${reportingStartId || 'none'}`;
+
+        const [heatDemandRes, alarmsRes, customerRes] = await Promise.all([
+          homeIndexCachedJson(heatUrl, heatCacheKey, { bypassCache: bypass }),
+          homeIndexCachedJson(alarmsUrl, alarmsCacheKey, { bypassCache: bypass }),
+          homeIndexCachedJson(
+            `/api/thingsboard/customers/${customerIdStr}`,
+            `home:tb-customer:${customerIdStr}`,
+            { bypassCache: bypass }
+          ),
+        ]);
+
+        if (heatDemandRes.ok) {
+          debugLog('Heat demand data received:', heatDemandRes.data);
+          setHeatDemandData(heatDemandRes.data);
+        } else {
+          debugWarn('Failed to fetch heat demand data, using fallback');
+        }
+
+        if (alarmsRes.ok) {
+          debugLog(
+            `Home: ${HOME_ALARMS_PREVIEW_LIMIT} Alarm-Vorschau (customer + optional start_id):`,
+            alarmsRes.data?.data?.length ?? 0,
+            'Einträge'
+          );
+          setAlarmsData(alarmsRes.data);
+        } else {
+          debugWarn('Failed to fetch alarms data, using fallback');
+        }
+
+        let customerData = null;
+        if (customerRes.ok) {
+          customerData = customerRes.data;
+          debugLog('Customer data received:', customerData);
+          setCustomerData(customerData);
+        } else {
+          debugWarn('Failed to fetch customer data, using fallback');
+        }
+
+        let weatherPayload = null;
+        try {
+          debugLog('Loading weather history...');
+
+          let location = 'Gelnhausen, DE';
+          if (customerData?.address || customerData?.city || customerData?.country || customerData?.zip) {
+            const addressParts = [];
+            if (customerData.address) addressParts.push(customerData.address);
+            if (customerData.zip) addressParts.push(customerData.zip);
+            if (customerData.city) addressParts.push(customerData.city);
+            if (customerData.country) addressParts.push(customerData.country);
+            location = addressParts.join(', ');
+          }
+          debugLog('Using location for weather:', location);
+
+          const weatherUrl = `/api/weather/history?location=${encodeURIComponent(location)}`;
+          const weatherRes = await homeIndexCachedJson(weatherUrl, `home:weather:${location}`, {
+            bypassCache: bypass,
           });
-          if (reportingStartId) {
-            alarmsParams.set('start_id', reportingStartId);
-          }
-          const alarmsResponse = await fetch(`/api/alarms?${alarmsParams.toString()}`);
-          
-          if (alarmsResponse.ok) {
-            const alarmsData = await alarmsResponse.json();
-            console.log('All alarms data received:', alarmsData);
-            setAlarmsData(alarmsData);
+          debugLog('Weather history response ok:', weatherRes.ok, 'cached:', weatherRes.fromCache);
+
+          if (weatherRes.ok) {
+            weatherPayload = weatherRes.data;
+            debugLog('Weather history data received:', weatherRes.data);
+            setWeatherHistoryData(weatherRes.data);
           } else {
-            console.warn('Failed to fetch alarms data, using fallback');
+            debugWarn(
+              'Failed to fetch weather history data:',
+              weatherRes.status,
+              weatherRes.body
+            );
           }
+        } catch (error) {
+          console.error('Error fetching weather history:', error);
+        }
 
-          // Load customer data from ThingsBoard
-          const customerResponse = await fetch(`/api/thingsboard/customers/${session.user.customerid}`);
-          
-          let customerData = null;
-          if (customerResponse.ok) {
-            customerData = await customerResponse.json();
-            console.log('+++++++++++++++++++++++++++++++++++++++++++++++');
-            console.log('Customer data received:', customerData);
-            console.log('+++++++++++++++++++++++++++++++++++++++++++++');
-            setCustomerData(customerData);
-          } else {
-            console.warn('Failed to fetch customer data, using fallback');
-          }
+        const reportingUrl = getReportingPublicBaseUrl();
+        const reportingKey = 'QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD';
+        const batteryLimit = 1000;
 
-          // Load weather history with customer address or fallback
-          try {
-            console.log('Loading weather history...');
-            
-            // Build complete address from customer data if available, otherwise fallback to Gelnhausen
-            let location = 'Gelnhausen, DE';
-            if (customerData?.address || customerData?.city || customerData?.country || customerData?.zip) {
-              // Build complete address string from available fields
-              const addressParts = [];
-              if (customerData.address) addressParts.push(customerData.address);
-              if (customerData.zip) addressParts.push(customerData.zip);
-              if (customerData.city) addressParts.push(customerData.city);
-              if (customerData.country) addressParts.push(customerData.country);
-              location = addressParts.join(', ');
-            }
-            console.log('Using location for weather:', location);
-            
-            const weatherResponse = await fetch(`/api/weather/history?location=${encodeURIComponent(location)}`);
-            console.log('Weather history response status:', weatherResponse.status);
-            
-            if (weatherResponse.ok) {
-              const weatherData = await weatherResponse.json();
-              console.log('Weather history data received:', weatherData);
-              setWeatherHistoryData(weatherData);
-            } else {
-              const errorText = await weatherResponse.text();
-              console.warn('Failed to fetch weather history data:', weatherResponse.status, errorText);
-            }
-          } catch (error) {
-            console.error('Error fetching weather history:', error);
-          }
-
-          // Load battery status data with pagination to get all devices
-          const reportingUrl = getReportingPublicBaseUrl();
+        const batteryFetchAll = async () => {
           const allBatteryData = [];
           let offset = 0;
-          const limit = 1000; // Max limit allowed by API
           let hasMore = true;
-          
           while (hasMore) {
             const batteryParams = new URLSearchParams({
-              key: 'QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD',
-              customer_id: String(session.user.customerid),
-              limit: String(limit),
-              offset: String(offset)
+              key: reportingKey,
+              customer_id: customerIdStr,
+              limit: String(batteryLimit),
+              offset: String(offset),
             });
             if (reportingStartId) {
               batteryParams.set('start_id', reportingStartId);
@@ -507,79 +616,146 @@ export default function Home() {
 
             if (batteryResponse.ok) {
               const batteryData = await batteryResponse.json();
-              console.log(`Battery status data received (offset ${offset}):`, batteryData);
-              
+              debugLog(`Battery status data received (offset ${offset}):`, batteryData);
+
               if (batteryData.data && batteryData.data.length > 0) {
                 allBatteryData.push(...batteryData.data);
-                
-                // Check if there are more records
-                hasMore = batteryData.metadata?.has_more || batteryData.data.length === limit;
+                hasMore =
+                  batteryData.metadata?.has_more ||
+                  batteryData.data.length === batteryLimit;
                 offset += batteryData.data.length;
               } else {
                 hasMore = false;
               }
             } else {
-              console.warn('Failed to fetch battery status data, using fallback');
+              debugWarn('Failed to fetch battery status data, using fallback');
               hasMore = false;
             }
           }
-          
-          // Combine all data into single response format
-          if (allBatteryData.length > 0) {
-            const combinedBatteryData = {
-              success: true,
-              metadata: {
-                total_records: allBatteryData.length,
-                limit: limit,
-                offset: 0,
-                has_more: false,
-                query_time: new Date().toISOString(),
-                view_name: 'hmreporting.v_device_battery_latest'
-              },
-              data: allBatteryData
-            };
-            
-            console.log(`Total battery status records loaded: ${allBatteryData.length}`);
-            setBatteryData(combinedBatteryData);
-          }
+          return allBatteryData;
+        };
 
-          const windowParams = new URLSearchParams({
-            key: 'QbyfQaiKCaedFdPJbPzTcXD7EkNJHTgotB8QPXD',
-            customer_id: String(session.user.customerid),
-            limit: '5000'
-          });
-          if (reportingStartId) {
-            windowParams.set('start_id', reportingStartId);
-          }
-          const windowStatusUrl = `${reportingUrl}/api/reporting/window-status?${windowParams.toString()}`;
-          console.log('[index] reporting window-status URL:', windowStatusUrl);
-          const windowResponse = await fetch(windowStatusUrl);
-
-          if (windowResponse.ok) {
-            const windowData = await windowResponse.json();
-            console.log('Window status data received:', windowData);
-            setWindowData(windowData);
-          } else {
-            console.warn('Failed to fetch window status data, using fallback');
-          }
-        } catch (err) {
-          console.error('Error fetching dashboard data:', err);
-          setError(err.message);
-        } finally {
-          setLoading(false);
+        const windowParams = new URLSearchParams({
+          key: reportingKey,
+          customer_id: customerIdStr,
+          limit: '5000',
+        });
+        if (reportingStartId) {
+          windowParams.set('start_id', reportingStartId);
         }
-      } else {
-        console.log('No customerid in session:', session?.user);
-        setLoading(false);
-      }
-    }
+        const windowStatusUrl = `${reportingUrl}/api/reporting/window-status?${windowParams.toString()}`;
+        debugLog('[index] reporting window-status URL:', windowStatusUrl);
 
-    if (session) {
-      fetchDashboardData();
-    } else {
+        const batCacheKey = `home:battery-all:${customerIdStr}:${reportingStartId || 'none'}`;
+        const winCacheKey = `home:window:${customerIdStr}:${reportingStartId || 'none'}`;
+
+        const batteryPromise = (async () => {
+          if (!bypass) {
+            const hit = homeIndexCacheGet(batCacheKey);
+            if (hit !== undefined) {
+              debugLog('Home: battery cache hit', batCacheKey);
+              return hit;
+            }
+          }
+          const data = await batteryFetchAll();
+          homeIndexCacheSet(batCacheKey, data);
+          return data;
+        })();
+
+        const [allBatteryData, windowRes] = await Promise.all([
+          batteryPromise,
+          homeIndexCachedJson(windowStatusUrl, winCacheKey, { bypassCache: bypass }),
+        ]);
+
+        let batterySnapshot = null;
+        if (allBatteryData.length > 0) {
+          const combinedBatteryData = {
+            success: true,
+            metadata: {
+              total_records: allBatteryData.length,
+              limit: batteryLimit,
+              offset: 0,
+              has_more: false,
+              query_time: new Date().toISOString(),
+              view_name: 'hmreporting.v_device_battery_latest',
+            },
+            data: allBatteryData,
+          };
+          batterySnapshot = combinedBatteryData;
+          debugLog(`Total battery status records loaded: ${allBatteryData.length}`);
+          setBatteryData(combinedBatteryData);
+        }
+
+        if (windowRes.ok) {
+          debugLog('Window status data received:', windowRes.data);
+          setWindowData(windowRes.data);
+        } else {
+          debugWarn('Failed to fetch window status data, using fallback');
+        }
+
+        writeHomePageSnapshot(customerIdStr, {
+          dashboardData: statsRes.data,
+          heatDemandData: heatDemandRes.ok ? heatDemandRes.data : null,
+          alarmsData: alarmsRes.ok ? alarmsRes.data : null,
+          customerData,
+          weatherHistoryData: weatherPayload,
+          batteryData: batterySnapshot,
+          windowData: windowRes.ok ? windowRes.data : null,
+          reportingSubtreeStartId: reportingStartId,
+          selectedTimePeriod: selectedTimePeriodRef.current,
+        });
+      } catch (err) {
+        console.error('Error fetching dashboard data:', err);
+        if (silent) {
+          debugWarn('Home: Hintergrund-Aktualisierung fehlgeschlagen', err.message);
+        } else {
+          setError(err.message);
+        }
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [session]
+  );
+
+  useEffect(() => {
+    if (status === 'loading') return;
+    if (!session) {
       setLoading(false);
+      return;
     }
-  }, [session]);
+    if (!session.user?.customerid) {
+      setLoading(false);
+      return;
+    }
+    const cid = String(session.user.customerid);
+    const snap = readHomePageSnapshot(cid);
+    if (snap) {
+      debugLog('Home: Snapshot-Hydration, danach Refresh im Hintergrund');
+      setDashboardData(snap.dashboardData ?? null);
+      setHeatDemandData(snap.heatDemandData ?? null);
+      setAlarmsData(snap.alarmsData ?? null);
+      setWeatherHistoryData(snap.weatherHistoryData ?? null);
+      setBatteryData(snap.batteryData ?? null);
+      setWindowData(snap.windowData ?? null);
+      setCustomerData(snap.customerData ?? null);
+      setReportingSubtreeStartId(snap.reportingSubtreeStartId ?? null);
+      if (snap.selectedTimePeriod) setSelectedTimePeriod(snap.selectedTimePeriod);
+      setLoading(false);
+      fetchDashboardData({ silent: true, forceRefresh: true });
+    } else {
+      fetchDashboardData({ silent: false, forceRefresh: false });
+    }
+  }, [session, status, fetchDashboardData]);
+
+  useEffect(() => {
+    if (status !== 'authenticated' || !session?.user?.customerid) return;
+    const id = setInterval(() => {
+      debugLog('Home: minütliche Hintergrund-Aktualisierung');
+      fetchDashboardData({ silent: true, forceRefresh: true });
+    }, 60_000);
+    return () => clearInterval(id);
+  }, [session, status, fetchDashboardData]);
 
   if (status === "loading") {
     return (
@@ -763,7 +939,7 @@ export default function Home() {
                       disabled={loadingHeatDemand}
                       onClick={(e) => {
                         e.stopPropagation(); // Prevent card click when button is clicked
-                        console.log('Opening time modal...');
+                        debugLog('Opening time modal...');
                         setShowTimeModal(true);
                       }}
                     >
@@ -998,6 +1174,14 @@ export default function Home() {
                                 <small className="text-muted">
                                   Gerät: {alarm.device}
                                 </small>
+                                <br />
+                                <small className={alarm.deviceLabel ? 'text-dark' : 'text-muted'}>
+                                  Label: {alarm.deviceLabel || '–'}
+                                </small>
+                                <br />
+                                <small className={alarm.devicePath ? 'text-dark' : 'text-muted'}>
+                                  Pfad: {alarm.devicePath || '–'}
+                                </small>
                                 {alarm.acknowledged && (
                                   <Badge bg="success" className="ms-2">Bestätigt</Badge>
                                 )}
@@ -1007,7 +1191,17 @@ export default function Home() {
                               </div>
                               <button 
                                 className={`btn btn-outline-${getAlarmColor(alarm.severity)} btn-sm`}
-                                onClick={() => router.push('/alarms')}
+                                onClick={() => {
+                                  const params = new URLSearchParams();
+                                  if (alarm.id) {
+                                    params.set('focusAlarmId', String(alarm.id));
+                                  }
+                                  if (alarm.deviceId) {
+                                    params.set('focusDeviceId', alarm.deviceId);
+                                  }
+                                  const qs = params.toString();
+                                  router.push(qs ? `/alarms?${qs}` : '/alarms');
+                                }}
                               >
                                 Details
                               </button>
@@ -1058,7 +1252,7 @@ export default function Home() {
                       type="button"
                       className={`btn w-100 ${selectedTimePeriod === option.value ? 'btn-primary' : 'btn-outline-primary'}`}
                       onClick={() => {
-                        console.log('Selected time period:', option.value);
+                        debugLog('Selected time period:', option.value);
                         handleTimePeriodChange(option.value);
                       }}
                     >
