@@ -218,9 +218,11 @@ export default async function handler(req, res) {
     
     // Für Logging: Email aus Session oder 'api-key' für externe Clients
     const userEmail = session?.user?.email || 'api-key-client';
+    const userRole = Number(session?.user?.role);
+    const isSuperAdmin = userRole === 1;
 
     // Request-Body validieren
-    const { deviceId, confirmed = false, priority = 'NORMAL' } = req.body || {};
+    const { deviceId, confirmed = false, priority = 'NORMAL', command } = req.body || {};
 
     if (!deviceId) {
       return res.status(400).json({ error: 'deviceId (ThingsBoard Device ID) is required' });
@@ -231,6 +233,18 @@ export default async function handler(req, res) {
       payloadHex = resolveHexPayload(req.body || {});
     } catch (payloadErr) {
       return res.status(400).json({ error: payloadErr.message });
+    }
+
+    // Authorization rule:
+    // - Superadmin (role=1): can send both RAW HEX and preset commands.
+    // - Regular users: only preset commands, identified by "command" in request body.
+    // - API key clients keep existing behavior.
+    const isPresetCommandFlow = typeof command === 'string' && command.trim() !== '';
+    if (session && !isApiKeyAuth && !isSuperAdmin && !isPresetCommandFlow) {
+      return res.status(403).json({
+        error: 'Insufficient permissions for RAW HEX downlink',
+        details: 'Nur Superadmins dürfen RAW HEX senden. Reguläre Benutzer dürfen nur Preset-Kommandos senden.',
+      });
     }
 
     // Priority validieren

@@ -4,6 +4,8 @@ import { getConnection, getMssqlConfig } from "../../../../../lib/db";
 
 const ALLOWED_ACTIONS = ['reset', 'recalibrate'];
 const SUPPORTED_INTEGRATIONS = new Set(['ttn', 'melita']);
+const PRESET_COMMAND_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
+const PRESET_COMMAND_COOLDOWN_ATTR = 'lastPresetCommandAt';
 const COMMAND_CATALOG = {
   default: {
     any: {
@@ -112,6 +114,46 @@ async function fetchTbClientAttributes(tbDeviceId, tbToken) {
   return attrs;
 }
 
+async function fetchTbServerAttributes(tbDeviceId, tbToken) {
+  const thingsboardUrl = process.env.THINGSBOARD_URL;
+  const res = await fetch(
+    `${thingsboardUrl}/api/plugins/telemetry/DEVICE/${encodeURIComponent(tbDeviceId)}/values/attributes/SERVER_SCOPE`,
+    {
+      headers: {
+        'X-Authorization': `Bearer ${tbToken}`,
+        'Content-Type': 'application/json',
+      },
+    }
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Failed to load ThingsBoard server attributes: ${res.status} ${text}`.trim());
+  }
+  const arr = await res.json();
+  const attrs = {};
+  for (const item of arr || []) attrs[item.key] = item.value;
+  return attrs;
+}
+
+async function saveTbServerAttributes(tbDeviceId, tbToken, values) {
+  const thingsboardUrl = process.env.THINGSBOARD_URL;
+  const res = await fetch(
+    `${thingsboardUrl}/api/plugins/telemetry/DEVICE/${encodeURIComponent(tbDeviceId)}/SERVER_SCOPE`,
+    {
+      method: 'POST',
+      headers: {
+        'X-Authorization': `Bearer ${tbToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(values || {}),
+    }
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Failed to store ThingsBoard server attributes: ${res.status} ${text}`.trim());
+  }
+}
+
 async function fetchInventoryContext(tbDeviceId) {
   const db = getMssqlConfig().database;
   const pool = await getConnection();
@@ -185,12 +227,15 @@ export default async function handler(req, res) {
     const inventory = await fetchInventoryContext(tbDeviceId);
 
     let integration = '';
+    let tbToken = '';
+    let serverAttributes = {};
     try {
-      const tbToken = await getThingsBoardToken();
+      tbToken = await getThingsBoardToken();
       const attrs = await fetchTbClientAttributes(tbDeviceId, tbToken);
       integration = normalizeIntegration(attrs.integration);
+      serverAttributes = await fetchTbServerAttributes(tbDeviceId, tbToken);
     } catch (tbErr) {
-      console.warn('[DEVICE ACTION] Could not resolve integration from ThingsBoard attributes:', tbErr.message);
+      console.warn('[DEVICE ACTION] Could not resolve ThingsBoard attributes:', tbErr.message);
     }
     if (!integration) integration = normalizeIntegration(inventory?.lns_assignment_name);
     if (!SUPPORTED_INTEGRATIONS.has(integration)) {
@@ -199,6 +244,24 @@ export default async function handler(req, res) {
         integration: integration || 'unknown',
         supportedIntegrations: Array.from(SUPPORTED_INTEGRATIONS),
       });
+    }
+
+    const now = Date.now();
+    const lastPresetCommandAtRaw = Number(serverAttributes?.[PRESET_COMMAND_COOLDOWN_ATTR]);
+    if (Number.isFinite(lastPresetCommandAtRaw) && lastPresetCommandAtRaw > 0) {
+      const elapsedMs = now - lastPresetCommandAtRaw;
+      if (elapsedMs < PRESET_COMMAND_COOLDOWN_MS) {
+        const retryAfterMs = PRESET_COMMAND_COOLDOWN_MS - elapsedMs;
+        const retryAfterSeconds = Math.ceil(retryAfterMs / 1000);
+        const retryAfterMinutes = Math.ceil(retryAfterMs / 60000);
+        return res.status(429).json({
+          error: 'Preset command cooldown active',
+          details: `Bitte warten Sie noch ca. ${retryAfterMinutes} Minute(n), bevor Sie ein weiteres Preset-Kommando senden.`,
+          cooldownMinutes: 10,
+          retryAfterSeconds,
+          retryAfterMs,
+        });
+      }
     }
 
     const { profile, resolvedType, resolvedIntegration } = resolveCommandProfile({
@@ -252,6 +315,17 @@ export default async function handler(req, res) {
         action,
         integration: resolvedIntegration,
       });
+    }
+
+    if (tbToken) {
+      try {
+        await saveTbServerAttributes(tbDeviceId, tbToken, {
+          [PRESET_COMMAND_COOLDOWN_ATTR]: now,
+        });
+      } catch (persistErr) {
+        // Do not fail successful delivery if cooldown timestamp persistence fails.
+        console.warn('[DEVICE ACTION] Could not persist preset command cooldown timestamp:', persistErr.message);
+      }
     }
 
     return res.status(200).json({

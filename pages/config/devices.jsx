@@ -45,6 +45,7 @@ function Devices() {
   const [downlinkConfirmed, setDownlinkConfirmed] = useState(false);
   const [downlinkSending, setDownlinkSending] = useState(false);
   const tableContainerRef = useRef(null);
+  const isSuperAdmin = Number(session?.user?.role) === 1;
 
   // Helper: find asset path in tree (same pattern as window-status)
   const findAssetPath = useCallback((assetId, treeNodes, currentPath = []) => {
@@ -484,11 +485,10 @@ function Devices() {
         body: JSON.stringify(requestBody)
       });
 
+      const result = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        throw new Error(result?.details || result?.error || `HTTP error! status: ${response.status}`);
       }
-
-      const result = await response.json();
       
       if (result.success) {
         const integrationLabel = result.integration ? ` (${result.integration})` : '';
@@ -637,6 +637,10 @@ function Devices() {
     }
 
     if (downlinkMode === 'raw') {
+      if (!isSuperAdmin) {
+        alert('Nur Superadmins dürfen RAW HEX senden.');
+        return;
+      }
       const normalizedPayload = downlinkHexPayload.trim().toUpperCase();
       if (!normalizedPayload) {
         alert('Payload darf nicht leer sein.');
@@ -1109,12 +1113,23 @@ function Devices() {
             <Form.Label>Modus</Form.Label>
             <Form.Select
               value={downlinkMode}
-              onChange={(e) => setDownlinkMode(e.target.value)}
+              onChange={(e) => {
+                const nextMode = e.target.value;
+                if (nextMode === 'raw' && !isSuperAdmin) {
+                  return;
+                }
+                setDownlinkMode(nextMode);
+              }}
               disabled={downlinkSending}
             >
               <option value="command">Command (sensorabhängig)</option>
-              <option value="raw">Raw HEX</option>
+              {isSuperAdmin && <option value="raw">Raw HEX</option>}
             </Form.Select>
+            {!isSuperAdmin && (
+              <Form.Text className="d-block text-muted mt-1">
+                Nur Superadmins können Raw HEX senden.
+              </Form.Text>
+            )}
           </Form.Group>
 
           {downlinkMode === 'command' ? (
@@ -1130,6 +1145,9 @@ function Devices() {
               </Form.Select>
               <Form.Text className="text-muted">
                 Das Backend löst das passende Payload je Sensor/LNS auf.
+              </Form.Text>
+              <Form.Text className="d-block text-warning mt-1">
+                Hinweis: Preset-Kommandos haben eine Cooldown-Zeit von 10 Minuten pro Gerät.
               </Form.Text>
             </Form.Group>
           ) : (
@@ -1152,6 +1170,9 @@ function Devices() {
                 onChange={(e) => setDownlinkConfirmed(e.target.checked)}
                 disabled={downlinkSending}
               />
+              <Form.Text className="d-block text-muted mt-2">
+                Raw HEX hat keinen Preset-Kommando-Cooldown.
+              </Form.Text>
             </>
           )}
         </Modal.Body>
