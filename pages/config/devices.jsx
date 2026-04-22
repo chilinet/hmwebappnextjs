@@ -363,25 +363,6 @@ function Devices() {
     }
   }, [cachedDevices, getAssetPathString]);
 
-  const scrollToTop = () => {
-    // Scroll page to top
-    window.scrollTo({
-      top: 0,
-      behavior: 'smooth'
-    });
-    
-    // Also scroll table to top if it has scroll position
-    if (tableContainerRef.current) {
-      tableContainerRef.current.scrollTo({
-        top: 0,
-        behavior: 'smooth'
-      });
-    }
-  };
-
-  // Use cached devices if available, otherwise use live data
-  const displayDevices = cachedDevices.length > 0 ? cachedDevices : (devices || []);
-
   // Filter devices based on search term
   const filteredDevices = useMemo(() => {
     if (!displayDevices) return [];
