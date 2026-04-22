@@ -442,7 +442,7 @@ export default function HeatingSchedules() {
                     </select>
                     {planSearchTerm && filteredPlans.length === 0 && (
                       <small className="text-muted d-block mt-1">
-                        Keine Pläne gefunden, die "{planSearchTerm}" enthalten.
+                        Keine Pläne gefunden, die &quot;{planSearchTerm}&quot; enthalten.
                       </small>
                     )}
                   </div>
@@ -457,7 +457,7 @@ export default function HeatingSchedules() {
                         style={{ backgroundColor: '#ffc107', borderColor: '#ffc107', color: 'black' }}
                       >
                         <FontAwesomeIcon icon={faEdit} className="me-2" />
-                        Plan "{scheduleData[selectedPlanIndex][0]}" bearbeiten
+                        Plan &quot;{scheduleData[selectedPlanIndex][0]}&quot; bearbeiten
                       </button>
                       <button
                         className="btn"

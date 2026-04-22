@@ -42,8 +42,8 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
-    "eslint": "^9",
-    "eslint-config-next": "15.2.0"
+    "eslint": "^8.57.1",
+    "eslint-config-next": "14.2.31"
   },
   "engines": {
     "node": ">=18.0.0"
