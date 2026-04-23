@@ -1,5 +1,0 @@
-language: node
-buildCommands:
-  - npm install
-  - npm run build
-startupCommand: node server.js
