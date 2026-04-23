@@ -53,3 +53,9 @@ next-env.d.ts
 .vscode/
 .vscode/*
 !.vscode/settings.json
+
+#AZURE
+.azure/
+.azure/*
+!.azure/config.yml
+!.azure/deploy.sh   
