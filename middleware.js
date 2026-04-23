@@ -6,6 +6,19 @@ import { debugLog } from "./lib/appDebug"
 // Redirect to our custom signin page
 export async function middleware(request) {
   debugLog('Middleware called for:', request.url);
+  const pathname = request.nextUrl.pathname;
+
+  // Allow public/static assets to pass through without auth checks.
+  if (
+    pathname.startsWith('/assets/') ||
+    pathname.startsWith('/_next/static') ||
+    pathname.startsWith('/_next/image') ||
+    pathname === '/favicon.ico' ||
+    pathname === '/robots.txt' ||
+    pathname === '/sitemap.xml'
+  ) {
+    return NextResponse.next();
+  }
   
   // Fix URL issues in production
   if (process.env.NODE_ENV === 'production' && request.url.includes('localhost')) {
@@ -66,6 +79,6 @@ export const config = {
      * - favicon.ico (favicon file)
      * - auth/signin (login page)
      */
-    '/((?!api/auth|_next/static|_next/image|favicon.ico|auth/signin).*)',
+    '/((?!api/auth|api/|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|assets/|auth/signin).*)',
   ],
 }
