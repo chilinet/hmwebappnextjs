@@ -54,7 +54,7 @@ export default function Navigation() {
                 {/* Logo */}
                 <Link href="/" className="navbar-brand d-flex align-items-center">
                     <Image 
-                        src="/assets/img/heatmanager-logo.png" 
+                        src="/assets/img/heatmanager-logo.svg" 
                         alt="HeatManager Logo" 
                         width={280} 
                         height={35}

@@ -175,7 +175,7 @@ export default function SignIn() {
                             <div className="card-body">
                                 <div className="signin-logo">
                                     <Image
-                                        src="/assets/img/heatmanager-logo.png"
+                                        src="/assets/img/heatmanager-logo.svg"
                                         alt="HeatManager Logo"
                                         width={280}
                                         height={35}
