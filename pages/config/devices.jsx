@@ -287,6 +287,18 @@ function Devices() {
     return cachedDevices.length > 0 ? cachedDevices : (devices || []);
   }, [cachedDevices, devices]);
 
+  const pathLevelFiltersActive = useMemo(() => {
+    return [selectedPathLevel1, selectedPathLevel2, selectedPathLevel3, selectedPathLevel4, selectedPathLevel5]
+      .some(Boolean);
+  }, [selectedPathLevel1, selectedPathLevel2, selectedPathLevel3, selectedPathLevel4, selectedPathLevel5]);
+
+  const getPathSegments = useCallback((device) => {
+    const pathStr = (device?.asset?.id && getAssetPathString(device.asset.id))
+      || device?.asset?.pathString
+      || '';
+    return pathStr.split(' → ').map((segment) => segment.trim()).filter(Boolean);
+  }, [getAssetPathString]);
+
   const exportDevices = useCallback(() => {
     try {
       const excelData = displayDevices.map(device => {
