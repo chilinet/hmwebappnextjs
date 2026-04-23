@@ -231,12 +231,12 @@ function Devices() {
     }
   }, [session?.user?.customerid, cacheDevices]);
 
-  // Fetch devices when tbToken is available
+  // Fetch devices when auth session is available and cache is cold
   useEffect(() => {
-    if (tbToken && session?.token && !hasValidCache) {
+    if (session?.token && !hasValidCache) {
       fetchDevices();
     }
-  }, [tbToken, session?.token, hasValidCache, fetchDevices]);
+  }, [session?.token, hasValidCache, fetchDevices]);
 
   const refreshDevices = useCallback(async () => {
     setIsRefreshing(true);
@@ -298,6 +298,25 @@ function Devices() {
       || '';
     return pathStr.split(' → ').map((segment) => segment.trim()).filter(Boolean);
   }, [getAssetPathString]);
+
+  const pathLevelOptions = useMemo(() => {
+    const valuesByLevel = [new Set(), new Set(), new Set(), new Set(), new Set()];
+
+    displayDevices.forEach((device) => {
+      const segments = getPathSegments(device);
+      segments.slice(0, 5).forEach((segment, index) => {
+        if (segment) valuesByLevel[index].add(segment);
+      });
+    });
+
+    return {
+      level1: Array.from(valuesByLevel[0]).sort(),
+      level2: Array.from(valuesByLevel[1]).sort(),
+      level3: Array.from(valuesByLevel[2]).sort(),
+      level4: Array.from(valuesByLevel[3]).sort(),
+      level5: Array.from(valuesByLevel[4]).sort(),
+    };
+  }, [displayDevices, getPathSegments]);
 
   const exportDevices = useCallback(() => {
     try {
