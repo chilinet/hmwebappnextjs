@@ -135,7 +135,7 @@ export default function ResetPassword() {
             <div className="card-body text-center">
               <div className="signin-logo">
                 <Image
-                  src="/assets/img/heatmanager-logo.svg"
+                  src="/assets/img/heatmanager-logo.png"
                   alt="HeatManager Logo"
                   width={280}
                   height={35}
@@ -173,7 +173,7 @@ export default function ResetPassword() {
             <div className="card-body text-center">
               <div className="signin-logo">
                 <Image
-                  src="/assets/img/heatmanager-logo.svg"
+                  src="/assets/img/heatmanager-logo.png"
                   alt="HeatManager Logo"
                   width={280}
                   height={35}
@@ -219,7 +219,7 @@ export default function ResetPassword() {
             <div className="card-body text-center">
               <div className="signin-logo">
                 <Image
-                  src="/assets/img/heatmanager-logo.svg"
+                  src="/assets/img/heatmanager-logo.png"
                   alt="HeatManager Logo"
                   width={280}
                   height={35}
@@ -250,7 +250,7 @@ export default function ResetPassword() {
           <div className="card-body">
             <div className="signin-logo">
               <Image
-                src="/assets/img/heatmanager-logo.svg"
+                src="/assets/img/heatmanager-logo.png"
                 alt="HeatManager Logo"
                 width={280}
                 height={35}

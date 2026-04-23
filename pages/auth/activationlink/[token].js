@@ -92,7 +92,7 @@ export default function ActivateAccount() {
               <div className="card-body">
                 <div className="text-center mb-4">
                   <Image
-                    src="/assets/img/heatmanager-logo.svg"
+                    src="/assets/img/heatmanager-logo.png"
                     alt="Logo"
                     width={320}
                     height={40}

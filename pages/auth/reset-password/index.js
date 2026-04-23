@@ -29,7 +29,7 @@ export default function ResetPasswordIndex() {
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <div className="flex justify-center">
           <Image
-            src="/assets/img/heatmanager-logo.svg"
+            src="/assets/img/heatmanager-logo.png"
             alt="HeatManager Logo"
             width={200}
             height={60}
