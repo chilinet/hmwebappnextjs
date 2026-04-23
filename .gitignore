@@ -48,3 +48,8 @@ next-env.d.ts
 # logs
 /logs/
 *.log
+
+#VSCODE
+.vscode/
+.vscode/*
+!.vscode/settings.json
