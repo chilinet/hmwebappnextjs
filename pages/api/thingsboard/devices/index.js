@@ -5,6 +5,7 @@ import jwt from 'jsonwebtoken';
 import { getConnection } from '../../../../lib/db';
 import sql from 'mssql';
 import { debugLog, debugWarn } from '../../../../lib/appDebug';
+import { buildDevicePathMapFromTree } from '../../../../lib/treeDevicePaths.js';
 
 const THINGSBOARD_URL = process.env.THINGSBOARD_URL;
 
@@ -28,7 +29,7 @@ export default async function handler(req, res) {
     try {
       const decoded = jwt.verify(token, process.env.NEXTAUTH_SECRET);
       tbToken = decoded.tbToken;
-      customerId = decoded.customerId;
+      customerId = decoded.customerId || decoded.customerid;
     } catch (err) {
       console.error('JWT verification failed:', err);
     }
@@ -138,6 +139,22 @@ export default async function handler(req, res) {
     
     debugLog(`Total devices fetched: ${devices.length}`);
 
+    /** Pfade aus Kundenbaum (MSSQL customer_settings.tree) */
+    let pathByDeviceId = {};
+    try {
+      const pool = await getConnection();
+      const treeResult = await pool.request()
+        .input('customerId', sql.UniqueIdentifier, customerId)
+        .query('SELECT tree FROM customer_settings WHERE customer_id = @customerId');
+      const raw = treeResult.recordset[0]?.tree;
+      if (raw) {
+        const treeData = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        pathByDeviceId = buildDevicePathMapFromTree(treeData);
+      }
+    } catch (e) {
+      debugWarn('Device paths from tree failed:', e.message);
+    }
+
     // Für jedes Device die neuesten Telemetriedaten abrufen
     const devicesWithTelemetry = await Promise.all(
       devices.map(async (device) => {
@@ -214,6 +231,7 @@ export default async function handler(req, res) {
             type: device.type,
             label: device.label || device.name,
             active: device.active,
+            path_string: pathByDeviceId[String(device.id.id)] ?? null,
             lastActivityTime: device.lastActivityTime,
             additionalInfo: device.additionalInfo || {},
             telemetry: telemetry,
@@ -230,6 +248,7 @@ export default async function handler(req, res) {
             type: device.type,
             label: device.label || device.name,
             active: device.active,
+            path_string: pathByDeviceId[String(device.id.id)] ?? null,
             lastActivityTime: device.lastActivityTime,
             additionalInfo: device.additionalInfo || {},
             telemetry: {},

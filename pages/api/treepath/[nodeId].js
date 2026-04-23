@@ -9,7 +9,9 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { id, customerId: queryCustomerId } = req.query;
+  // Next.js: dynamisches Segment [nodeId] → req.query.nodeId (nicht id)
+  const id = req.query.nodeId || req.query.id;
+  const { customerId: queryCustomerId } = req.query;
 
   // Validate required parameters
   if (!id) {

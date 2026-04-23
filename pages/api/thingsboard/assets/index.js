@@ -7,6 +7,24 @@ import sql from 'mssql';
 
 const THINGSBOARD_URL = process.env.THINGSBOARD_URL;
 
+/** ThingsBoard: Relation-Typ für Asset/Device-Baum — muss „Contains“ heißen, nicht „CONTAINS“. */
+const REL_CONTAINS = 'Contains';
+
+/**
+ * Entity-ID aus TB-Relationen zu einem UUID-String (manchmal string, manchmal { id }).
+ */
+function toUuidString(raw) {
+  if (raw == null || raw === '') return '';
+  if (typeof raw === 'string') return raw;
+  if (typeof raw === 'object') {
+    if (typeof raw.id === 'string') return raw.id;
+    if (raw.id && typeof raw.id === 'object' && typeof raw.id.id === 'string') {
+      return raw.id.id;
+    }
+  }
+  return String(raw);
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
     return res.status(405).json({
@@ -29,7 +47,7 @@ export default async function handler(req, res) {
     try {
       const decoded = jwt.verify(token, process.env.NEXTAUTH_SECRET);
       tbToken = decoded.tbToken;
-      resolvedCustomerId = decoded.customerId;
+      resolvedCustomerId = decoded.customerId || decoded.customerid;
     } catch (err) {
       console.error('JWT verification failed:', err);
     }
@@ -126,7 +144,7 @@ export default async function handler(req, res) {
           let deviceCount = 0;
           try {
             const relationsResponse = await fetch(
-              `${THINGSBOARD_URL}/api/relations/info?fromId=${asset.id.id}&fromType=ASSET&relationType=CONTAINS&toType=DEVICE`,
+              `${THINGSBOARD_URL}/api/relations/info?fromId=${asset.id.id}&fromType=ASSET&relationType=${REL_CONTAINS}&toType=DEVICE`,
               {
                 headers: {
                   'accept': 'application/json',
@@ -147,7 +165,7 @@ export default async function handler(req, res) {
           let parentAsset = null;
           try {
             const parentRelationsResponse = await fetch(
-              `${THINGSBOARD_URL}/api/relations/info?toId=${asset.id.id}&toType=ASSET&relationType=CONTAINS`,
+              `${THINGSBOARD_URL}/api/relations/info?toId=${asset.id.id}&toType=ASSET&relationType=${REL_CONTAINS}`,
               {
                 headers: {
                   'accept': 'application/json',
@@ -161,7 +179,7 @@ export default async function handler(req, res) {
               const parentRelation = parentRelations.find(r => r.from.entityType === 'ASSET');
               if (parentRelation) {
                 parentAsset = {
-                  id: parentRelation.from.id,
+                  id: toUuidString(parentRelation.from.id),
                   name: parentRelation.from.name || 'Unbekannt'
                 };
               }
@@ -174,7 +192,7 @@ export default async function handler(req, res) {
           let childAssets = [];
           try {
             const childRelationsResponse = await fetch(
-              `${THINGSBOARD_URL}/api/relations/info?fromId=${asset.id.id}&fromType=ASSET&relationType=CONTAINS&toType=ASSET`,
+              `${THINGSBOARD_URL}/api/relations/info?fromId=${asset.id.id}&fromType=ASSET&relationType=${REL_CONTAINS}&toType=ASSET`,
               {
                 headers: {
                   'accept': 'application/json',
@@ -185,11 +203,13 @@ export default async function handler(req, res) {
 
             if (childRelationsResponse.ok) {
               const childRelations = await childRelationsResponse.json();
-              childAssets = Array.isArray(childRelations) ? childRelations.map(rel => ({
-                id: rel.to.id,
-                name: rel.to.name || 'Unbekannt',
-                type: rel.to.type || 'ASSET'
-              })) : [];
+              childAssets = Array.isArray(childRelations)
+                ? childRelations.map((rel) => ({
+                    id: toUuidString(rel.to.id),
+                    name: rel.to.name || 'Unbekannt',
+                    type: rel.to.type || 'ASSET'
+                  }))
+                : [];
             }
           } catch (error) {
             console.error(`Error getting child assets for asset ${asset.id.id}:`, error);
@@ -237,6 +257,25 @@ export default async function handler(req, res) {
         }
       })
     );
+
+    // Namen aus der gesamten Kunden-Asset-Liste ergänzen (Relations/eo. liefern oft nur UUIDs).
+    const idToLabel = new Map(
+      assetsWithDetails.map((a) => [a.id, a.label || a.name || ''])
+    );
+    for (const a of assetsWithDetails) {
+      if (a.parentAsset && a.parentAsset.id) {
+        const label = idToLabel.get(a.parentAsset.id);
+        if (label) {
+          a.parentAsset = { ...a.parentAsset, name: label };
+        }
+      }
+      if (a.childAssets && a.childAssets.length > 0) {
+        a.childAssets = a.childAssets.map((c) => ({
+          ...c,
+          name: idToLabel.get(c.id) || c.name || 'Unbekannt'
+        }));
+      }
+    }
 
     // Statistiken berechnen
     const stats = {

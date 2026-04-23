@@ -1,4 +1,5 @@
 import { getServerSession } from 'next-auth/next';
+import jwt from 'jsonwebtoken';
 import { authOptions } from '../auth/[...nextauth]';
 import { getConnection } from '../../../lib/db';
 import { getPgConnection } from '../../../lib/pgdb.js';
@@ -8,6 +9,7 @@ import {
   fetchDefaultEntryAssetId,
   getDeviceSqlCountsQuery
 } from '../../../lib/config/devicesSqlShared.js';
+import { countUnassignedDevices } from '../../../lib/utils/unassignedDevicesCount.js';
 import sql from 'mssql';
 
 export default async function handler(req, res) {
@@ -20,8 +22,38 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Authentifizierung prüfen
-    const session = await getServerSession(req, res, authOptions);
+    let session = await getServerSession(req, res, authOptions);
+
+    if (!session) {
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const raw = authHeader.split(' ')[1];
+        try {
+          const secret =
+            process.env.NEXTAUTH_SECRET ||
+            (process.env.NODE_ENV === 'development'
+              ? 'development-secret-change-in-production'
+              : null);
+          if (secret) {
+            const decoded = jwt.verify(raw, secret);
+            if (decoded?.tbToken && (decoded.customerid || decoded.customerId)) {
+              const cid = decoded.customerid || decoded.customerId;
+              session = {
+                user: {
+                  userid: decoded.userid,
+                  customerid: cid,
+                  role: decoded.role
+                },
+                tbToken: decoded.tbToken
+              };
+            }
+          }
+        } catch (e) {
+          console.error('Dashboard stats: Bearer JWT invalid:', e.message);
+        }
+      }
+    }
+
     if (!session) {
       return res.status(401).json({
         success: false,
@@ -145,6 +177,7 @@ async function getDashboardStats(pool, customerId, session) {
     let alarmsCount = 0;
     let heatDemand = '85%'; // Fallback-Wert
     let deviceStatsFromSql = false;
+    let unassignedDevices = 0;
 
     // Gerätezahlen wie /api/config/devices-sql (PostgreSQL ThingsBoard-DB + optional Teilbaum)
     const pgCustomerId = normalizeUuid(customerId);
@@ -192,6 +225,12 @@ async function getDashboardStats(pool, customerId, session) {
 
     if (session?.tbToken && process.env.THINGSBOARD_URL) {
       alarmsCount = await fetchThingsBoardAlarmCount(session.tbToken, customerId);
+      try {
+        unassignedDevices = await countUnassignedDevices(customerId, session.tbToken);
+        debugLog(`Dashboard stats: unassigned devices = ${unassignedDevices}`);
+      } catch (unassignedErr) {
+        debugWarn('Dashboard stats: unassigned count failed:', unassignedErr.message);
+      }
     }
 
     // MSSQL-Fallback nur wenn weder SQL noch TB Gerätezahlen geliefert haben
@@ -218,6 +257,7 @@ async function getDashboardStats(pool, customerId, session) {
       devices: devicesCount,
       activeDevices: activeDevices,
       inactiveDevices: inactiveDevices,
+      unassignedDevices: unassignedDevices,
       alarms: alarmsCount,
       heatDemand: heatDemand,
       // Zusätzliche berechnete Werte
@@ -241,6 +281,7 @@ async function getDashboardStats(pool, customerId, session) {
       devices: 0,
       activeDevices: 0,
       inactiveDevices: 0,
+      unassignedDevices: 0,
       alarms: 0,
       heatDemand: '85%',
       energyConsumption: '0.0',

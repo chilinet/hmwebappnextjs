@@ -1,5 +1,4 @@
-import { getServerSession } from 'next-auth/next';
-import { authOptions } from '../../auth/[...nextauth]';
+import { getSessionOrMobileJwt } from '../../../../lib/auth/getSessionOrMobileJwt.js';
 import { getConnection } from '../../../../lib/db';
 import sql from 'mssql';
 import { invalidateCache, invalidateUnassignedCache } from '../../../../lib/utils/deviceCache';
@@ -7,7 +6,7 @@ import { removeUnassignedDeviceFromDb, invalidateUnassignedDevicesCache } from '
 import { debugLog, debugWarn } from '../../../../lib/appDebug';
 
 export default async function handler(req, res) {
-  const session = await getServerSession(req, res, authOptions);
+  const session = await getSessionOrMobileJwt(req, res);
   if (!session) {
     return res.status(401).json({ message: 'Not authenticated' });
   }
