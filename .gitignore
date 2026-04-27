@@ -48,3 +48,14 @@ next-env.d.ts
 # logs
 /logs/
 *.log
+
+#VSCODE
+.vscode/
+.vscode/*
+!.vscode/settings.json
+
+#AZURE
+.azure/
+.azure/*
+!.azure/config.yml
+!.azure/deploy.sh   
